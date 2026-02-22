@@ -1,0 +1,16 @@
+After macOS blocks the file, open:
+
+    System Settings  →  Privacy & Security
+
+Scroll down to the bottom. You'll see a message like:
+
+    "install_and_run.command" was blocked to protect your Mac.
+
+Click "Open Anyway" and enter your password.
+
+The app will:
+  ✓ Install Python dependencies automatically
+  ✓ Clear any remaining security flags
+  ✓ Launch Office Hours
+
+You only need to do this ONCE. After that, double-click works normally.
