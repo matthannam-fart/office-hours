@@ -26,6 +26,7 @@ presence_lock = threading.Lock()
 
 def broadcast_presence():
     """Send the current user list to all registered clients"""
+    dead_uids = []
     with presence_lock:
         user_list = []
         for uid, info in presence.items():
@@ -41,8 +42,22 @@ def broadcast_presence():
             try:
                 send_frame(info["sock"], msg)
             except Exception:
-                # Client disconnected — will be cleaned up
-                pass
+                # Client disconnected — mark for cleanup
+                dead_uids.append(uid)
+    
+    # Clean up dead clients outside the broadcast loop
+    if dead_uids:
+        with presence_lock:
+            for uid in dead_uids:
+                if uid in presence:
+                    print(f"[Presence] Removing stale user: {uid}")
+                    try:
+                        presence[uid]["sock"].close()
+                    except Exception:
+                        pass
+                    del presence[uid]
+        # Re-broadcast the cleaned list
+        broadcast_presence()
 
 def handle_presence_client(client_sock, client_addr):
     """Handle a presence connection: register, then listen for updates"""
@@ -50,6 +65,8 @@ def handle_presence_client(client_sock, client_addr):
     print(f"[Presence] New connection from {client_addr}")
     
     try:
+        # Set socket timeout so dead connections are detected
+        client_sock.settimeout(300)  # 5 minute timeout
         while True:
             frame = recv_frame(client_sock)
             if frame is None:
