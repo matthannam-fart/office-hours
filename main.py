@@ -62,7 +62,7 @@ class IntercomApp(QObject):
         self.online_users = {}
         self.pending_room = None
         self.pending_from_id = None
-        self.call_timer_seconds = 0
+
 
         # User identity
         self.display_name = get_display_name()
@@ -116,8 +116,7 @@ class IntercomApp(QObject):
         self.flash_timer.timeout.connect(self.flash_loop)
         self.flash_timer.start(500)
 
-        self.call_timer = QTimer()
-        self.call_timer.timeout.connect(self._tick_call_timer)
+
 
         # Signal connections
         self.log_signal.connect(self.log)
@@ -335,11 +334,6 @@ class IntercomApp(QObject):
         self._calling_user_id = None
         self.log("Call cancelled.")
 
-    def _tick_call_timer(self):
-        self.call_timer_seconds += 1
-        mins = self.call_timer_seconds // 60
-        secs = self.call_timer_seconds % 60
-        self.panel.update_call_timer(f"{mins}:{secs:02d}")
 
     # ── Connection Logic (preserved) ──────────────────────────────
 
@@ -405,8 +399,7 @@ class IntercomApp(QObject):
         self.network.disconnect()
         self.panel.set_connection(False)
         self.panel.hide_call()
-        self.call_timer.stop()
-        self.call_timer_seconds = 0
+
         self.log("Disconnected from peer.")
 
     def _set_busy(self):
@@ -509,8 +502,7 @@ class IntercomApp(QObject):
         """Called on main thread when relay room join succeeds."""
         self.panel.hide_outgoing()
         self.panel.show_call(peer_name)
-        self.call_timer_seconds = 0
-        self.call_timer.start(1000)
+
 
     @Slot(list)
     def _update_online_users(self, users):

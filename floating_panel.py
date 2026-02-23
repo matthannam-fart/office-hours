@@ -29,6 +29,7 @@ COLORS = {
     'YELLOW': '#e6af00',
     'RED':    '#e22a1a',
     'OPEN':   '#2ABFBF',
+    'BUSY':   '#ff9800',
     'INCOGNITO': '#333333',
 }
 
@@ -37,6 +38,7 @@ MODE_LABELS = {
     'YELLOW': 'Busy',
     'RED':    'DND',
     'OPEN':   'Open',
+    'BUSY':   'In Call',
 }
 
 RADIO_STATIONS = {
@@ -224,7 +226,12 @@ class UserRow(QWidget):
         layout.addWidget(self.msg_dot)
 
         # Call button (hidden until hover)
-        btn_text = "Page" if mode == 'YELLOW' else "Call"
+        if mode == 'BUSY':
+            btn_text = "Join"
+        elif mode == 'YELLOW':
+            btn_text = "Page"
+        else:
+            btn_text = "Call"
         self.call_btn = QPushButton(btn_text)
         self.call_btn.setFixedWidth(36)
         self.call_btn.setCursor(Qt.PointingHandCursor)
@@ -897,10 +904,6 @@ class FloatingPanel(QWidget):
         self.call_name_label = QLabel("Jane D.")
         self.call_name_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
         h.addWidget(self.call_name_label, 1)
-
-        self.call_timer_label = QLabel("0:00")
-        self.call_timer_label.setStyleSheet("font-size: 13px; color: #66bb6a; font-weight: 600;")
-        h.addWidget(self.call_timer_label)
 
         end_btn = QPushButton("End")
         end_btn.setCursor(Qt.PointingHandCursor)
