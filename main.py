@@ -217,7 +217,39 @@ class IntercomApp(QObject):
         self.log(f"Requesting connection to {target_name}...")
         self._calling_user_id = user_id
         self.panel.show_outgoing(target_name)
-        self.network.connect_to_user(user_id)
+
+        # Try direct LAN connection first if we know the peer's IP
+        lan_ip = self._find_lan_ip(target_name)
+        if lan_ip:
+            self.log(f"Trying direct LAN connection to {lan_ip}...")
+            threading.Thread(
+                target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
+            ).start()
+        else:
+            self.log("No LAN IP found, using relay...")
+            self.network.connect_to_user(user_id)
+
+    def _find_lan_ip(self, target_name):
+        """Find a peer's LAN IP from Zeroconf-discovered peers."""
+        # Return all known LAN peer IPs — we'll try each one
+        ips = list(self.peer_map.values())
+        if ips:
+            self.log(f"LAN peers available: {ips}")
+            return ips[0]  # Try the first discovered peer
+        return None
+
+    def _try_direct_connect(self, ip, target_name):
+        """Try direct TCP connection to a LAN peer."""
+        success = self.network.connect(ip)
+        if success:
+            self.log(f"✓ Direct LAN connection to {ip}")
+            self.call_connected_signal.emit(target_name)
+            self._start_open_line_if_ready()
+            self._set_busy()
+        else:
+            self.log(f"Direct LAN failed, falling back to relay...")
+            if hasattr(self, '_calling_user_id'):
+                self.network.connect_to_user(self._calling_user_id)
 
     # ── Room Actions ──────────────────────────────────────────────
     def _on_join_room(self, room_code):
@@ -635,7 +667,10 @@ class IntercomApp(QObject):
         elif msg_type == "PEER_CONNECTED":
             ip = payload.get("ip", "unknown")
             self.peer_ip = ip
-            self.log_signal.emit(f"Incoming connection from {ip}...")
+            self.log_signal.emit(f"✓ Direct LAN connection from {ip}")
+            # Auto-show call UI and start audio for direct connections
+            self.call_connected_signal.emit(f"Peer ({ip})")
+            self._start_open_line_if_ready()
 
         elif msg_type == "CONNECTION_REQUEST":
             requester_name = payload.get("name", "Unknown")
