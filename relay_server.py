@@ -59,6 +59,28 @@ def broadcast_presence():
         # Re-broadcast the cleaned list
         broadcast_presence()
 
+def presence_sweep():
+    """Periodically check for and remove stale presence entries."""
+    while True:
+        time.sleep(30)
+        with presence_lock:
+            dead = []
+            for uid, info in presence.items():
+                try:
+                    # Test if socket is still alive
+                    info["sock"].getpeername()
+                except Exception:
+                    dead.append(uid)
+            for uid in dead:
+                print(f"[Sweep] Removing dead client: {uid} ({presence[uid].get('name', '?')})")
+                try:
+                    presence[uid]["sock"].close()
+                except Exception:
+                    pass
+                del presence[uid]
+        if dead:
+            broadcast_presence()
+
 def handle_presence_client(client_sock, client_addr):
     """Handle a presence connection: register, then listen for updates"""
     user_id = None
@@ -606,6 +628,7 @@ def main():
             time.sleep(60)
             cleanup_stale_rooms()
     threading.Thread(target=cleanup_loop, daemon=True).start()
+    threading.Thread(target=presence_sweep, daemon=True).start()
 
     print(f"[Server] Ready on port {args.port}")
     try:
