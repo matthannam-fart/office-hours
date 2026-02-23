@@ -508,6 +508,7 @@ class NetworkManager:
     def accept_presence_connection(self, room_code, from_id):
         """Accept an incoming connection request via presence"""
         if not self.presence_connected or not self.presence_socket:
+            self._log("Cannot accept: not connected to presence")
             return
         try:
             msg = json.dumps({
@@ -515,6 +516,7 @@ class NetworkManager:
                 "room": room_code
             }).encode('utf-8')
             self._send_frame_on(self.presence_socket, msg)
+            self._log(f"Sent ACCEPT_CONNECTION for room {room_code}")
         except Exception as e:
             self._log(f"Accept connection failed: {e}")
 
@@ -567,6 +569,7 @@ class NetworkManager:
 
                 elif msg_type == "CONNECT_ROOM":
                     # Server tells us to join a room for audio
+                    self._log(f"[Presence] Got CONNECT_ROOM: {msg}")
                     if self.presence_callback:
                         self.presence_callback(msg)
 

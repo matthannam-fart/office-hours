@@ -263,11 +263,11 @@ class IntercomApp(QObject):
     def _on_accept_call(self):
         self.panel.hide_incoming()
         if self.pending_room and self.pending_from_id:
-            self.log(f"Accepted connection")
+            self.log(f"Accepted call — sending ACCEPT for room {self.pending_room}")
             self.network.accept_presence_connection(self.pending_room, self.pending_from_id)
-        self.panel.show_call(self.panel.incoming_name.text())
-        self.call_timer_seconds = 0
-        self.call_timer.start(1000)
+            # Don't show call UI yet — wait for CONNECT_ROOM → _join_relay_room to succeed
+        else:
+            self.log(f"Accept failed: pending_room={self.pending_room}, pending_from_id={self.pending_from_id}")
 
     def _on_decline_call(self):
         self.panel.hide_incoming()
@@ -420,7 +420,7 @@ class IntercomApp(QObject):
         elif msg_type == "CONNECT_ROOM":
             room_code = msg.get("room", "")
             role = msg.get("role", "")
-            self.log_signal.emit(f"Joining room {room_code} as {role}...")
+            self.log_signal.emit(f"Got CONNECT_ROOM: room={room_code}, role={role}")
             threading.Thread(
                 target=self._join_relay_room, args=(room_code, role), daemon=True
             ).start()
@@ -430,10 +430,10 @@ class IntercomApp(QObject):
             self.relay_status_signal.emit("Connection declined")
 
     def _join_relay_room(self, room_code, role):
-        self.log(f"Joining relay room {room_code} as {role}...")
+        self.log(f"Connecting to relay {RELAY_HOST}:{RELAY_PORT} for room {room_code} as {role}...")
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
         if success:
-            self.log(f"Connected via relay (Room: {room_code})")
+            self.log(f"✓ Connected via relay (Room: {room_code})")
             self.relay_status_signal.emit(f"Connected via relay (Room: {room_code})")
             # Transition panel to active call view (must use signal for thread safety)
             if role == "creator":
@@ -441,10 +441,16 @@ class IntercomApp(QObject):
                 if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
                     target_name = self.online_users[self._calling_user_id].get("name", "Peer")
                 self.call_connected_signal.emit(target_name)
+            elif role == "joiner":
+                # Callee: show the call UI now that we're actually connected
+                caller_name = "Peer"
+                if hasattr(self, 'pending_from_id') and self.pending_from_id in self.online_users:
+                    caller_name = self.online_users[self.pending_from_id].get("name", "Peer")
+                self.call_connected_signal.emit(caller_name)
             self._start_open_line_if_ready()
             self._set_busy()
         else:
-            self.log(f"Failed to join relay room {room_code}")
+            self.log(f"✗ Failed to join relay room {room_code}")
             self.relay_status_signal.emit("Failed to join room")
 
     @Slot(str)
