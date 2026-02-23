@@ -728,6 +728,11 @@ class IntercomApp(QObject):
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # Keep running with just tray icon
+    # Load and set Focal as the global app font
+    from PySide6.QtGui import QFont
+    from floating_panel import _load_fonts, FONT_FAMILY
+    _load_fonts()
+    app.setFont(QFont(FONT_FAMILY, 13))
     intercom = IntercomApp()
     sys.exit(app.exec())
 

@@ -9,7 +9,7 @@ from ctypes import c_void_p
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QSystemTrayIcon, QMenu, QLineEdit, QSpacerItem
+    QSystemTrayIcon, QMenu, QLineEdit, QSpacerItem, QSlider, QWidgetAction
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot,
@@ -45,6 +45,24 @@ RADIO_STATIONS = {
 # Panel dimensions
 PANEL_W = 280
 PANEL_RADIUS = 12
+
+# ── Font Loading ─────────────────────────────────────────────────
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'commercial-type-2507-JRGALW-desktop')
+FONT_FAMILY = 'Focal'
+
+def _load_fonts():
+    """Load bundled Focal font family into Qt."""
+    if not os.path.isdir(FONT_DIR):
+        return
+    for fname in sorted(os.listdir(FONT_DIR)):
+        if fname.endswith(('.otf', '.ttf')):
+            fpath = os.path.join(FONT_DIR, fname)
+            font_id = QFontDatabase.addApplicationFont(fpath)
+            if font_id < 0:
+                print(f"Warning: could not load font {fname}")
+
+_fonts_loaded = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -190,7 +208,7 @@ class UserRow(QWidget):
 
         # Name
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet("font-size: 12px; font-weight: 500; color: #3a3a3a; padding-bottom: 1px;")
+        self.name_label.setStyleSheet("font-size: 14px; font-weight: 500; color: #3a3a3a; padding-bottom: 1px;")
         layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # Message indicator (amber dot)
@@ -213,7 +231,7 @@ class UserRow(QWidget):
             self.call_btn.setStyleSheet("""
                 QPushButton {
                     background: #fff4cc; color: #b8860b; border: 1px solid #ffe066;
-                    border-radius: 6px; font-size: 9px; font-weight: 700; padding: 4px 0;
+                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
                 }
                 QPushButton:hover { background: #ffe680; }
             """)
@@ -223,7 +241,7 @@ class UserRow(QWidget):
             self.call_btn.setStyleSheet("""
                 QPushButton {
                     background: #e6f9ed; color: #008040; border: 1px solid #80e6a0;
-                    border-radius: 6px; font-size: 9px; font-weight: 700; padding: 4px 0;
+                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
                 }
                 QPushButton:hover { background: #c8f0d8; }
             """)
@@ -313,6 +331,13 @@ class FloatingPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Load fonts once (must happen after QApplication exists)
+        global _fonts_loaded
+        if not _fonts_loaded:
+            _load_fonts()
+            _fonts_loaded = True
+        # Set panel font to Focal
+        self.setFont(QFont(FONT_FAMILY, 11))
         self._pinned = False
         self._connected = False
         self._current_mode = 'GREEN'
@@ -464,7 +489,7 @@ class FloatingPanel(QWidget):
 
         # Open toggle with label
         open_lbl = QLabel("Open")
-        open_lbl.setStyleSheet("font-size: 10px; color: #999; font-weight: 500; border: none;")
+        open_lbl.setStyleSheet("font-size: 12px; color: #999; font-weight: 500; border: none;")
         h.addWidget(open_lbl)
 
         self.open_toggle = ToggleSwitch()
@@ -487,7 +512,7 @@ class FloatingPanel(QWidget):
             self.pin_btn.setStyleSheet("""
                 QPushButton {
                     border: none; background: rgba(255,152,0,0.12);
-                    font-size: 14px; font-weight: 900; color: #f57c00;
+                    font-size: 16px; font-weight: 900; color: #f57c00;
                     border-radius: 6px;
                 }
                 QPushButton:hover { background: rgba(255,152,0,0.22); }
@@ -497,7 +522,7 @@ class FloatingPanel(QWidget):
             self.pin_btn.setStyleSheet("""
                 QPushButton {
                     border: none; background: rgba(255,152,0,0.08);
-                    font-size: 14px; font-weight: 900; color: #ff9800;
+                    font-size: 16px; font-weight: 900; color: #ff9800;
                     border-radius: 6px;
                 }
                 QPushButton:hover { background: rgba(255,152,0,0.18); color: #f57c00; }
@@ -522,7 +547,7 @@ class FloatingPanel(QWidget):
                 border-radius: 8px;
                 border: 1px solid rgba(0,0,0,0.06);
                 background: rgba(0,0,0,0.03);
-                font-size: 11px;
+                font-size: 13px;
                 font-weight: 600;
                 color: {text_color};
                 text-align: left;
@@ -544,12 +569,12 @@ class FloatingPanel(QWidget):
 
         # Green dot
         dot = QLabel("●")
-        dot.setStyleSheet("color: #00a651; font-size: 8px; border: none;")
+        dot.setStyleSheet("color: #00a651; font-size: 10px; border: none;")
         h.addWidget(dot)
 
         # Room code
         self.room_label = QLabel("Connected · OH-7X3K")
-        self.room_label.setStyleSheet("font-size: 10px; font-weight: 600; color: #5a5a5a; letter-spacing: 0.5px; border: none;")
+        self.room_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #5a5a5a; letter-spacing: 0.5px; border: none;")
         h.addWidget(self.room_label, 1)
 
         # Leave button
@@ -557,7 +582,7 @@ class FloatingPanel(QWidget):
         self.leave_btn.setCursor(Qt.PointingHandCursor)
         self.leave_btn.setStyleSheet("""
             QPushButton {
-                font-size: 9px; font-weight: 700; color: #c0392b;
+                font-size: 11px; font-weight: 700; color: #c0392b;
                 background: transparent; border: 1px solid #e8c4c0;
                 border-radius: 8px; padding: 3px 10px;
             }
@@ -572,7 +597,7 @@ class FloatingPanel(QWidget):
         gear.setToolTip("Quit Office Hours")
         gear.setStyleSheet("""
             QPushButton {
-                border: none; background: transparent; font-size: 11px;
+                border: none; background: transparent; font-size: 13px;
                 color: #ccc; border-radius: 4px;
             }
             QPushButton:hover { color: #c0392b; background: rgba(192,57,43,0.08); }
@@ -597,7 +622,7 @@ class FloatingPanel(QWidget):
         self.room_input.setPlaceholderText("Room code e.g. OH-7X3K")
         self.room_input.setStyleSheet("""
             QLineEdit {
-                font-size: 10px; border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
+                font-size: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
                 padding: 4px 8px; background: rgba(255,255,255,0.5); color: #3a3a3a;
             }
         """)
@@ -608,7 +633,7 @@ class FloatingPanel(QWidget):
         join_btn.setCursor(Qt.PointingHandCursor)
         join_btn.setStyleSheet("""
             QPushButton {
-                font-size: 9px; font-weight: 700; color: #00a651;
+                font-size: 11px; font-weight: 700; color: #00a651;
                 background: #e6f9ed; border: 1px solid #80e6a0;
                 border-radius: 8px; padding: 4px 10px;
             }
@@ -623,7 +648,7 @@ class FloatingPanel(QWidget):
         create_btn.setCursor(Qt.PointingHandCursor)
         create_btn.setStyleSheet("""
             QPushButton {
-                font-size: 15px; font-weight: 500; color: #00a651;
+                font-size: 17px; font-weight: 500; color: #00a651;
                 background: transparent; border: none;
                 border-radius: 12px; padding: 0 2px 1px 0;
             }
@@ -639,7 +664,7 @@ class FloatingPanel(QWidget):
         self.menu_btn.setCursor(Qt.PointingHandCursor)
         self.menu_btn.setStyleSheet("""
             QPushButton {
-                font-size: 15px; color: #888;
+                font-size: 17px; color: #888;
                 background: transparent; border: none;
                 border-radius: 12px; padding: 0 0 2px 0;
             }
@@ -662,12 +687,12 @@ class FloatingPanel(QWidget):
         sec_hdr = QHBoxLayout()
         sec_hdr.setContentsMargins(14, 10, 14, 4)
         self._online_label = QLabel("ONLINE")
-        self._online_label.setStyleSheet("font-size: 9px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
         sec_hdr.addWidget(self._online_label)
         sec_hdr.addStretch()
         self.online_count = QLabel("0")
         self.online_count.setStyleSheet("""
-            font-size: 9px; font-weight: 700; color: #bbb;
+            font-size: 11px; font-weight: 700; color: #bbb;
             background: #f0eeeb; border-radius: 8px; padding: 2px 7px;
         """)
         sec_hdr.addWidget(self.online_count)
@@ -718,7 +743,7 @@ class FloatingPanel(QWidget):
         self.ptt_btn.setStyleSheet("""
             QPushButton {
                 background: #fafaf8; border: 1px solid #e0ded8;
-                border-radius: 10px; padding: 8px; font-size: 11px;
+                border-radius: 10px; padding: 8px; font-size: 13px;
                 font-weight: 500; color: #888;
             }
             QPushButton:hover { background: #f0eeeb; border-color: #ccc; }
@@ -730,7 +755,7 @@ class FloatingPanel(QWidget):
 
         # Mode label below
         self.ptt_mode_label = QLabel("Open — always-on hot mic.")
-        self.ptt_mode_label.setStyleSheet("font-size: 9px; color: #bbb; border: none;")
+        self.ptt_mode_label.setStyleSheet("font-size: 11px; color: #bbb; border: none;")
         self.ptt_mode_label.setAlignment(Qt.AlignCenter)
         self.ptt_mode_label.setVisible(False)
         v.addWidget(self.ptt_mode_label)
@@ -759,10 +784,10 @@ class FloatingPanel(QWidget):
 
         call_info = QVBoxLayout()
         self.outgoing_name = QLabel("")
-        self.outgoing_name.setStyleSheet("font-size: 12px; font-weight: 600; color: #1565c0;")
+        self.outgoing_name.setStyleSheet("font-size: 14px; font-weight: 600; color: #1565c0;")
         call_info.addWidget(self.outgoing_name)
         self.outgoing_sub = QLabel("Calling...")
-        self.outgoing_sub.setStyleSheet("font-size: 9px; color: #64b5f6;")
+        self.outgoing_sub.setStyleSheet("font-size: 11px; color: #64b5f6;")
         call_info.addWidget(self.outgoing_sub)
         top.addLayout(call_info, 1)
         v.addLayout(top)
@@ -774,7 +799,7 @@ class FloatingPanel(QWidget):
             QPushButton {
                 background: transparent; color: #d32f2f; border: 1px solid #ef9a9a;
                 border-radius: 8px; padding: 6px 16px; font-weight: 600;
-                font-size: 11px;
+                font-size: 13px;
             }
             QPushButton:hover { background: #ffebee; }
         """)
@@ -804,10 +829,10 @@ class FloatingPanel(QWidget):
 
         caller_info = QVBoxLayout()
         self.incoming_name = QLabel("Jane D.")
-        self.incoming_name.setStyleSheet("font-size: 12px; font-weight: 600; color: #2e7d32;")
+        self.incoming_name.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
         caller_info.addWidget(self.incoming_name)
         caller_sub = QLabel("wants to connect")
-        caller_sub.setStyleSheet("font-size: 9px; color: #66bb6a;")
+        caller_sub.setStyleSheet("font-size: 11px; color: #66bb6a;")
         caller_info.addWidget(caller_sub)
         top.addLayout(caller_info, 1)
         v.addLayout(top)
@@ -820,7 +845,7 @@ class FloatingPanel(QWidget):
             QPushButton {
                 background: #43a047; color: white; border: none;
                 border-radius: 8px; padding: 6px 16px; font-weight: 700;
-                font-size: 11px;
+                font-size: 13px;
             }
             QPushButton:hover { background: #388e3c; }
         """)
@@ -833,7 +858,7 @@ class FloatingPanel(QWidget):
             QPushButton {
                 background: transparent; color: #999; border: 1px solid #ddd;
                 border-radius: 8px; padding: 6px 16px; font-weight: 600;
-                font-size: 11px;
+                font-size: 13px;
             }
             QPushButton:hover { background: #f5f5f5; }
         """)
@@ -861,11 +886,11 @@ class FloatingPanel(QWidget):
         h.addWidget(call_orb)
 
         self.call_name_label = QLabel("Jane D.")
-        self.call_name_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #2e7d32;")
+        self.call_name_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
         h.addWidget(self.call_name_label, 1)
 
         self.call_timer_label = QLabel("0:00")
-        self.call_timer_label.setStyleSheet("font-size: 11px; color: #66bb6a; font-weight: 600;")
+        self.call_timer_label.setStyleSheet("font-size: 13px; color: #66bb6a; font-weight: 600;")
         h.addWidget(self.call_timer_label)
 
         end_btn = QPushButton("End")
@@ -874,7 +899,7 @@ class FloatingPanel(QWidget):
             QPushButton {
                 background: #ef5350; color: white; border: none;
                 border-radius: 8px; padding: 4px 12px; font-weight: 700;
-                font-size: 10px;
+                font-size: 12px;
             }
             QPushButton:hover { background: #e53935; }
         """)
@@ -929,7 +954,7 @@ class FloatingPanel(QWidget):
         self.pinned_ptt.setStyleSheet(f"""
             QPushButton {{
                 background: {rgba}; border: 2px solid {rgba_border};
-                border-radius: 10px; padding: 8px; font-size: 12px;
+                border-radius: 10px; padding: 8px; font-size: 14px;
                 font-weight: 600; color: white;
             }}
             QPushButton:hover {{ border-color: {rgba_pressed}; }}
@@ -954,7 +979,7 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet("""
                 QPushButton {
                     background: #fafaf8; border: 1px solid #e0ded8;
-                    border-radius: 10px; padding: 8px; font-size: 11px;
+                    border-radius: 10px; padding: 8px; font-size: 13px;
                     font-weight: 500; color: #ccc;
                 }
             """)
@@ -964,7 +989,7 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet("""
                 QPushButton {
                     background: #fafaf8; border: 1px solid #e0ded8;
-                    border-radius: 10px; padding: 8px; font-size: 11px;
+                    border-radius: 10px; padding: 8px; font-size: 13px;
                     font-weight: 500; color: #888;
                 }
                 QPushButton:hover { background: #f0eeeb; border-color: #ccc; }
@@ -1064,7 +1089,7 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet("""
                 QPushButton {
                     background: #fee; border: 2px solid #e22a1a;
-                    border-radius: 10px; padding: 8px; font-size: 11px;
+                    border-radius: 10px; padding: 8px; font-size: 13px;
                     font-weight: 600; color: #e22a1a;
                 }
             """)
@@ -1081,7 +1106,7 @@ class FloatingPanel(QWidget):
                 background: rgba(255,255,255,0.92);
                 border: 1px solid rgba(0,0,0,0.1);
                 border-radius: 8px; padding: 2px;
-                font-size: 11px;
+                font-size: 13px;
             }
             QMenu::item {
                 padding: 4px 8px;
@@ -1112,6 +1137,32 @@ class FloatingPanel(QWidget):
         if self._radio_station:
             radio = menu.addAction("📻  𝗥𝗮𝗱𝗶𝗼")
             radio.triggered.connect(self._stop_radio)
+
+            # Volume slider
+            vol_widget = QWidget()
+            vol_layout = QHBoxLayout(vol_widget)
+            vol_layout.setContentsMargins(8, 2, 8, 2)
+            vol_label = QLabel("🔊")
+            vol_label.setStyleSheet("font-size: 11px; color: #2ABFBF;")
+            vol_slider = QSlider(Qt.Horizontal)
+            vol_slider.setRange(0, 100)
+            vol_slider.setValue(int(self._audio_output.volume() * 100))
+            vol_slider.setStyleSheet("""
+                QSlider::groove:horizontal {
+                    height: 3px; background: rgba(0,0,0,0.1); border-radius: 1px;
+                }
+                QSlider::handle:horizontal {
+                    width: 10px; height: 10px; margin: -4px 0;
+                    background: #2ABFBF; border-radius: 5px;
+                }
+                QSlider::sub-page:horizontal { background: #2ABFBF; border-radius: 1px; }
+            """)
+            vol_slider.valueChanged.connect(lambda v: self._audio_output.setVolume(v / 100.0))
+            vol_layout.addWidget(vol_label)
+            vol_layout.addWidget(vol_slider)
+            vol_action = QWidgetAction(menu)
+            vol_action.setDefaultWidget(vol_widget)
+            menu.addAction(vol_action)
         else:
             radio = menu.addAction("📻  Radio")
             radio.triggered.connect(lambda: self._play_radio('NTS Radio'))
@@ -1141,7 +1192,7 @@ class FloatingPanel(QWidget):
                     border-radius: 8px;
                     border: 1px solid rgba(0,0,0,0.06);
                     background: rgba(0,0,0,0.03);
-                    font-size: 11px; font-weight: 600;
+                    font-size: 13px; font-weight: 600;
                     color: #555; text-align: left;
                 }
                 QPushButton:hover { background: rgba(0,0,0,0.07); }
@@ -1189,14 +1240,14 @@ class FloatingPanel(QWidget):
             self._disconn_bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(255,255,255,0.06);")
             self.room_input.setStyleSheet("""
                 QLineEdit {
-                    font-size: 10px; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+                    font-size: 12px; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
                     padding: 4px 8px; background: rgba(255,255,255,0.08); color: #ccc;
                 }
             """)
             # Section labels
-            self._online_label.setStyleSheet("font-size: 9px; font-weight: 700; color: #666; letter-spacing: 2px;")
+            self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #666; letter-spacing: 2px;")
             self.online_count.setStyleSheet("""
-                font-size: 9px; font-weight: 700; color: #888;
+                font-size: 11px; font-weight: 700; color: #888;
                 background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px;
             """)
             # PTT bar
@@ -1214,13 +1265,13 @@ class FloatingPanel(QWidget):
             self._disconn_bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(0,0,0,0.06);")
             self.room_input.setStyleSheet("""
                 QLineEdit {
-                    font-size: 10px; border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
+                    font-size: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
                     padding: 4px 8px; background: rgba(255,255,255,0.5); color: #3a3a3a;
                 }
             """)
-            self._online_label.setStyleSheet("font-size: 9px; font-weight: 700; color: #bbb; letter-spacing: 2px;")
+            self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #bbb; letter-spacing: 2px;")
             self.online_count.setStyleSheet("""
-                font-size: 9px; font-weight: 700; color: #bbb;
+                font-size: 11px; font-weight: 700; color: #bbb;
                 background: #f0eeeb; border-radius: 4px; padding: 1px 6px;
             """)
             self._ptt_bar.setStyleSheet("border-top: 1px solid #eae8e4;")
@@ -1230,7 +1281,7 @@ class FloatingPanel(QWidget):
         for i in range(self._user_list_layout.count()):
             widget = self._user_list_layout.itemAt(i).widget()
             if widget and hasattr(widget, 'name_label'):
-                widget.name_label.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {text_color}; padding-bottom: 1px;")
+                widget.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {text_color}; padding-bottom: 1px;")
 
     def _toggle_pin(self):
         self._pinned = not self._pinned
