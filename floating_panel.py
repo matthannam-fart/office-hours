@@ -359,7 +359,7 @@ class FloatingPanel(QWidget):
 
         # Radio player
         self._audio_output = QAudioOutput()
-        self._audio_output.setVolume(0.5)
+        self._audio_output.setVolume(0.2)
         self._radio_player = QMediaPlayer()
         self._radio_player.setAudioOutput(self._audio_output)
 
@@ -1272,7 +1272,7 @@ class FloatingPanel(QWidget):
                 QComboBox {
                     font-size: 11px; padding: 2px 4px;
                     border: 1px solid rgba(0,0,0,0.1); border-radius: 4px;
-                    background: white; min-width: 140px;
+                    background: white; min-width: 100px;
                 }
             """)
             in_combo.addItem("System Default", None)
@@ -1302,7 +1302,7 @@ class FloatingPanel(QWidget):
                 QComboBox {
                     font-size: 11px; padding: 2px 4px;
                     border: 1px solid rgba(0,0,0,0.1); border-radius: 4px;
-                    background: white; min-width: 140px;
+                    background: white; min-width: 100px;
                 }
             """)
             out_combo.addItem("System Default", None)
