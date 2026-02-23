@@ -33,7 +33,8 @@ def broadcast_presence():
             user_list.append({
                 "user_id": uid,
                 "name": info["name"],
-                "mode": info["mode"]
+                "mode": info["mode"],
+                "room": info.get("room", "")
             })
         
         msg = json.dumps({"type": "PRESENCE_UPDATE", "users": user_list}).encode('utf-8')
@@ -120,10 +121,12 @@ def handle_presence_client(client_sock, client_addr):
             
             elif action == "MODE_UPDATE":
                 mode = msg.get("mode", "GREEN")
+                room_code = msg.get("room", "")
                 with presence_lock:
                     if user_id and user_id in presence:
                         presence[user_id]["mode"] = mode
-                print(f"[Presence] {user_id} mode -> {mode}")
+                        presence[user_id]["room"] = room_code
+                print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else ""))
                 broadcast_presence()
             
             elif action == "CONNECT_TO":
@@ -139,7 +142,7 @@ def handle_presence_client(client_sock, client_addr):
                     with rooms_lock:
                         rooms[room_code] = {
                             "clients": [],
-                            "udp_addrs": [None, None],
+                            "udp_addrs": [],
                             "created": time.time()
                         }
                     print(f"[Presence] {user_id} wants to connect to {target_id}, room: {room_code}")
@@ -319,22 +322,15 @@ def handle_room_client(client_sock, client_addr, udp_sock):
                     send_json(client_sock, {"status": "error", "message": "Room not found"})
                     client_sock.close()
                     return
-                if len(rooms[room_code]["clients"]) >= 2:
-                    send_json(client_sock, {"status": "error", "message": "Room is full"})
-                    client_sock.close()
-                    return
                 rooms[room_code]["clients"].append(client_sock)
+                rooms[room_code]["udp_addrs"].append(None)
                 my_index = len(rooms[room_code]["clients"]) - 1
-                
-                if len(rooms[room_code]["clients"]) == 2:
-                    # Second client — we can pair immediately
-                    peer_sock = rooms[room_code]["clients"][0]
-                else:
-                    peer_sock = None  # First client — need to wait
+                num_clients = len(rooms[room_code]["clients"])
 
-            if peer_sock:
+            if num_clients >= 2:
+                # Room already has other clients — paired immediately
                 send_json(client_sock, {"status": "paired", "room": room_code})
-                print(f"[Room] {room_code}: Paired!")
+                print(f"[Room] {room_code}: Client #{num_clients} joined (conference)")
             else:
                 # First client — wait for second
                 send_json(client_sock, {"status": "waiting", "room": room_code})
@@ -343,19 +339,17 @@ def handle_room_client(client_sock, client_addr, udp_sock):
                 start = time.time()
                 while time.time() - start < timeout:
                     with rooms_lock:
-                        if room_code in rooms and len(rooms[room_code]["clients"]) == 2:
-                            peer_sock = rooms[room_code]["clients"][1]
+                        if room_code in rooms and len(rooms[room_code]["clients"]) >= 2:
                             break
                     time.sleep(0.5)
-                
-                if not peer_sock:
+                else:
                     send_json(client_sock, {"status": "timeout"})
                     with rooms_lock:
                         if room_code in rooms:
                             del rooms[room_code]
                     client_sock.close()
                     return
-                
+
                 send_json(client_sock, {"status": "paired", "room": room_code})
                 print(f"[Room] {room_code}: Paired!")
 
@@ -364,7 +358,7 @@ def handle_room_client(client_sock, client_addr, udp_sock):
             client_sock.close()
             return
 
-        # Step 2: Relay TCP
+        # Step 2: Relay TCP — broadcast to ALL other clients in room
         while True:
             frame = recv_frame(client_sock)
             if frame is None:
@@ -376,17 +370,24 @@ def handle_room_client(client_sock, client_addr, udp_sock):
                 if check.get("type") == "UDP_REGISTER":
                     udp_port = check.get("udp_port")
                     with rooms_lock:
-                        if room_code in rooms:
+                        if room_code in rooms and my_index < len(rooms[room_code]["udp_addrs"]):
                             rooms[room_code]["udp_addrs"][my_index] = (client_addr[0], udp_port)
                     print(f"[UDP] Registered {client_addr[0]}:{udp_port} for {room_code}")
                     continue
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
 
-            try:
-                send_frame(peer_sock, frame)
-            except Exception:
-                break
+            # Broadcast frame to all other clients in room
+            with rooms_lock:
+                if room_code in rooms:
+                    peers = [(i, c) for i, c in enumerate(rooms[room_code]["clients"]) if i != my_index]
+                else:
+                    peers = []
+            for _, peer_sock in peers:
+                try:
+                    send_frame(peer_sock, frame)
+                except Exception:
+                    pass
 
     except Exception as e:
         print(f"[Room] Error with {client_addr}: {e}")
@@ -395,30 +396,41 @@ def handle_room_client(client_sock, client_addr, udp_sock):
         if room_code:
             with rooms_lock:
                 if room_code in rooms:
-                    for c in rooms[room_code]["clients"]:
-                        try:
-                            c.close()
-                        except:
-                            pass
-                    del rooms[room_code]
+                    # Remove only this client, not entire room
+                    try:
+                        idx = rooms[room_code]["clients"].index(client_sock)
+                        rooms[room_code]["clients"].pop(idx)
+                        rooms[room_code]["udp_addrs"].pop(idx)
+                    except (ValueError, IndexError):
+                        pass
+                    # Delete room if empty
+                    if len(rooms[room_code]["clients"]) == 0:
+                        del rooms[room_code]
+                        print(f"[Room] {room_code}: Empty, removed")
+                    else:
+                        print(f"[Room] {room_code}: Client left, {len(rooms[room_code]['clients'])} remaining")
 
 # ── UDP Relay ────────────────────────────────────────────────────
 
 def udp_relay_loop(udp_sock):
-    """Receive UDP packets and forward to the paired peer"""
+    """Receive UDP packets and forward to ALL other peers in the room"""
     while True:
         try:
             data, addr = udp_sock.recvfrom(8192)
             with rooms_lock:
                 for code, room in rooms.items():
                     udp_addrs = room["udp_addrs"]
-                    if udp_addrs[0] and udp_addrs[0] == addr:
-                        if udp_addrs[1]:
-                            udp_sock.sendto(data, udp_addrs[1])
-                        break
-                    elif udp_addrs[1] and udp_addrs[1] == addr:
-                        if udp_addrs[0]:
-                            udp_sock.sendto(data, udp_addrs[0])
+                    # Find which index sent this packet
+                    sender_idx = None
+                    for i, a in enumerate(udp_addrs):
+                        if a and a == addr:
+                            sender_idx = i
+                            break
+                    if sender_idx is not None:
+                        # Forward to ALL other members in room
+                        for i, a in enumerate(udp_addrs):
+                            if a and i != sender_idx:
+                                udp_sock.sendto(data, a)
                         break
         except Exception as e:
             print(f"[UDP] Error: {e}")

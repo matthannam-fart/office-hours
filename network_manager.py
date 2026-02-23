@@ -479,12 +479,15 @@ class NetworkManager:
                     pass
             return False
 
-    def update_presence_mode(self, mode):
+    def update_presence_mode(self, mode, room_code=""):
         """Notify the presence server of a mode change"""
         if not self.presence_connected or not self.presence_socket:
             return
         try:
-            msg = json.dumps({"action": "MODE_UPDATE", "mode": mode}).encode('utf-8')
+            payload = {"action": "MODE_UPDATE", "mode": mode}
+            if room_code:
+                payload["room"] = room_code
+            msg = json.dumps(payload).encode('utf-8')
             self._send_frame_on(self.presence_socket, msg)
         except Exception as e:
             self._log(f"Presence mode update failed: {e}")

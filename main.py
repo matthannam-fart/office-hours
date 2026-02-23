@@ -62,6 +62,7 @@ class IntercomApp(QObject):
         self.online_users = {}
         self.pending_room = None
         self.pending_from_id = None
+        self.active_room_code = None  # Track our relay room for conference
 
 
         # User identity
@@ -223,6 +224,17 @@ class IntercomApp(QObject):
         self.panel.show_outgoing(target_name)
 
         # Try direct LAN connection first if we know the peer's IP
+        target_mode = self.online_users.get(user_id, {}).get("mode", "GREEN")
+        target_room = self.online_users.get(user_id, {}).get("room", "")
+
+        # If target is BUSY and in a room, join their room (conference)
+        if target_mode == "BUSY" and target_room:
+            self.log(f"Joining {target_name}'s call in room {target_room}...")
+            threading.Thread(
+                target=self._join_relay_room, args=(target_room, "joiner"), daemon=True
+            ).start()
+            return
+
         lan_ip = self._find_lan_ip(target_name)
         if lan_ip:
             self.log(f"Trying direct LAN connection to {lan_ip}...")
@@ -403,10 +415,11 @@ class IntercomApp(QObject):
         self.log("Disconnected from peer.")
 
     def _set_busy(self):
-        self.network.update_presence_mode("BUSY")
-        self.log("Status set to BUSY")
+        self.network.update_presence_mode("BUSY", self.active_room_code or "")
+        self.log(f"Status set to BUSY" + (f" (room {self.active_room_code})" if self.active_room_code else ""))
 
     def _clear_busy(self):
+        self.active_room_code = None
         self.network.update_presence_mode(self.mode)
         self.log(f"Status restored to {self.mode}")
 
@@ -477,6 +490,7 @@ class IntercomApp(QObject):
         self.log(f"Connecting to relay {RELAY_HOST}:{RELAY_PORT} for room {room_code} as {role}...")
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
         if success:
+            self.active_room_code = room_code
             self.log(f"✓ Connected via relay (Room: {room_code})")
             self.relay_status_signal.emit(f"Connected via relay (Room: {room_code})")
             # Transition panel to active call view (must use signal for thread safety)
@@ -514,7 +528,7 @@ class IntercomApp(QObject):
             uid = user.get("user_id", "")
             name = user.get("name", "Unknown")
             mode = user.get("mode", "GREEN")
-            self.online_users[uid] = {"name": name, "mode": mode}
+            self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", "")}
             panel_users.append({
                 'id': uid,
                 'name': name,
