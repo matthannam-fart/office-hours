@@ -328,6 +328,7 @@ class FloatingPanel(QWidget):
     incognito_toggled = Signal(bool)
     dark_mode_toggled = Signal(bool)
     quit_requested = Signal()
+    play_message_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -428,6 +429,11 @@ class FloatingPanel(QWidget):
         self._call_banner = self._build_call_banner()
         self._call_banner.setVisible(False)
         root.addWidget(self._call_banner)
+
+        # ── Message Banner (hidden by default) ────────────────
+        self._message_banner = self._build_message_banner()
+        self._message_banner.setVisible(False)
+        root.addWidget(self._message_banner)
 
         # ── Connection Bar ────────────────────────────────────
         self._conn_bar = self._build_conn_bar()
@@ -907,6 +913,64 @@ class FloatingPanel(QWidget):
         h.addWidget(end_btn)
 
         return banner
+
+    # ── Pinned Compact ────────────────────────────────────────────
+    def _build_message_banner(self):
+        banner = QFrame()
+        banner.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 #fff8e1, stop:1 #fffde7);
+            border-bottom: 1px solid #ffe082;
+        """)
+
+        h = QHBoxLayout(banner)
+        h.setContentsMargins(14, 8, 14, 8)
+        h.setSpacing(8)
+
+        icon = QLabel("\U0001f4e9")
+        icon.setStyleSheet("font-size: 18px;")
+        h.addWidget(icon)
+
+        self._msg_label = QLabel("New Message")
+        self._msg_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #f57f17;")
+        h.addWidget(self._msg_label, 1)
+
+        play_btn = QPushButton("\u25b6 Play")
+        play_btn.setCursor(Qt.PointingHandCursor)
+        play_btn.setStyleSheet("""
+            QPushButton {
+                background: #43a047; color: white; border: none;
+                border-radius: 8px; padding: 4px 12px; font-weight: 700;
+                font-size: 12px;
+            }
+            QPushButton:hover { background: #388e3c; }
+        """)
+        play_btn.clicked.connect(self.play_message_requested.emit)
+        h.addWidget(play_btn)
+
+        dismiss_btn = QPushButton("\u2715")
+        dismiss_btn.setCursor(Qt.PointingHandCursor)
+        dismiss_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #999; border: none;
+                font-size: 16px; font-weight: 700; padding: 2px 6px;
+            }
+            QPushButton:hover { color: #555; }
+        """)
+        dismiss_btn.clicked.connect(lambda: self._message_banner.setVisible(False))
+        h.addWidget(dismiss_btn)
+
+        return banner
+
+    def show_message(self):
+        """Show the new message indicator banner."""
+        self._message_banner.setVisible(True)
+        self.adjustSize()
+
+    def hide_message(self):
+        """Hide the message indicator banner."""
+        self._message_banner.setVisible(False)
+        self.adjustSize()
 
     # ── Pinned Compact ────────────────────────────────────────────
     def _build_pinned_compact(self):

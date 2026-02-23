@@ -150,6 +150,7 @@ class IntercomApp(QObject):
         self.panel.decline_call_requested.connect(self._on_decline_call)
         self.panel.end_call_requested.connect(self.do_disconnect)
         self.panel.cancel_call_requested.connect(self._on_cancel_call)
+        self.panel.play_message_requested.connect(self._on_play_message)
         self.panel.quit_requested.connect(self._quit)
         self.panel.incognito_toggled.connect(self._on_incognito_toggle)
         self.panel.dark_mode_toggled.connect(self._on_dark_mode_toggle)
@@ -607,6 +608,16 @@ class IntercomApp(QObject):
             self.update_deck_display()
             self.audio.play_file(self.incoming_message_path)
 
+    def _on_play_message(self):
+        """Play voicemail from the panel banner."""
+        if self.has_message and self.incoming_message_path:
+            self.log("Playing Message...")
+            self.has_message = False
+            self.is_flashing = False
+            self.update_deck_display()
+            self.panel.hide_message()
+            self.audio.play_file(self.incoming_message_path)
+
     def cycle_mode(self):
         old_mode = self.mode
 
@@ -705,6 +716,7 @@ class IntercomApp(QObject):
                 self.is_flashing = True
                 self.update_deck_display()
                 self.audio.play_notification()
+                self.panel.show_message()
                 self.log_signal.emit("Message Saved.")
             except Exception as e:
                 self.log_signal.emit(f"Error saving file: {e}")
