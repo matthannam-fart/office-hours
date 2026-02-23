@@ -343,6 +343,9 @@ class IntercomApp(QObject):
         self.panel.hide_outgoing()
         target_id = getattr(self, '_calling_user_id', None)
         self.network.cancel_connection(target_id)
+        # Also disconnect TCP in case we have a direct LAN connection open
+        if self.network.connected and not self.network.relay_mode:
+            self.network.disconnect()
         self._calling_user_id = None
         self.log("Call cancelled.")
 
