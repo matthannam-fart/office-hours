@@ -1287,7 +1287,7 @@ class FloatingPanel(QWidget):
                 QComboBox {
                     font-size: 11px; padding: 2px 4px;
                     border: 1px solid rgba(0,0,0,0.1); border-radius: 4px;
-                    background: white; min-width: 100px;
+                    background: white;
                 }
             """)
             in_combo.addItem("System Default", None)

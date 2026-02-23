@@ -327,11 +327,15 @@ class NetworkManager:
             try:
                 client, addr = self.tcp_server.accept()
                 
-                # If we already have an active connection, reject the new one
+                # If we already have an active connection, close the old one
                 if self.connected and self.tcp_socket:
-                    self._log(f"Already connected, rejecting incoming from {addr}")
-                    client.close()
-                    continue
+                    self._log(f"Replacing stale connection with new from {addr}")
+                    try:
+                        self.tcp_socket.close()
+                    except:
+                        pass
+                    self.connected = False
+                    self.tcp_socket = None
                 
                 self.tcp_socket = client
                 self.peer_ip = addr[0]
