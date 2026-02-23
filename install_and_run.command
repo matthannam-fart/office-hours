@@ -13,6 +13,17 @@ echo ""
 echo "Clearing macOS quarantine flags..."
 xattr -rd com.apple.quarantine "$(dirname "$0")" 2>/dev/null || true
 
+# ── Step 0.5: Auto-update if this is a git repo ──
+if [ -d ".git" ]; then
+    echo "Checking for updates..."
+    if git pull --ff-only 2>/dev/null; then
+        echo "✓ Updated to latest version."
+    else
+        echo "ℹ Already up to date (or merge needed)."
+    fi
+    echo ""
+fi
+
 # ── Step 1: Check for Xcode Command Line Tools ──
 if ! xcode-select -p &> /dev/null; then
     echo "Installing Xcode Command Line Tools (required)..."
