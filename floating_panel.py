@@ -445,8 +445,9 @@ class FloatingPanel(QWidget):
         self._message_banner.setVisible(False)
         root.addWidget(self._message_banner)
 
-        # ── Connection Bar ────────────────────────────────────
+        # ── Connection Bar (hidden — used internally) ─────────
         self._conn_bar = self._build_conn_bar()
+        self._conn_bar.setVisible(False)
         root.addWidget(self._conn_bar)
 
         # ── Disconnected Bar (hidden when connected) ──────────
@@ -905,6 +906,15 @@ class FloatingPanel(QWidget):
         self.call_name_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
         h.addWidget(self.call_name_label, 1)
 
+        self.call_room_label = QLabel("")
+        self.call_room_label.setStyleSheet("""
+            font-size: 10px; color: #888; font-weight: 500;
+            background: rgba(0,0,0,0.04); border-radius: 4px;
+            padding: 2px 6px;
+        """)
+        self.call_room_label.setVisible(False)
+        h.addWidget(self.call_room_label)
+
         end_btn = QPushButton("End")
         end_btn.setCursor(Qt.PointingHandCursor)
         end_btn.setStyleSheet("""
@@ -1149,9 +1159,14 @@ class FloatingPanel(QWidget):
         self._incoming_banner.setVisible(False)
         self.adjustSize()
 
-    def show_call(self, caller_name):
+    def show_call(self, caller_name, room_code=""):
         """Show the in-call banner."""
         self.call_name_label.setText(caller_name)
+        if room_code:
+            self.call_room_label.setText(room_code)
+            self.call_room_label.setVisible(True)
+        else:
+            self.call_room_label.setVisible(False)
         self._call_banner.setVisible(True)
         self._incoming_banner.setVisible(False)
         self._outgoing_banner.setVisible(False)
@@ -1162,7 +1177,7 @@ class FloatingPanel(QWidget):
     def hide_call(self):
         """Hide the in-call banner and restore normal layout."""
         self._call_banner.setVisible(False)
-        self._conn_bar.setVisible(True)
+        self.call_room_label.setVisible(False)
         self._user_section.setVisible(True)
         self.adjustSize()
 
