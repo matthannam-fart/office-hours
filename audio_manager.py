@@ -45,7 +45,13 @@ except ImportError:
                         sample = -sample
                     result.extend(struct.pack('<h', max(-32768, min(32767, sample))))
                 return bytes(result)
+import time
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
+
+# Ducking: how much to attenuate mic when speaker is active (0.05 = 95% reduction)
+DUCK_ATTENUATION = 0.05
+# How long to keep ducking after last incoming audio chunk (seconds)
+DUCK_HOLDOFF = 0.2
 
 class AudioManager:
     def __init__(self, network_manager, log_callback=None):
@@ -56,10 +62,12 @@ class AudioManager:
         self.audio_queue = queue.Queue()
         self.input_device = None
         self.output_device = None
-        
+
         # Voicemail / Message
         self.message_buffer = []
 
+        # Echo ducking state
+        self._last_incoming_time = 0.0  # timestamp of last incoming audio
     def log(self, msg):
         if self.log_callback:
             self.log_callback(msg)
@@ -95,12 +103,21 @@ class AudioManager:
     def stop_streaming(self):
         self.streaming = False
 
+    def _is_ducking(self):
+        """Return True if we should attenuate the mic (speaker is active)."""
+        return (time.time() - self._last_incoming_time) < DUCK_HOLDOFF
+
     def _stream_mic(self):
-        def callback(indata, frames, time, status):
+        def callback(indata, frames, time_info, status):
             if status:
                 self.log(str(status))
             if self.streaming:
-                raw = indata.tobytes()
+                if self._is_ducking():
+                    # Attenuate mic to prevent echo
+                    ducked = (indata * DUCK_ATTENUATION).astype(DTYPE)
+                    raw = ducked.tobytes()
+                else:
+                    raw = indata.tobytes()
                 # Compress with µ-law: 16-bit → 8-bit (halves bandwidth)
                 compressed = audioop.lin2ulaw(raw, 2)
                 self.network_manager.send_audio(compressed)
@@ -154,12 +171,15 @@ class AudioManager:
     def play_audio_chunk(self, data):
         """Queue compressed audio chunk for playback"""
         try:
+            # Mark that we're playing incoming audio (for ducking)
+            self._last_incoming_time = time.time()
+
             # Decompress µ-law: 8-bit → 16-bit
             raw = audioop.ulaw2lin(data, 2)
             audio_data = np.frombuffer(raw, dtype=DTYPE)
             if len(audio_data) % CHANNELS != 0:
                  return
-            
+
             audio_data = audio_data.reshape(-1, CHANNELS)
             self.audio_queue.put(audio_data)
         except Exception as e:
