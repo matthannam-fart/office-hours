@@ -9,7 +9,8 @@ from ctypes import c_void_p
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QSystemTrayIcon, QMenu, QLineEdit, QSpacerItem, QSlider, QWidgetAction
+    QSystemTrayIcon, QMenu, QLineEdit, QSpacerItem, QSlider, QWidgetAction,
+    QComboBox
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot,
@@ -329,6 +330,8 @@ class FloatingPanel(QWidget):
     dark_mode_toggled = Signal(bool)
     quit_requested = Signal()
     play_message_requested = Signal()
+    audio_input_changed = Signal(object)   # device index or None
+    audio_output_changed = Signal(object)  # device index or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1233,6 +1236,75 @@ class FloatingPanel(QWidget):
 
         menu.addSeparator()
 
+        # Audio Input
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+
+            # Input device
+            in_widget = QWidget()
+            in_layout = QHBoxLayout(in_widget)
+            in_layout.setContentsMargins(8, 4, 8, 4)
+            in_label = QLabel("🎤")
+            in_label.setStyleSheet("font-size: 13px; color: #2ABFBF;")
+            in_combo = QComboBox()
+            in_combo.setStyleSheet("""
+                QComboBox {
+                    font-size: 11px; padding: 2px 4px;
+                    border: 1px solid rgba(0,0,0,0.1); border-radius: 4px;
+                    background: white; min-width: 140px;
+                }
+            """)
+            in_combo.addItem("System Default", None)
+            current_in = getattr(self, '_current_input_idx', None)
+            for i, d in enumerate(devices):
+                if d['max_input_channels'] > 0:
+                    in_combo.addItem(d['name'][:30], i)
+                    if current_in == i:
+                        in_combo.setCurrentIndex(in_combo.count() - 1)
+            in_combo.currentIndexChanged.connect(
+                lambda idx, c=in_combo: self._on_input_device_changed(c.currentData())
+            )
+            in_layout.addWidget(in_label)
+            in_layout.addWidget(in_combo, 1)
+            in_action = QWidgetAction(menu)
+            in_action.setDefaultWidget(in_widget)
+            menu.addAction(in_action)
+
+            # Output device
+            out_widget = QWidget()
+            out_layout = QHBoxLayout(out_widget)
+            out_layout.setContentsMargins(8, 4, 8, 4)
+            out_label = QLabel("🔈")
+            out_label.setStyleSheet("font-size: 13px; color: #2ABFBF;")
+            out_combo = QComboBox()
+            out_combo.setStyleSheet("""
+                QComboBox {
+                    font-size: 11px; padding: 2px 4px;
+                    border: 1px solid rgba(0,0,0,0.1); border-radius: 4px;
+                    background: white; min-width: 140px;
+                }
+            """)
+            out_combo.addItem("System Default", None)
+            current_out = getattr(self, '_current_output_idx', None)
+            for i, d in enumerate(devices):
+                if d['max_output_channels'] > 0:
+                    out_combo.addItem(d['name'][:30], i)
+                    if current_out == i:
+                        out_combo.setCurrentIndex(out_combo.count() - 1)
+            out_combo.currentIndexChanged.connect(
+                lambda idx, c=out_combo: self._on_output_device_changed(c.currentData())
+            )
+            out_layout.addWidget(out_label)
+            out_layout.addWidget(out_combo, 1)
+            out_action = QWidgetAction(menu)
+            out_action.setDefaultWidget(out_widget)
+            menu.addAction(out_action)
+        except Exception as e:
+            print(f"Audio device menu error: {e}")
+
+        menu.addSeparator()
+
         # Quit
         quit_action = menu.addAction("🙊  Quit OH")
         quit_action.triggered.connect(self.quit_requested.emit)
@@ -1242,6 +1314,14 @@ class FloatingPanel(QWidget):
             QPoint(0, self.menu_btn.height() + 4)
         )
         menu.exec(pos)
+
+    def _on_input_device_changed(self, device_index):
+        self._current_input_idx = device_index
+        self.audio_input_changed.emit(device_index)
+
+    def _on_output_device_changed(self, device_index):
+        self._current_output_idx = device_index
+        self.audio_output_changed.emit(device_index)
 
     def _toggle_incognito(self):
         self._incognito = not self._incognito

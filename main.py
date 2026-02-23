@@ -37,6 +37,7 @@ class IntercomApp(QObject):
     presence_update_signal = Signal(list)          # list of online users
     presence_request_signal = Signal(str, str, str) # from_name, from_id, room_code
     call_connected_signal = Signal(str)            # peer_name — relay room joined
+    message_received_signal = Signal()              # new voicemail received
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -124,6 +125,7 @@ class IntercomApp(QObject):
         self.peer_lost_signal.connect(self.remove_peer_from_ui)
         self.relay_status_signal.connect(self._update_relay_status)
         self.call_connected_signal.connect(self._on_call_connected)
+        self.message_received_signal.connect(self.panel.show_message)
         self.connection_request_signal.connect(self._show_connection_request)
         self.connection_response_signal.connect(self._handle_connection_response)
         self.presence_update_signal.connect(self._update_online_users)
@@ -151,6 +153,8 @@ class IntercomApp(QObject):
         self.panel.end_call_requested.connect(self.do_disconnect)
         self.panel.cancel_call_requested.connect(self._on_cancel_call)
         self.panel.play_message_requested.connect(self._on_play_message)
+        self.panel.audio_input_changed.connect(self.audio.set_input_device)
+        self.panel.audio_output_changed.connect(self.audio.set_output_device)
         self.panel.quit_requested.connect(self._quit)
         self.panel.incognito_toggled.connect(self._on_incognito_toggle)
         self.panel.dark_mode_toggled.connect(self._on_dark_mode_toggle)
@@ -734,7 +738,7 @@ class IntercomApp(QObject):
                 self.is_flashing = True
                 self.update_deck_display()
                 self.audio.play_notification()
-                self.panel.show_message()
+                self.message_received_signal.emit()
                 self.log_signal.emit("Message Saved.")
             except Exception as e:
                 self.log_signal.emit(f"Error saving file: {e}")
