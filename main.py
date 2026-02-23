@@ -162,7 +162,24 @@ class IntercomApp(QObject):
                 self.panel.hide()
             else:
                 geo = self.tray.geometry()
-                self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
+                if geo.isValid() and geo.width() > 0:
+                    # macOS: tray geometry works, anchor below icon
+                    self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
+                else:
+                    # Windows: tray geometry often returns (0,0,0,0)
+                    # Position at bottom-right of available screen
+                    import sys
+                    screen = QApplication.primaryScreen().availableGeometry()
+                    if sys.platform == 'win32':
+                        x = screen.right() - self.panel.width() - 8
+                        y = screen.bottom() - self.panel.height() - 8
+                    else:
+                        x = screen.right() - self.panel.width() - 8
+                        y = screen.top() + 30
+                    self.panel.move(x, y)
+                    self.panel.show()
+                    self.panel.raise_()
+                    self.panel.activateWindow()
 
     def _update_tray_icon(self):
         color = COLORS.get(self.mode, COLORS['GREEN'])

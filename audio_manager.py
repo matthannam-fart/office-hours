@@ -4,7 +4,47 @@ import numpy as np
 import threading
 import queue
 import os
-import audioop
+try:
+    import audioop
+except ImportError:
+    # audioop removed in Python 3.13 — try the backport
+    try:
+        import audioop_lts as audioop
+    except ImportError:
+        # Pure-Python µ-law fallback (slower but functional)
+        import struct
+        class audioop:
+            @staticmethod
+            def lin2ulaw(data, width):
+                samples = struct.unpack(f'<{len(data)//width}h', data)
+                bias = 0x84
+                clip = 32635
+                result = bytearray()
+                for s in samples:
+                    sign = 0x80 if s < 0 else 0
+                    s = min(abs(s), clip) + bias
+                    exp = 7
+                    for i in range(7, 0, -1):
+                        if s >= (1 << (i + 3)):
+                            exp = i
+                            break
+                    mantissa = (s >> (exp + 3)) & 0x0F
+                    result.append(~(sign | (exp << 4) | mantissa) & 0xFF)
+                return bytes(result)
+            @staticmethod
+            def ulaw2lin(data, width):
+                result = bytearray()
+                for b in data:
+                    b = ~b & 0xFF
+                    sign = b & 0x80
+                    exp = (b >> 4) & 0x07
+                    mantissa = b & 0x0F
+                    sample = ((mantissa << 3) + 0x84) << exp
+                    sample -= 0x84
+                    if sign:
+                        sample = -sample
+                    result.extend(struct.pack('<h', max(-32768, min(32767, sample))))
+                return bytes(result)
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
 
 class AudioManager:
