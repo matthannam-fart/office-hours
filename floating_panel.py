@@ -1122,29 +1122,46 @@ class FloatingPanel(QWidget):
         self.outgoing_name.setText(target_name)
         self.outgoing_sub.setText("Calling...")
         self._outgoing_banner.setVisible(True)
+        self._conn_bar.setVisible(False)
+        self._user_section.setVisible(False)
+        self.adjustSize()
 
     def hide_outgoing(self):
         """Hide the outgoing call banner."""
         self._outgoing_banner.setVisible(False)
+        self._conn_bar.setVisible(True)
+        self._user_section.setVisible(True)
+        self.adjustSize()
 
     def show_incoming(self, caller_name):
         """Show the incoming call banner."""
         self.incoming_name.setText(caller_name)
         self._incoming_banner.setVisible(True)
+        self._conn_bar.setVisible(False)
+        self._user_section.setVisible(False)
+        self.adjustSize()
 
     def hide_incoming(self):
         """Hide the incoming call banner."""
         self._incoming_banner.setVisible(False)
+        self.adjustSize()
 
     def show_call(self, caller_name):
         """Show the in-call banner."""
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
         self._incoming_banner.setVisible(False)
+        self._outgoing_banner.setVisible(False)
+        self._conn_bar.setVisible(False)
+        self._user_section.setVisible(False)
+        self.adjustSize()
 
     def hide_call(self):
-        """Hide the in-call banner."""
+        """Hide the in-call banner and restore normal layout."""
         self._call_banner.setVisible(False)
+        self._conn_bar.setVisible(True)
+        self._user_section.setVisible(True)
+        self.adjustSize()
 
     def update_call_timer(self, text):
         """Update the call timer display."""
