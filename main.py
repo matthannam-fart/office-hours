@@ -243,10 +243,12 @@ class IntercomApp(QObject):
         """Try direct TCP connection to a LAN peer."""
         success = self.network.connect(ip)
         if success:
-            self.log(f"✓ Direct LAN connection to {ip}")
-            self.call_connected_signal.emit(target_name)
-            self._start_open_line_if_ready()
-            self._set_busy()
+            self.log(f"TCP connected to {ip} — sending call request...")
+            # Send a connection request — callee will show accept/decline
+            self.network.send_control("CONNECTION_REQUEST", {
+                "name": self.network.display_name or "Unknown"
+            })
+            # Keep showing "Calling..." — wait for CONNECTION_ACCEPTED
         else:
             self.log(f"Direct LAN failed, falling back to relay...")
             if hasattr(self, '_calling_user_id'):
@@ -296,11 +298,23 @@ class IntercomApp(QObject):
     def _on_accept_call(self):
         self.panel.hide_incoming()
         if self.pending_room and self.pending_from_id:
+            # Relay-based call: send ACCEPT to presence server
             self.log(f"Accepted call — sending ACCEPT for room {self.pending_room}")
             self.network.accept_presence_connection(self.pending_room, self.pending_from_id)
-            # Don't show call UI yet — wait for CONNECT_ROOM → _join_relay_room to succeed
+        elif self.network.connected and not self.pending_room:
+            # Direct LAN call: send CONNECTION_ACCEPTED via TCP
+            self.log("Accepted direct call")
+            self.network.send_control("CONNECTION_ACCEPTED", {
+                "name": self.network.display_name or "Unknown"
+            })
+            caller_name = "Peer"
+            if hasattr(self, '_incoming_caller_name'):
+                caller_name = self._incoming_caller_name
+            self.call_connected_signal.emit(caller_name)
+            self._start_open_line_if_ready()
+            self._set_busy()
         else:
-            self.log(f"Accept failed: pending_room={self.pending_room}, pending_from_id={self.pending_from_id}")
+            self.log(f"Accept failed: pending_room={self.pending_room}, connected={self.network.connected}")
 
     def _on_decline_call(self):
         self.panel.hide_incoming()
@@ -678,21 +692,25 @@ class IntercomApp(QObject):
         elif msg_type == "PEER_CONNECTED":
             ip = payload.get("ip", "unknown")
             self.peer_ip = ip
-            self.log_signal.emit(f"✓ Direct LAN connection from {ip}")
-            # Auto-show call UI and start audio for direct connections
-            self.call_connected_signal.emit(f"Peer ({ip})")
-            self._start_open_line_if_ready()
+            self.log_signal.emit(f"Direct connection from {ip} (waiting for call request)")
 
         elif msg_type == "CONNECTION_REQUEST":
             requester_name = payload.get("name", "Unknown")
-            self.log_signal.emit(f"Connection request from {requester_name}")
-            self.connection_request_signal.emit(requester_name, self.peer_ip or "unknown")
+            self.log_signal.emit(f"Incoming call from {requester_name}")
+            # Store caller name for accept handler
+            self._incoming_caller_name = requester_name
+            # Show accept/decline UI
+            self.pending_from_id = self.peer_ip or "direct"
+            self.pending_room = None  # No relay room for direct calls
+            self.presence_request_signal.emit(requester_name, self.pending_from_id, "")
 
         elif msg_type == "CONNECTION_ACCEPTED":
-            self.log_signal.emit("Connection accepted!")
-            self.pending_connection = False
-            self.connection_response_signal.emit(True)
-            self.send_status()
+            self.log_signal.emit("Call accepted!")
+            caller_name = payload.get("name", "Peer")
+            self.call_connected_signal.emit(caller_name)
+            self._start_open_line_if_ready()
+            self._set_busy()
+
 
         elif msg_type == "CONNECTION_REJECTED":
             self.log_signal.emit("Connection declined.")
