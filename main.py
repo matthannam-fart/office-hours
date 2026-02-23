@@ -36,6 +36,7 @@ class IntercomApp(QObject):
     connection_response_signal = Signal(bool)     # accepted or rejected
     presence_update_signal = Signal(list)          # list of online users
     presence_request_signal = Signal(str, str, str) # from_name, from_id, room_code
+    call_connected_signal = Signal(str)            # peer_name — relay room joined
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -122,6 +123,7 @@ class IntercomApp(QObject):
         self.peer_found_signal.connect(self.add_peer_to_ui)
         self.peer_lost_signal.connect(self.remove_peer_from_ui)
         self.relay_status_signal.connect(self._update_relay_status)
+        self.call_connected_signal.connect(self._on_call_connected)
         self.connection_request_signal.connect(self._show_connection_request)
         self.connection_response_signal.connect(self._handle_connection_response)
         self.presence_update_signal.connect(self._update_online_users)
@@ -428,13 +430,30 @@ class IntercomApp(QObject):
             self.relay_status_signal.emit("Connection declined")
 
     def _join_relay_room(self, room_code, role):
+        self.log(f"Joining relay room {room_code} as {role}...")
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
         if success:
+            self.log(f"Connected via relay (Room: {room_code})")
             self.relay_status_signal.emit(f"Connected via relay (Room: {room_code})")
+            # Transition panel to active call view (must use signal for thread safety)
+            if role == "creator":
+                target_name = "Peer"
+                if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
+                    target_name = self.online_users[self._calling_user_id].get("name", "Peer")
+                self.call_connected_signal.emit(target_name)
             self._start_open_line_if_ready()
             self._set_busy()
         else:
+            self.log(f"Failed to join relay room {room_code}")
             self.relay_status_signal.emit("Failed to join room")
+
+    @Slot(str)
+    def _on_call_connected(self, peer_name):
+        """Called on main thread when relay room join succeeds."""
+        self.panel.hide_outgoing()
+        self.panel.show_call(peer_name)
+        self.call_timer_seconds = 0
+        self.call_timer.start(1000)
 
     @Slot(list)
     def _update_online_users(self, users):
