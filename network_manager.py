@@ -531,6 +531,20 @@ class NetworkManager:
         except Exception as e:
             self._log(f"Reject connection failed: {e}")
 
+    def cancel_connection(self, target_user_id=None):
+        """Cancel an outgoing connection request"""
+        if not self.presence_connected or not self.presence_socket:
+            return
+        try:
+            msg = json.dumps({
+                "action": "CANCEL_CONNECTION",
+                "target_id": target_user_id or ""
+            }).encode('utf-8')
+            self._send_frame_on(self.presence_socket, msg)
+            self._log("Connection request cancelled")
+        except Exception as e:
+            self._log(f"Cancel connection failed: {e}")
+
     def _listen_presence(self):
         """Listen for presence updates from the server"""
         while self.running and self.presence_connected:
