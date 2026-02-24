@@ -631,46 +631,10 @@ class FloatingPanel(QWidget):
         h.setContentsMargins(12, 4, 8, 4)
         h.setSpacing(6)
 
-        # Room code input
-        self.room_input = QLineEdit()
-        self.room_input.setPlaceholderText("Room code e.g. OH-7X3K")
-        self.room_input.setStyleSheet("""
-            QLineEdit {
-                font-size: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
-                padding: 4px 8px; background: rgba(255,255,255,0.5); color: #3a3a3a;
-            }
-        """)
-        h.addWidget(self.room_input, 1)
-
-        # Join button
-        join_btn = QPushButton("Join")
-        join_btn.setCursor(Qt.PointingHandCursor)
-        join_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 11px; font-weight: 700; color: #00a651;
-                background: #e6f9ed; border: 1px solid #80e6a0;
-                border-radius: 8px; padding: 4px 10px;
-            }
-            QPushButton:hover { background: #c8f0d8; }
-        """)
-        join_btn.clicked.connect(lambda: self.join_requested.emit(self.room_input.text().strip()))
-        h.addWidget(join_btn)
-
-        # Create room button (+)
-        create_btn = QPushButton("+")
-        create_btn.setFixedSize(24, 24)
-        create_btn.setCursor(Qt.PointingHandCursor)
-        create_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 17px; font-weight: 500; color: #00a651;
-                background: transparent; border: none;
-                border-radius: 12px; padding: 0 2px 1px 0;
-            }
-            QPushButton:hover { background: rgba(0,0,0,0.06); }
-        """)
-        create_btn.setToolTip("Create Room")
-        create_btn.clicked.connect(self.create_requested.emit)
-        h.addWidget(create_btn)
+        # Status label
+        status_lbl = QLabel("Connecting...")
+        status_lbl.setStyleSheet("font-size: 12px; color: #aaa; font-weight: 500;")
+        h.addWidget(status_lbl, 1)
 
         # Hamburger menu (☰)
         self.menu_btn = QPushButton("☰")
@@ -1084,10 +1048,7 @@ class FloatingPanel(QWidget):
     def set_connection(self, connected, room_code=""):
         """Switch between connected and disconnected states."""
         self._connected = connected
-        pass  # Connection bar removed
         self._disconn_bar.setVisible(not connected)
-        if connected and room_code:
-            self.room_label.setText(f"Connected · {room_code}")
 
     def set_users(self, users):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]"""
