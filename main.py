@@ -518,7 +518,7 @@ class IntercomApp(QObject):
     def _on_call_connected(self, peer_name):
         """Called on main thread when relay room join succeeds."""
         self.panel.hide_outgoing()
-        self.panel.show_call(peer_name, self.active_room_code or "")
+        self.panel.show_call(peer_name)
 
 
     @Slot(list)
