@@ -715,6 +715,21 @@ class NetworkManager:
         except Exception as e:
             self._log(f"Accept connection failed: {e}")
 
+    def accept_presence_connection_by_id(self, from_id):
+        """Fallback: ask the relay to set up a room with the given user"""
+        if not self.presence_connected or not self.presence_socket:
+            self._log("Cannot accept by ID: not connected to presence")
+            return
+        try:
+            msg = json.dumps({
+                "action": "ACCEPT_CONNECTION_BY_ID",
+                "from_id": from_id
+            }).encode('utf-8')
+            self._send_frame_on(self.presence_socket, msg)
+            self._log(f"Sent ACCEPT_CONNECTION_BY_ID for {from_id}")
+        except Exception as e:
+            self._log(f"Accept connection by ID failed: {e}")
+
     def reject_presence_connection(self, from_id):
         """Reject an incoming connection request via presence"""
         if not self.presence_connected or not self.presence_socket:
@@ -759,6 +774,7 @@ class NetworkManager:
 
                 elif msg_type == "CONNECTION_REQUEST":
                     # Incoming connection request from another user
+                    self._log(f"[Presence] Got CONNECTION_REQUEST: from={msg.get('from_name')} room={msg.get('room')}")
                     if self.presence_callback:
                         self.presence_callback(msg)
 

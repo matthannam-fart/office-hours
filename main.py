@@ -291,15 +291,13 @@ class IntercomApp(QObject):
         # Exact match first
         if target_name in self.peer_map:
             return self.peer_map[target_name]
-        # Case-insensitive match
+        # Case-insensitive exact match
         lower = target_name.lower()
         for name, ip in self.peer_map.items():
             if name.lower() == lower:
                 return ip
-        # Partial match (peer name contains target or vice versa)
-        for name, ip in self.peer_map.items():
-            if lower in name.lower() or name.lower() in lower:
-                return ip
+        # Note: partial matching removed to avoid routing remote users
+        # through the direct LAN path accidentally
         return None
 
     def _try_direct_connect(self, ip, target_name):
@@ -320,13 +318,19 @@ class IntercomApp(QObject):
     # ── Accept / Decline Call ─────────────────────────────────────
     def _on_accept_call(self):
         self.panel.hide_incoming()
+        self.log(f"Accept: room={self.pending_room!r} from_id={self.pending_from_id!r} connected={self.network.connected}")
         if self.pending_room and self.pending_from_id:
             # Relay-based call: send ACCEPT to presence server
-            self.log("Accepted call — connecting...")
+            self.log("Accepted relay call — connecting...")
             self.network.accept_presence_connection(self.pending_room, self.pending_from_id)
+        elif self.pending_from_id and not self.pending_room:
+            # Have a from_id but no room — try relay accept anyway
+            # (handles edge case where pending_room was cleared by race condition)
+            self.log("Accepted call — requesting relay room from presence...")
+            self.network.accept_presence_connection_by_id(self.pending_from_id)
         elif self.network.connected and not self.pending_room:
             # Direct LAN call: send CONNECTION_ACCEPTED via TCP
-            self.log("Accepted call")
+            self.log("Accepted direct LAN call")
             self.network.send_control("CONNECTION_ACCEPTED", {
                 "name": self.network.display_name or "Unknown"
             })
@@ -337,7 +341,7 @@ class IntercomApp(QObject):
             self._start_open_line_if_ready()
             self._set_busy()
         else:
-            self.log("Accept failed — no active connection")
+            self.log("Accept failed — no active connection (no room, no from_id, not connected)")
 
     def _on_decline_call(self):
         self.panel.hide_incoming()
@@ -479,7 +483,14 @@ class IntercomApp(QObject):
 
         elif msg_type == "CONNECTION_REJECTED":
             self.log_signal.emit("Call was declined.")
+            self.panel.hide_outgoing()
             self.panel.set_connection(False)
+
+        elif msg_type == "CONNECTION_CANCELLED":
+            self.log_signal.emit("Call was cancelled by caller.")
+            self.panel.hide_incoming()
+            self.pending_room = None
+            self.pending_from_id = None
 
     def _join_relay_room(self, room_code, role):
         """Connect to relay for an active call. Room code is internal — never shown to user."""
@@ -536,6 +547,7 @@ class IntercomApp(QObject):
     @Slot(str, str, str)
     def _show_presence_request(self, from_name, from_id, room_code):
         """Show incoming call via presence."""
+        self.log(f"Incoming call from {from_name} (id={from_id}, room={room_code!r})")
         self.pending_from_id = from_id
         self.pending_room = room_code  # Internal — not shown to user
         self.panel.show_incoming(from_name)
@@ -734,13 +746,16 @@ class IntercomApp(QObject):
 
         elif msg_type == "CONNECTION_REQUEST":
             requester_name = payload.get("name", "Unknown")
-            self.log_signal.emit(f"Incoming call from {requester_name}")
+            self.log_signal.emit(f"Incoming direct LAN call from {requester_name}")
             # Store caller name for accept handler
             self._incoming_caller_name = requester_name
-            # Show accept/decline UI
-            self.pending_from_id = self.peer_ip or "direct"
-            self.pending_room = None  # No relay session for direct calls
-            self.presence_request_signal.emit(requester_name, self.pending_from_id, "")
+            # Only overwrite pending state if we don't already have a relay call pending
+            if not self.pending_room:
+                self.pending_from_id = self.peer_ip or "direct"
+                self.pending_room = None  # No relay session for direct calls
+                self.presence_request_signal.emit(requester_name, self.pending_from_id, "")
+            else:
+                self.log_signal.emit(f"Ignoring direct CONNECTION_REQUEST — relay call already pending")
 
         elif msg_type == "CONNECTION_ACCEPTED":
             self.log_signal.emit("Call accepted!")

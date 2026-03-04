@@ -213,6 +213,38 @@ def handle_presence_client(client_sock, client_addr):
                         "role": "joiner"
                     })
 
+            elif action == "ACCEPT_CONNECTION_BY_ID":
+                # Fallback: callee lost the room code but has the caller's ID
+                from_id = msg.get("from_id")
+                if from_id:
+                    # Create a new room and tell both sides to join
+                    room_code = generate_room_code()
+                    with rooms_lock:
+                        rooms[room_code] = {
+                            "clients": [],
+                            "udp_addrs": [],
+                            "created": time.time()
+                        }
+                    print(f"[Presence] ACCEPT_BY_ID: created room {room_code} for {user_id} <-> {from_id}")
+                    # Tell the acceptor to join
+                    send_json(client_sock, {
+                        "type": "CONNECT_ROOM",
+                        "room": room_code,
+                        "role": "joiner"
+                    })
+                    # Tell the caller to join
+                    with presence_lock:
+                        caller = presence.get(from_id)
+                    if caller:
+                        try:
+                            send_json(caller["sock"], {
+                                "type": "CONNECT_ROOM",
+                                "room": room_code,
+                                "role": "creator"
+                            })
+                        except Exception:
+                            print(f"[Presence] Could not notify caller {from_id}")
+
             elif action == "REJECT_CONNECTION":
                 target_id = msg.get("from_id")
                 if target_id:
@@ -224,6 +256,22 @@ def handle_presence_client(client_sock, client_addr):
                                 "type": "CONNECTION_REJECTED",
                                 "message": "Connection declined"
                             })
+                        except Exception:
+                            pass
+
+            elif action == "CANCEL_CONNECTION":
+                # Caller cancelled — notify the target
+                target_id = msg.get("target_id")
+                if target_id:
+                    with presence_lock:
+                        target = presence.get(target_id)
+                    if target:
+                        try:
+                            send_json(target["sock"], {
+                                "type": "CONNECTION_CANCELLED",
+                                "message": "Call was cancelled"
+                            })
+                            print(f"[Presence] {user_id} cancelled call to {target_id}")
                         except Exception:
                             pass
 
