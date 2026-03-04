@@ -13,13 +13,46 @@ echo ""
 echo "Clearing macOS quarantine flags..."
 xattr -rd com.apple.quarantine "$(dirname "$0")" 2>/dev/null || true
 
-# ── Step 0.5: Auto-update if this is a git repo ──
-if [ -d ".git" ]; then
+# ── Step 0.5: Auto-update ──
+REPO_URL="https://github.com/matthannam-fart/office-hours"
+
+if [ -d ".git" ] && command -v git &> /dev/null; then
+    # Git user — just pull
     echo "Checking for updates..."
     if git pull --ff-only 2>/dev/null; then
         echo "✓ Updated to latest version."
     else
         echo "ℹ Already up to date (or merge needed)."
+    fi
+    echo ""
+else
+    # Non-git user — download latest from GitHub
+    echo "Checking for updates..."
+    LATEST_SHA=$(curl -fsSL "https://api.github.com/repos/matthannam-fart/office-hours/commits/main" 2>/dev/null | grep '"sha"' | head -1 | cut -d'"' -f4)
+
+    LOCAL_SHA=""
+    if [ -f ".version" ]; then
+        LOCAL_SHA=$(cat .version)
+    fi
+
+    if [ -n "$LATEST_SHA" ] && [ "$LATEST_SHA" != "$LOCAL_SHA" ]; then
+        echo "New version available — downloading..."
+        TMPDIR_UP=$(mktemp -d)
+        if curl -fsSL "${REPO_URL}/archive/refs/heads/main.zip" -o "$TMPDIR_UP/update.zip" 2>/dev/null; then
+            unzip -qo "$TMPDIR_UP/update.zip" -d "$TMPDIR_UP"
+            # Copy updated files over (preserve venv, user_settings, .version)
+            rsync -a --exclude='venv' --exclude='.version' --exclude='user_settings.json' \
+                "$TMPDIR_UP/office-hours-main/" "$(pwd)/"
+            echo "$LATEST_SHA" > .version
+            echo "✓ Updated to latest version."
+            # Re-clear quarantine on new files
+            xattr -rd com.apple.quarantine "$(pwd)" 2>/dev/null || true
+        else
+            echo "ℹ Could not download update (no internet?)."
+        fi
+        rm -rf "$TMPDIR_UP"
+    else
+        echo "✓ Already up to date."
     fi
     echo ""
 fi

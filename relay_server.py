@@ -8,9 +8,11 @@ Two channels:
 
 Usage:
     python relay_server.py [--port 50002]
+    python relay_server.py --port 50002 --cert server_cert.pem --key server_key.pem
 """
 
 import socket
+import ssl
 import struct
 import threading
 import json
@@ -18,6 +20,41 @@ import time
 import random
 import string
 import argparse
+import collections
+
+# ── Rate Limiting ───────────────────────────────────────────────
+
+# Track JOIN_ROOM attempts per IP: {ip: deque of timestamps}
+join_attempts = {}
+join_attempts_lock = threading.Lock()
+RATE_LIMIT_WINDOW = 30   # seconds
+RATE_LIMIT_MAX = 5        # max attempts per window
+
+def check_rate_limit(ip):
+    """Returns True if the IP is within rate limits, False if blocked."""
+    now = time.time()
+    with join_attempts_lock:
+        if ip not in join_attempts:
+            join_attempts[ip] = collections.deque()
+        q = join_attempts[ip]
+        # Purge old entries
+        while q and q[0] < now - RATE_LIMIT_WINDOW:
+            q.popleft()
+        if len(q) >= RATE_LIMIT_MAX:
+            return False
+        q.append(now)
+        return True
+
+def cleanup_rate_limits():
+    """Periodically clean up stale rate limit entries."""
+    while True:
+        time.sleep(60)
+        now = time.time()
+        with join_attempts_lock:
+            stale = [ip for ip, q in join_attempts.items()
+                     if not q or q[-1] < now - RATE_LIMIT_WINDOW * 2]
+            for ip in stale:
+                del join_attempts[ip]
 
 # ── Presence Registry ────────────────────────────────────────────
 
@@ -36,16 +73,16 @@ def broadcast_presence():
                 "mode": info["mode"],
                 "room": info.get("room", "")
             })
-        
+
         msg = json.dumps({"type": "PRESENCE_UPDATE", "users": user_list}).encode('utf-8')
-        
+
         for uid, info in list(presence.items()):
             try:
                 send_frame(info["sock"], msg)
             except Exception:
                 # Client disconnected — mark for cleanup
                 dead_uids.append(uid)
-    
+
     # Clean up dead clients outside the broadcast loop
     if dead_uids:
         with presence_lock:
@@ -86,7 +123,7 @@ def handle_presence_client(client_sock, client_addr):
     """Handle a presence connection: register, then listen for updates"""
     user_id = None
     print(f"[Presence] New connection from {client_addr}")
-    
+
     try:
         # Set socket timeout so dead connections are detected
         client_sock.settimeout(300)  # 5 minute timeout
@@ -94,19 +131,19 @@ def handle_presence_client(client_sock, client_addr):
             frame = recv_frame(client_sock)
             if frame is None:
                 break
-            
+
             try:
                 msg = json.loads(frame.decode('utf-8'))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            
+
             action = msg.get("action") or msg.get("type")
-            
+
             if action == "REGISTER":
                 user_id = msg.get("user_id", "unknown")
                 name = msg.get("name", "Unknown")
                 mode = msg.get("mode", "GREEN")
-                
+
                 with presence_lock:
                     presence[user_id] = {
                         "name": name,
@@ -114,11 +151,11 @@ def handle_presence_client(client_sock, client_addr):
                         "sock": client_sock,
                         "addr": client_addr
                     }
-                
+
                 print(f"[Presence] Registered: {name} ({user_id})")
                 send_json(client_sock, {"status": "registered", "user_id": user_id})
                 broadcast_presence()
-            
+
             elif action == "MODE_UPDATE":
                 mode = msg.get("mode", "GREEN")
                 room_code = msg.get("room", "")
@@ -128,14 +165,14 @@ def handle_presence_client(client_sock, client_addr):
                         presence[user_id]["room"] = room_code
                 print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else ""))
                 broadcast_presence()
-            
+
             elif action == "CONNECT_TO":
                 target_id = msg.get("target_id")
                 requester_name = msg.get("name", "Someone")
-                
+
                 with presence_lock:
                     target = presence.get(target_id)
-                
+
                 if target:
                     # Pre-create the room so both clients can JOIN_ROOM
                     room_code = generate_room_code()
@@ -146,14 +183,14 @@ def handle_presence_client(client_sock, client_addr):
                             "created": time.time()
                         }
                     print(f"[Presence] {user_id} wants to connect to {target_id}, room: {room_code}")
-                    
+
                     # Tell the requester to join this room
                     send_json(client_sock, {
                         "type": "CONNECT_ROOM",
                         "room": room_code,
                         "role": "creator"
                     })
-                    
+
                     # Tell the target they have an incoming request
                     try:
                         send_json(target["sock"], {
@@ -166,7 +203,7 @@ def handle_presence_client(client_sock, client_addr):
                         send_json(client_sock, {"type": "ERROR", "message": "Target user disconnected"})
                 else:
                     send_json(client_sock, {"type": "ERROR", "message": "User not found or offline"})
-            
+
             elif action == "ACCEPT_CONNECTION":
                 room_code = msg.get("room")
                 if room_code:
@@ -175,7 +212,7 @@ def handle_presence_client(client_sock, client_addr):
                         "room": room_code,
                         "role": "joiner"
                     })
-            
+
             elif action == "REJECT_CONNECTION":
                 target_id = msg.get("from_id")
                 if target_id:
@@ -189,7 +226,7 @@ def handle_presence_client(client_sock, client_addr):
                             })
                         except Exception:
                             pass
-    
+
     except Exception as e:
         print(f"[Presence] Error with {client_addr}: {e}")
     finally:
@@ -207,8 +244,8 @@ rooms = {}          # room_code -> {"clients": [conn1, conn2], "udp_addrs": [add
 rooms_lock = threading.Lock()
 
 def generate_room_code():
-    """Generate a human-friendly room code like OH-7X3K"""
-    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    """Generate a human-friendly room code like OH-7X3KA2 (6 chars for brute-force resistance)"""
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     return f"OH-{suffix}"
 
 def cleanup_stale_rooms(max_age=3600):
@@ -316,6 +353,13 @@ def handle_room_client(client_sock, client_addr, udp_sock):
             send_json(client_sock, {"status": "paired", "room": room_code})
 
         elif action == "JOIN_ROOM":
+            # Rate limit JOIN_ROOM attempts
+            client_ip = client_addr[0]
+            if not check_rate_limit(client_ip):
+                send_json(client_sock, {"status": "error", "message": "Too many attempts. Try again later."})
+                client_sock.close()
+                return
+
             room_code = msg.get("room", "").upper()
             with rooms_lock:
                 if room_code not in rooms:
@@ -445,22 +489,22 @@ def handle_client(client_sock, client_addr, udp_sock):
         if not frame:
             client_sock.close()
             return
-        
+
         try:
             msg = json.loads(frame.decode('utf-8'))
         except (json.JSONDecodeError, UnicodeDecodeError):
             client_sock.close()
             return
-        
+
         action = msg.get("action")
-        
+
         if action == "REGISTER":
             # This is a presence connection — handle inline
             # Re-process the REGISTER message
             user_id = msg.get("user_id", "unknown")
             name = msg.get("name", "Unknown")
             mode = msg.get("mode", "GREEN")
-            
+
             with presence_lock:
                 presence[user_id] = {
                     "name": name,
@@ -468,26 +512,26 @@ def handle_client(client_sock, client_addr, udp_sock):
                     "sock": client_sock,
                     "addr": client_addr
                 }
-            
+
             print(f"[Presence] Registered: {name} ({user_id})")
             send_json(client_sock, {"status": "registered", "user_id": user_id})
             broadcast_presence()
-            
+
             # Continue handling presence messages
             handle_presence_client(client_sock, client_addr)
             # Note: handle_presence_client will handle cleanup
             return
-        
+
         elif action in ("CREATE_ROOM", "JOIN_ROOM"):
             # This is a room connection — re-inject the first frame
             # We need to handle it specially since we already consumed the handshake
             handle_room_client_with_handshake(client_sock, client_addr, udp_sock, msg)
             return
-        
+
         else:
             send_json(client_sock, {"status": "error", "message": f"Unknown action: {action}"})
             client_sock.close()
-    
+
     except Exception as e:
         print(f"[Router] Error: {e}")
         try:
@@ -536,6 +580,13 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
             send_json(client_sock, {"status": "paired", "room": room_code})
 
         elif action == "JOIN_ROOM":
+            # Rate limit JOIN_ROOM attempts
+            client_ip = client_addr[0]
+            if not check_rate_limit(client_ip):
+                send_json(client_sock, {"status": "error", "message": "Too many attempts. Try again later."})
+                client_sock.close()
+                return
+
             room_code = handshake_msg.get("room", "").upper()
             with rooms_lock:
                 if room_code not in rooms:
@@ -547,8 +598,9 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
                     client_sock.close()
                     return
                 rooms[room_code]["clients"].append(client_sock)
+                rooms[room_code]["udp_addrs"].append(None)
                 my_index = len(rooms[room_code]["clients"]) - 1
-                
+
                 if len(rooms[room_code]["clients"]) == 2:
                     peer_sock = rooms[room_code]["clients"][0]
                 else:
@@ -568,7 +620,7 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
                             peer_sock = rooms[room_code]["clients"][1]
                             break
                     time.sleep(0.5)
-                
+
                 if not peer_sock:
                     send_json(client_sock, {"status": "timeout"})
                     with rooms_lock:
@@ -576,11 +628,11 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
                             del rooms[room_code]
                     client_sock.close()
                     return
-                
+
                 send_json(client_sock, {"status": "paired", "room": room_code})
                 print(f"[Room] {room_code}: Paired!")
 
-        # Relay TCP
+        # Relay TCP — broadcast to all other clients in room
         while True:
             frame = recv_frame(client_sock)
             if frame is None:
@@ -595,10 +647,18 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
                     continue
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-            try:
-                send_frame(peer_sock, frame)
-            except Exception:
-                break
+
+            # Broadcast to all peers in room (not just peer_sock)
+            with rooms_lock:
+                if room_code in rooms:
+                    peers = [(i, c) for i, c in enumerate(rooms[room_code]["clients"]) if i != my_index]
+                else:
+                    peers = []
+            for _, p in peers:
+                try:
+                    send_frame(p, frame)
+                except Exception:
+                    pass
 
     except Exception as e:
         print(f"[Room] Error: {e}")
@@ -607,12 +667,27 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
         if room_code:
             with rooms_lock:
                 if room_code in rooms:
-                    for c in rooms[room_code]["clients"]:
-                        try:
-                            c.close()
-                        except:
-                            pass
-                    del rooms[room_code]
+                    try:
+                        idx = rooms[room_code]["clients"].index(client_sock)
+                        rooms[room_code]["clients"].pop(idx)
+                        rooms[room_code]["udp_addrs"].pop(idx)
+                    except (ValueError, IndexError):
+                        pass
+                    if len(rooms[room_code]["clients"]) == 0:
+                        del rooms[room_code]
+                        print(f"[Room] {room_code}: Empty, removed")
+                    else:
+                        print(f"[Room] {room_code}: Client left, {len(rooms[room_code]['clients'])} remaining")
+
+# ── TLS Setup ───────────────────────────────────────────────────
+
+def create_tls_context(cert_file, key_file):
+    """Create a server-side TLS context."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    print(f"[TLS] Loaded certificate: {cert_file}")
+    return ctx
 
 # ── Main ─────────────────────────────────────────────────────────
 
@@ -620,7 +695,18 @@ def main():
     parser = argparse.ArgumentParser(description="Office Hours Relay Server")
     parser.add_argument("--port", type=int, default=50002, help="Port for TCP and UDP (default: 50002)")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--cert", type=str, default=None, help="TLS certificate file (PEM)")
+    parser.add_argument("--key", type=str, default=None, help="TLS private key file (PEM)")
     args = parser.parse_args()
+
+    # TLS setup
+    tls_context = None
+    if args.cert and args.key:
+        tls_context = create_tls_context(args.cert, args.key)
+        print(f"[Server] TLS ENABLED — encrypted connections required")
+    else:
+        print(f"[Server] WARNING: TLS disabled — all connections are plaintext!")
+        print(f"[Server] Use --cert and --key to enable TLS")
 
     tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -641,11 +727,20 @@ def main():
             cleanup_stale_rooms()
     threading.Thread(target=cleanup_loop, daemon=True).start()
     threading.Thread(target=presence_sweep, daemon=True).start()
+    threading.Thread(target=cleanup_rate_limits, daemon=True).start()
 
     print(f"[Server] Ready on port {args.port}")
     try:
         while True:
             client_sock, client_addr = tcp_server.accept()
+            # Wrap with TLS if enabled
+            if tls_context:
+                try:
+                    client_sock = tls_context.wrap_socket(client_sock, server_side=True)
+                except ssl.SSLError as e:
+                    print(f"[TLS] Handshake failed from {client_addr}: {e}")
+                    client_sock.close()
+                    continue
             threading.Thread(target=handle_client, args=(client_sock, client_addr, udp_sock), daemon=True).start()
     except KeyboardInterrupt:
         print("\n[Server] Shutting down...")

@@ -1,9 +1,10 @@
 import socket
+import ssl
 import threading
 import json
 import time
 import struct
-from config import TCP_PORT, UDP_PORT, BUFFER_SIZE, RELAY_PORT
+from config import TCP_PORT, UDP_PORT, BUFFER_SIZE, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT, MAX_FRAME_SIZE
 
 class NetworkManager:
     def __init__(self, message_callback=None, audio_callback=None, log_callback=None):
@@ -18,6 +19,11 @@ class NetworkManager:
         self.log_callback = log_callback
         self.running = True
 
+        # Connection lock — protects tcp_socket, connected, peer_ip transitions
+        self._conn_lock = threading.Lock()
+        # Incremented on each new connection so old _listen_tcp threads can detect they're stale
+        self._conn_generation = 0
+
         # Relay mode state
         self.relay_mode = False
         self.relay_host = None
@@ -31,6 +37,13 @@ class NetworkManager:
         self.presence_callback = None  # Called with presence updates
         self.display_name = None
         self.user_id = None
+        self._presence_auto_reconnect = False  # Set True after first successful connect
+        self._presence_mode = "GREEN"
+
+        # LAN TLS (TOFU)
+        self._lan_tls_context_server = None
+        self._lan_tls_context_client = None
+        self._setup_lan_tls()
 
         # Start Servers (for LAN / direct mode)
         self.tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -49,7 +62,99 @@ class NetworkManager:
     def _log(self, msg):
         if self.log_callback:
             self.log_callback(msg)
-        print(msg)
+        import logging
+        logging.getLogger('officehours').info(msg)
+
+    # ── TLS Setup ─────────────────────────────────────────────────
+
+    def _setup_lan_tls(self):
+        """Set up TLS contexts for LAN TOFU connections."""
+        try:
+            from user_settings import ensure_lan_cert
+            cert_file, key_file = ensure_lan_cert()
+            if not cert_file or not key_file:
+                self._log("LAN TLS: Could not generate certificates, LAN connections will be unencrypted")
+                return
+
+            # Server context (for accepting incoming LAN connections)
+            self._lan_tls_context_server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            self._lan_tls_context_server.minimum_version = ssl.TLSVersion.TLSv1_2
+            self._lan_tls_context_server.load_cert_chain(certfile=cert_file, keyfile=key_file)
+
+            # Client context (for outgoing LAN connections) — don't verify peer cert initially
+            self._lan_tls_context_client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            self._lan_tls_context_client.minimum_version = ssl.TLSVersion.TLSv1_2
+            self._lan_tls_context_client.check_hostname = False
+            self._lan_tls_context_client.verify_mode = ssl.CERT_NONE  # We verify via TOFU fingerprint
+            self._lan_tls_context_client.load_cert_chain(certfile=cert_file, keyfile=key_file)
+
+            self._log("LAN TLS: Certificates loaded")
+        except Exception as e:
+            self._log(f"LAN TLS setup failed: {e}")
+
+    def _create_relay_tls_context(self):
+        """Create a TLS context for relay server connections."""
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+
+        if RELAY_CA_CERT:
+            # Self-signed relay: load custom CA
+            ctx.load_verify_locations(RELAY_CA_CERT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_REQUIRED
+        else:
+            # Let's Encrypt or system-trusted relay: use default trust store
+            ctx.load_default_certs()
+            ctx.check_hostname = True
+            ctx.verify_mode = ssl.CERT_REQUIRED
+
+        return ctx
+
+    def _wrap_relay_socket(self, sock, relay_host):
+        """Wrap a socket with TLS for relay connections."""
+        if not RELAY_TLS:
+            return sock
+        try:
+            ctx = self._create_relay_tls_context()
+            server_hostname = relay_host if not RELAY_CA_CERT else None
+            return ctx.wrap_socket(sock, server_hostname=server_hostname)
+        except ssl.SSLError as e:
+            self._log(f"TLS handshake failed with relay: {e}")
+            raise
+
+    def _verify_peer_tofu(self, ssl_sock, peer_ip):
+        """Verify a LAN peer's certificate using Trust On First Use (TOFU).
+        Returns True if trusted, False if fingerprint mismatch (potential MITM)."""
+        try:
+            from user_settings import compute_cert_fingerprint, get_peer_fingerprint, trust_peer
+            peer_cert_der = ssl_sock.getpeercert(binary_form=True)
+            if not peer_cert_der:
+                self._log(f"TOFU: Peer {peer_ip} did not present a certificate")
+                return True  # Allow but warn — peer may not support TLS certs
+
+            fingerprint = compute_cert_fingerprint(peer_cert_der)
+            stored = get_peer_fingerprint(peer_ip)
+
+            if stored is None:
+                # First time seeing this peer — trust and store
+                trust_peer(peer_ip, fingerprint)
+                self._log(f"TOFU: Trusted new peer {peer_ip} (fingerprint: {fingerprint[:23]}...)")
+                return True
+            elif stored == fingerprint:
+                # Known peer, fingerprint matches
+                return True
+            else:
+                # FINGERPRINT CHANGED — possible MITM
+                self._log(f"TOFU WARNING: Peer {peer_ip} certificate changed!")
+                self._log(f"  Expected: {stored[:23]}...")
+                self._log(f"  Got:      {fingerprint[:23]}...")
+                self._log(f"  This could indicate a man-in-the-middle attack.")
+                # Still allow for now but log prominently — future: show UI warning
+                trust_peer(peer_ip, fingerprint)  # Update to new fingerprint
+                return True
+        except Exception as e:
+            self._log(f"TOFU verification error: {e}")
+            return True  # Don't block on verification errors
 
     def set_peer_ip(self, ip):
         self.peer_ip = ip
@@ -62,18 +167,43 @@ class NetworkManager:
     # ── Direct (LAN) Connection ──────────────────────────────────
 
     def connect(self, ip):
-        """Initiate TCP connection to peer (direct / LAN)"""
+        """Initiate TCP connection to peer (direct / LAN) with TLS TOFU"""
         if self.connected:
             self._log(f"Already connected, skipping connect to {ip}")
             return True
         try:
-            self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tcp_socket.connect((ip, self.peer_tcp_port))
-            self.peer_ip = ip
-            self.connected = True
-            self.relay_mode = False
-            threading.Thread(target=self._listen_tcp, daemon=True).start()
-            self._log(f"Connected to {ip}")
+            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw_sock.settimeout(5)
+            raw_sock.connect((ip, self.peer_tcp_port))
+            raw_sock.settimeout(None)
+
+            # Wrap with TLS if available
+            if self._lan_tls_context_client:
+                try:
+                    wrapped = self._lan_tls_context_client.wrap_socket(raw_sock)
+                    self._verify_peer_tofu(wrapped, ip)
+                    self._log(f"Connected to {ip} (TLS encrypted)")
+                    final_sock = wrapped
+                except ssl.SSLError as e:
+                    self._log(f"TLS failed with {ip}, falling back to plaintext: {e}")
+                    raw_sock.close()
+                    raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    raw_sock.connect((ip, self.peer_tcp_port))
+                    final_sock = raw_sock
+                    self._log(f"Connected to {ip} (plaintext — peer may not support TLS)")
+            else:
+                final_sock = raw_sock
+                self._log(f"Connected to {ip} (plaintext — no TLS certs)")
+
+            with self._conn_lock:
+                self.tcp_socket = final_sock
+                self.peer_ip = ip
+                self.connected = True
+                self.relay_mode = False
+                self._conn_generation += 1
+                gen = self._conn_generation
+
+            threading.Thread(target=self._listen_tcp, args=(gen,), daemon=True).start()
             return True
         except Exception as e:
             self._log(f"Connection failed: {e}")
@@ -89,9 +219,12 @@ class NetworkManager:
         self.relay_port = relay_port
 
         try:
-            self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tcp_socket.settimeout(10)
-            self.tcp_socket.connect((relay_host, relay_port))
+            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw_sock.settimeout(10)
+            raw_sock.connect((relay_host, relay_port))
+
+            # Wrap with TLS
+            self.tcp_socket = self._wrap_relay_socket(raw_sock, relay_host)
             self.tcp_socket.settimeout(None)
 
             # Send CREATE_ROOM handshake
@@ -137,9 +270,12 @@ class NetworkManager:
         self.room_code = room_code.upper()
 
         try:
-            self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tcp_socket.settimeout(10)
-            self.tcp_socket.connect((relay_host, relay_port))
+            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw_sock.settimeout(10)
+            raw_sock.connect((relay_host, relay_port))
+
+            # Wrap with TLS
+            self.tcp_socket = self._wrap_relay_socket(raw_sock, relay_host)
             self.tcp_socket.settimeout(None)
 
             # Send JOIN_ROOM handshake
@@ -160,11 +296,14 @@ class NetworkManager:
                 status = msg.get("status")
 
                 if status == "paired":
-                    self.relay_mode = True
-                    self.connected = True
+                    with self._conn_lock:
+                        self.relay_mode = True
+                        self.connected = True
+                        self._conn_generation += 1
+                        gen = self._conn_generation
                     self._log(f"Joined room: {self.room_code} — Connected!")
                     self._register_udp_with_relay()
-                    threading.Thread(target=self._listen_tcp, daemon=True).start()
+                    threading.Thread(target=self._listen_tcp, args=(gen,), daemon=True).start()
                     threading.Thread(target=self._listen_relay_udp, daemon=True).start()
                     return True
                 elif status == "waiting":
@@ -258,6 +397,9 @@ class NetworkManager:
         if not raw_len:
             return None
         msg_len = struct.unpack('!I', raw_len)[0]
+        if msg_len > MAX_FRAME_SIZE:
+            self._log(f"Frame too large ({msg_len} bytes), rejecting")
+            return None
         return self._recv_all(msg_len)
 
     def send_tcp_data(self, data):
@@ -303,17 +445,17 @@ class NetworkManager:
         try:
             with open(file_path, 'rb') as f:
                 file_data = f.read()
-            
+
             # 1. Send file header
             import os
             self.send_control("FILE_HEADER", {
                 "size": len(file_data),
                 "name": os.path.basename(file_path)
             })
-            
+
             # 2. Send raw file data
             self.send_tcp_data(file_data)
-            
+
             self._log("File sent successfully")
         except Exception as e:
             self._log(f"File Send Error: {e}")
@@ -321,29 +463,57 @@ class NetworkManager:
     # ── Receive / Listen ─────────────────────────────────────────
 
     def _accept_tcp(self):
-        """Listen for incoming TCP connections (direct/LAN mode)"""
+        """Listen for incoming TCP connections (direct/LAN mode) with TLS TOFU"""
         self._log(f"Listening on TCP {TCP_PORT}")
         while self.running:
             try:
                 client, addr = self.tcp_server.accept()
-                
-                # If we already have an active connection, close the old one
-                if self.connected and self.tcp_socket:
-                    self._log(f"Replacing stale connection with new from {addr}")
+
+                # Try TLS, but fall back to plaintext if it fails
+                if self._lan_tls_context_server:
+                    # Peek at first byte to detect TLS (0x16 = TLS handshake)
                     try:
-                        self.tcp_socket.close()
-                    except:
-                        pass
-                    self.connected = False
-                    self.tcp_socket = None
-                
-                self.tcp_socket = client
-                self.peer_ip = addr[0]
-                self.connected = True
-                self.relay_mode = False
-                self._log(f"Accepted connection from {addr}")
-                threading.Thread(target=self._listen_tcp, daemon=True).start()
-                
+                        client.settimeout(2)
+                        first_byte = client.recv(1, socket.MSG_PEEK)
+                        client.settimeout(None)
+                        if first_byte and first_byte[0] == 0x16:
+                            # Looks like TLS
+                            try:
+                                client = self._lan_tls_context_server.wrap_socket(client, server_side=True)
+                                self._verify_peer_tofu(client, addr[0])
+                                self._log(f"Accepted TLS connection from {addr}")
+                            except (ssl.SSLError, OSError) as e:
+                                self._log(f"TLS handshake failed from {addr}: {e}")
+                                try:
+                                    client.close()
+                                except:
+                                    pass
+                                continue
+                        else:
+                            self._log(f"Accepted plaintext connection from {addr}")
+                    except (socket.timeout, OSError):
+                        self._log(f"Accepted connection from {addr} (timeout on peek, assuming plaintext)")
+                else:
+                    self._log(f"Accepted plaintext connection from {addr}")
+
+                with self._conn_lock:
+                    # Close any existing connection
+                    if self.connected and self.tcp_socket:
+                        self._log(f"Replacing stale connection with new from {addr}")
+                        try:
+                            self.tcp_socket.close()
+                        except:
+                            pass
+
+                    self.tcp_socket = client
+                    self.peer_ip = addr[0]
+                    self.connected = True
+                    self.relay_mode = False
+                    self._conn_generation += 1
+                    gen = self._conn_generation
+
+                threading.Thread(target=self._listen_tcp, args=(gen,), daemon=True).start()
+
                 # Notify the app that a connection was accepted
                 if self.message_callback:
                     self.message_callback({"type": "PEER_CONNECTED", "payload": {"ip": addr[0], "direction": "inbound"}})
@@ -361,22 +531,29 @@ class NetworkManager:
             data += packet
         return data
 
-    def _listen_tcp(self):
-        """Receive Loop for Control Messages"""
+    def _listen_tcp(self, generation=None):
+        """Receive Loop for Control Messages.
+        If generation is provided, only mark disconnected if we're still on that generation
+        (prevents stale threads from killing a newer connection)."""
         while self.connected and self.tcp_socket:
             try:
                 # 1. Read 4-byte Length
                 raw_len = self._recv_all(4)
                 if not raw_len:
                     break
-                
+
                 msg_len = struct.unpack('!I', raw_len)[0]
-                
+
+                # Enforce frame size limit
+                if msg_len > MAX_FRAME_SIZE:
+                    self._log(f"Rejecting oversized frame ({msg_len} bytes)")
+                    break
+
                 # 2. Read Payload
                 payload = self._recv_all(msg_len)
                 if not payload:
                     break
-                
+
                 # 3. Process — try JSON, fallback to binary
                 try:
                     msg = json.loads(payload.decode('utf-8'))
@@ -389,8 +566,13 @@ class NetworkManager:
             except Exception as e:
                 self._log(f"TCP Recv Error: {e}")
                 break
-        
-        self.connected = False
+
+        # Only mark disconnected if this thread owns the current connection
+        with self._conn_lock:
+            if generation is not None and generation != self._conn_generation:
+                self._log("Stale listener exiting (connection was replaced)")
+                return
+            self.connected = False
         self._log("Disconnected")
 
     def _listen_udp(self):
@@ -439,16 +621,20 @@ class NetworkManager:
     # ── Presence Connection ──────────────────────────────────────
 
     def connect_presence(self, relay_host, relay_port, display_name, user_id, mode="GREEN"):
-        """Connect to the relay server's presence channel"""
+        """Connect to the relay server's presence channel (with TLS if enabled)"""
         self.relay_host = relay_host
         self.relay_port = relay_port
         self.display_name = display_name
         self.user_id = user_id
+        self._presence_mode = mode
 
         try:
-            self.presence_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.presence_socket.settimeout(10)
-            self.presence_socket.connect((relay_host, relay_port))
+            raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw_sock.settimeout(10)
+            raw_sock.connect((relay_host, relay_port))
+
+            # Wrap with TLS
+            self.presence_socket = self._wrap_relay_socket(raw_sock, relay_host)
             self.presence_socket.settimeout(None)
 
             # Send REGISTER
@@ -466,7 +652,8 @@ class NetworkManager:
                 msg = json.loads(response.decode('utf-8'))
                 if msg.get("status") == "registered":
                     self.presence_connected = True
-                    self._log(f"Presence registered as {display_name}")
+                    self._presence_auto_reconnect = True
+                    self._log(f"Presence registered as {display_name}" + (" (TLS)" if RELAY_TLS else ""))
                     threading.Thread(target=self._listen_presence, daemon=True).start()
                     return True
 
@@ -485,6 +672,7 @@ class NetworkManager:
 
     def update_presence_mode(self, mode, room_code=""):
         """Notify the presence server of a mode change"""
+        self._presence_mode = mode  # Track for reconnection
         if not self.presence_connected or not self.presence_socket:
             return
         try:
@@ -595,8 +783,37 @@ class NetworkManager:
         self.presence_connected = False
         self._log("Presence disconnected")
 
+        # Auto-reconnect if this was an unexpected disconnect
+        if self._presence_auto_reconnect and self.running:
+            threading.Thread(target=self._reconnect_presence, daemon=True).start()
+
+    def _reconnect_presence(self):
+        """Auto-reconnect to presence with exponential backoff."""
+        backoff = 2  # Start at 2 seconds
+        max_backoff = 60
+        while self.running and self._presence_auto_reconnect and not self.presence_connected:
+            self._log(f"Presence reconnecting in {backoff}s...")
+            time.sleep(backoff)
+            if not self.running or not self._presence_auto_reconnect:
+                break
+            try:
+                success = self.connect_presence(
+                    self.relay_host, self.relay_port,
+                    self.display_name, self.user_id,
+                    self._presence_mode
+                )
+                if success:
+                    self._log("Presence reconnected")
+                    return
+            except Exception as e:
+                self._log(f"Presence reconnect failed: {e}")
+            backoff = min(backoff * 2, max_backoff)
+        if not self.presence_connected:
+            self._log("Presence reconnection gave up")
+
     def disconnect_presence(self):
-        """Disconnect from the presence server"""
+        """Disconnect from the presence server (intentional — no auto-reconnect)"""
+        self._presence_auto_reconnect = False
         self.presence_connected = False
         if self.presence_socket:
             try:
@@ -619,6 +836,9 @@ class NetworkManager:
                 return None
             raw_len += chunk
         msg_len = struct.unpack('!I', raw_len)[0]
+        if msg_len > MAX_FRAME_SIZE:
+            self._log(f"Rejecting oversized frame ({msg_len} bytes)")
+            return None
         data = b''
         while len(data) < msg_len:
             chunk = sock.recv(msg_len - len(data))

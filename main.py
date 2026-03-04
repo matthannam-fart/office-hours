@@ -10,13 +10,17 @@ from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QPoint
 from PySide6.QtGui import QAction
 
-from config import *
+from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUNK_SIZE,
+                     DTYPE, RELAY_HOST, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT,
+                     MAX_FILE_SIZE, MAX_FRAME_SIZE, APP_NAME, LOG_LEVEL, log)
 from network_manager import NetworkManager
 from audio_manager import AudioManager
 from stream_deck_manager import StreamDeckHandler
 from discovery_manager import DiscoveryManager
-from user_settings import get_display_name, set_display_name, get_user_id
-from floating_panel import FloatingPanel, create_oh_icon, COLORS
+from user_settings import get_display_name, set_display_name, get_user_id, get_ptt_hotkey, _config_dir
+from hotkey_manager import HotkeyManager
+from floating_panel import FloatingPanel, create_oh_icon
+from ui_constants import COLORS
 
 # Mock for systems without Stream Deck
 class MockDeck:
@@ -31,13 +35,16 @@ class IntercomApp(QObject):
     status_signal = Signal(str)
     peer_found_signal = Signal(str, str) # name, ip
     peer_lost_signal = Signal(str)       # name
-    relay_status_signal = Signal(str)    # relay connection status
     connection_request_signal = Signal(str, str)  # requester_name, ip
     connection_response_signal = Signal(bool)     # accepted or rejected
     presence_update_signal = Signal(list)          # list of online users
-    presence_request_signal = Signal(str, str, str) # from_name, from_id, room_code
-    call_connected_signal = Signal(str)            # peer_name — relay room joined
+    presence_request_signal = Signal(str, str, str) # from_name, from_id, room_code (internal)
+    call_connected_signal = Signal(str)            # peer_name — call established
     message_received_signal = Signal()              # new voicemail received
+    hotkey_press_signal = Signal()                   # global PTT pressed
+    hotkey_release_signal = Signal()                 # global PTT released
+    mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
+    speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -60,9 +67,10 @@ class IntercomApp(QObject):
         self.pending_connection = False
         self.peer_talking = False
         self.online_users = {}
-        self.pending_room = None
+        self.pending_room = None       # Internal relay session ID
         self.pending_from_id = None
-        self.active_room_code = None  # Track our relay room for conference
+        self.active_room_code = None   # Internal relay session ID for active call
+        self._pre_call_mode = None     # Mode before entering a call (restored on disconnect)
 
 
         # User identity
@@ -74,6 +82,10 @@ class IntercomApp(QObject):
         self.audio = AudioManager(self.network, log_callback=self.log_signal.emit)
         self.network.audio_callback = self.handle_audio_stream
         self.network.presence_callback = self.handle_presence_message
+        self.network.display_name = self.display_name
+        self.network.user_id = self.user_id
+        self.audio.mic_level_callback = lambda l: self.mic_level_signal.emit(l)
+        self.audio.speaker_level_callback = lambda l: self.speaker_level_signal.emit(l)
         self.audio.start_listening()
 
         try:
@@ -82,6 +94,16 @@ class IntercomApp(QObject):
         except Exception as e:
             self.log(f"Stream Deck: Not connected ({e})")
             self.deck = MockDeck()
+
+        # Global PTT Hotkey
+        ptt_key = get_ptt_hotkey()
+        self.hotkey = HotkeyManager(
+            on_press=self._hotkey_talk_press,
+            on_release=self._hotkey_talk_release,
+            key_name=ptt_key,
+            log_callback=self.log_signal.emit,
+        )
+        self.hotkey.start()
 
         # Discovery
         self.discovery = DiscoveryManager(self.on_peer_found, self.on_peer_lost)
@@ -117,19 +139,20 @@ class IntercomApp(QObject):
         self.flash_timer.timeout.connect(self.flash_loop)
         self.flash_timer.start(500)
 
-
-
         # Signal connections
         self.log_signal.connect(self.log)
         self.peer_found_signal.connect(self.add_peer_to_ui)
         self.peer_lost_signal.connect(self.remove_peer_from_ui)
-        self.relay_status_signal.connect(self._update_relay_status)
         self.call_connected_signal.connect(self._on_call_connected)
         self.message_received_signal.connect(self.panel.show_message)
         self.connection_request_signal.connect(self._show_connection_request)
         self.connection_response_signal.connect(self._handle_connection_response)
         self.presence_update_signal.connect(self._update_online_users)
         self.presence_request_signal.connect(self._show_presence_request)
+        self.hotkey_press_signal.connect(self.on_talk_press)
+        self.hotkey_release_signal.connect(self.on_talk_release)
+        self.mic_level_signal.connect(self.panel.set_mic_level)
+        self.speaker_level_signal.connect(self.panel.set_speaker_level)
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -146,8 +169,6 @@ class IntercomApp(QObject):
         self.panel.ptt_released.connect(self.on_talk_release)
         self.panel.call_user_requested.connect(self._on_call_user)
         self.panel.leave_requested.connect(self.do_disconnect)
-        self.panel.join_requested.connect(self._on_join_room)
-        self.panel.create_requested.connect(self._on_create_room)
         self.panel.accept_call_requested.connect(self._on_accept_call)
         self.panel.decline_call_requested.connect(self._on_decline_call)
         self.panel.end_call_requested.connect(self.do_disconnect)
@@ -158,6 +179,7 @@ class IntercomApp(QObject):
         self.panel.quit_requested.connect(self._quit)
         self.panel.incognito_toggled.connect(self._on_incognito_toggle)
         self.panel.dark_mode_toggled.connect(self._on_dark_mode_toggle)
+        self.panel.name_change_requested.connect(self._on_name_changed)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -218,18 +240,37 @@ class IntercomApp(QObject):
 
     # ── Call User ─────────────────────────────────────────────────
     def _on_call_user(self, user_id):
+        # Check LAN peers first (user_id is the Zeroconf service name)
+        if user_id in self.peer_map:
+            lan_ip = self.peer_map[user_id]
+            # Extract friendly name
+            target_name = user_id
+            if '(' in user_id and ')' in user_id:
+                target_name = user_id.split('(')[1].split(')')[0]
+            elif '._talkback' in user_id:
+                target_name = user_id.split('._talkback')[0]
+
+            self.log(f"Calling {target_name}...")
+            self._calling_user_id = user_id
+            self.panel.show_outgoing(target_name)
+            self.log(f"Trying direct connection to {lan_ip}...")
+            threading.Thread(
+                target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
+            ).start()
+            return
+
+        # Fall back to relay/presence users
         target_name = self.online_users.get(user_id, {}).get("name", "Unknown")
-        self.log(f"Requesting connection to {target_name}...")
+        self.log(f"Calling {target_name}...")
         self._calling_user_id = user_id
         self.panel.show_outgoing(target_name)
 
-        # Try direct LAN connection first if we know the peer's IP
         target_mode = self.online_users.get(user_id, {}).get("mode", "GREEN")
         target_room = self.online_users.get(user_id, {}).get("room", "")
 
-        # If target is BUSY and in a room, join their room (conference)
+        # If target is BUSY and in a call, join their session (conference)
         if target_mode == "BUSY" and target_room:
-            self.log(f"Joining {target_name}'s call in room {target_room}...")
+            self.log(f"Joining {target_name}'s call...")
             threading.Thread(
                 target=self._join_relay_room, args=(target_room, "joiner"), daemon=True
             ).start()
@@ -237,88 +278,55 @@ class IntercomApp(QObject):
 
         lan_ip = self._find_lan_ip(target_name)
         if lan_ip:
-            self.log(f"Trying direct LAN connection to {lan_ip}...")
+            self.log(f"Trying direct connection...")
             threading.Thread(
                 target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
             ).start()
         else:
-            self.log("No LAN IP found, using relay...")
+            self.log("Connecting via relay...")
             self.network.connect_to_user(user_id)
 
     def _find_lan_ip(self, target_name):
-        """Find a peer's LAN IP from Zeroconf-discovered peers."""
-        # Return all known LAN peer IPs — we'll try each one
-        ips = list(self.peer_map.values())
-        if ips:
-            self.log(f"LAN peers available: {ips}")
-            return ips[0]  # Try the first discovered peer
+        """Find a peer's LAN IP from Zeroconf-discovered peers by matching name."""
+        # Exact match first
+        if target_name in self.peer_map:
+            return self.peer_map[target_name]
+        # Case-insensitive match
+        lower = target_name.lower()
+        for name, ip in self.peer_map.items():
+            if name.lower() == lower:
+                return ip
+        # Partial match (peer name contains target or vice versa)
+        for name, ip in self.peer_map.items():
+            if lower in name.lower() or name.lower() in lower:
+                return ip
         return None
 
     def _try_direct_connect(self, ip, target_name):
         """Try direct TCP connection to a LAN peer."""
         success = self.network.connect(ip)
         if success:
-            self.log(f"TCP connected to {ip} — sending call request...")
+            self.log(f"Connected — sending call request...")
             # Send a connection request — callee will show accept/decline
             self.network.send_control("CONNECTION_REQUEST", {
                 "name": self.network.display_name or "Unknown"
             })
             # Keep showing "Calling..." — wait for CONNECTION_ACCEPTED
         else:
-            self.log(f"Direct LAN failed, falling back to relay...")
+            self.log(f"Direct connection failed, trying relay...")
             if hasattr(self, '_calling_user_id'):
                 self.network.connect_to_user(self._calling_user_id)
-
-    # ── Room Actions ──────────────────────────────────────────────
-    def _on_join_room(self, room_code):
-        if not room_code:
-            self.log("Enter a room code.")
-            return
-        relay_host = RELAY_HOST
-        if not relay_host:
-            self.log("No relay server configured.")
-            return
-        room_code = room_code.upper()
-        self.log(f"Joining room {room_code}...")
-
-        def _join():
-            success = self.network.join_room(relay_host, room_code, RELAY_PORT)
-            if success:
-                self.relay_status_signal.emit(f"Connected via relay — Room: {room_code}")
-                self.log_signal.emit("Connected to peer via relay!")
-                self.send_status()
-            else:
-                self.relay_status_signal.emit("Failed to join room")
-
-        threading.Thread(target=_join, daemon=True).start()
-
-    def _on_create_room(self):
-        relay_host = RELAY_HOST
-        if not relay_host:
-            self.log("No relay server configured.")
-            return
-        self.log(f"Creating room on {relay_host}...")
-
-        def _create():
-            room_code = self.network.create_room(relay_host, RELAY_PORT)
-            if room_code:
-                self.relay_status_signal.emit(f"Room: {room_code} — Waiting for peer...")
-                self._check_relay_connected(room_code)
-            else:
-                self.relay_status_signal.emit("Failed to create room")
-
-        threading.Thread(target=_create, daemon=True).start()
 
     # ── Accept / Decline Call ─────────────────────────────────────
     def _on_accept_call(self):
         self.panel.hide_incoming()
         if self.pending_room and self.pending_from_id:
             # Relay-based call: send ACCEPT to presence server
-            self.log(f"Accepted call — sending ACCEPT for room {self.pending_room}")
+            self.log("Accepted call — connecting...")
             self.network.accept_presence_connection(self.pending_room, self.pending_from_id)
         elif self.network.connected and not self.pending_room:
             # Direct LAN call: send CONNECTION_ACCEPTED via TCP
-            self.log("Accepted direct call")
+            self.log("Accepted call")
             self.network.send_control("CONNECTION_ACCEPTED", {
                 "name": self.network.display_name or "Unknown"
             })
@@ -329,7 +337,7 @@ class IntercomApp(QObject):
             self._start_open_line_if_ready()
             self._set_busy()
         else:
-            self.log(f"Accept failed: pending_room={self.pending_room}, connected={self.network.connected}")
+            self.log("Accept failed — no active connection")
 
     def _on_decline_call(self):
         self.panel.hide_incoming()
@@ -349,38 +357,7 @@ class IntercomApp(QObject):
         self._calling_user_id = None
         self.log("Call cancelled.")
 
-
-    # ── Connection Logic (preserved) ──────────────────────────────
-
-    def _check_relay_connected(self, room_code):
-        """Poll until relay connection is established (after CREATE_ROOM)"""
-        def _poll():
-            for _ in range(600):
-                if self.network.connected:
-                    self.relay_status_signal.emit(f"Connected via relay — Room: {room_code}")
-                    self.log_signal.emit("Peer connected! Ready to talk.")
-                    self.send_status()
-                    return
-                time.sleep(0.5)
-            if not self.network.connected:
-                self.relay_status_signal.emit("Room timed out")
-        threading.Thread(target=_poll, daemon=True).start()
-
-    def _update_relay_status(self, text):
-        """Update connection state on the panel."""
-        if "Connected" in text:
-            # Extract room code from text
-            room_code = ""
-            if self.network.room_code:
-                room_code = self.network.room_code
-            elif "Room:" in text:
-                room_code = text.split("Room:")[-1].strip().rstrip(")")
-            self.panel.set_connection(True, room_code)
-        elif "Waiting" in text:
-            room_code = self.network.room_code or ""
-            self.panel.set_connection(True, f"{room_code} (waiting...)")
-        elif "Failed" in text or "timed out" in text:
-            self.panel.set_connection(False)
+    # ── Connection Logic ──────────────────────────────────────────
 
     def _show_connection_request(self, requester_name, ip):
         """Show incoming connection request as a panel banner."""
@@ -397,7 +374,11 @@ class IntercomApp(QObject):
         """Handle response after our connection request was accepted/rejected."""
         self.panel.hide_outgoing()
         if accepted:
-            self.panel.set_connection(True, self.network.room_code or "LAN")
+            # Get peer name for display
+            peer_name = "Peer"
+            if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
+                peer_name = self.online_users[self._calling_user_id].get("name", "Peer")
+            self.panel.set_connection(True, peer_name)
             self._start_open_line_if_ready()
             self._set_busy()
         else:
@@ -406,25 +387,36 @@ class IntercomApp(QObject):
 
     def do_disconnect(self):
         """Disconnect from current session."""
-        if self.mode == self.MODE_OPEN:
-            self.audio.stop_streaming()
-            self.log("Open line closed.")
+        # Tell remote peer we're leaving so they can restore their mode
+        if self.network.connected:
+            try:
+                self.network.send_control("CALL_ENDED", {})
+            except Exception:
+                pass  # Best-effort — connection may already be broken
+
+        self.audio.stop_streaming()  # Stop any active stream (PTT or open line)
         self._clear_busy()
         self.peer_talking = False
         self.network.disconnect()
         self.panel.set_connection(False)
         self.panel.hide_call()
 
-        self.log("Disconnected from peer.")
+        self.log("Disconnected.")
 
     def _set_busy(self):
+        if self._pre_call_mode is None:
+            self._pre_call_mode = self.mode  # Save mode before call
         self.network.update_presence_mode("BUSY", self.active_room_code or "")
-        self.log(f"Status set to BUSY" + (f" (room {self.active_room_code})" if self.active_room_code else ""))
 
     def _clear_busy(self):
         self.active_room_code = None
+        # Restore pre-call mode
+        if self._pre_call_mode is not None:
+            self.mode = self._pre_call_mode
+            self._pre_call_mode = None
+        self.panel.set_mode(self.mode)
+        self._update_tray_icon()
         self.network.update_presence_mode(self.mode)
-        self.log(f"Status restored to {self.mode}")
 
     def _start_open_line_if_ready(self):
         if self.mode == self.MODE_OPEN and self.network.connected:
@@ -480,45 +472,45 @@ class IntercomApp(QObject):
         elif msg_type == "CONNECT_ROOM":
             room_code = msg.get("room", "")
             role = msg.get("role", "")
-            self.log_signal.emit(f"Got CONNECT_ROOM: room={room_code}, role={role}")
+            self.log_signal.emit(f"Connecting...")
             threading.Thread(
                 target=self._join_relay_room, args=(room_code, role), daemon=True
             ).start()
 
         elif msg_type == "CONNECTION_REJECTED":
-            self.log_signal.emit("Connection request was declined.")
-            self.relay_status_signal.emit("Connection declined")
+            self.log_signal.emit("Call was declined.")
+            self.panel.set_connection(False)
 
     def _join_relay_room(self, room_code, role):
-        self.log(f"Connecting to relay {RELAY_HOST}:{RELAY_PORT} for room {room_code} as {role}...")
+        """Connect to relay for an active call. Room code is internal — never shown to user."""
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
         if success:
-            self.active_room_code = room_code
-            self.log(f"✓ Connected via relay (Room: {room_code})")
-            self.relay_status_signal.emit(f"Connected via relay (Room: {room_code})")
-            # Transition panel to active call view (must use signal for thread safety)
+            self.active_room_code = room_code  # Internal tracking only
+
+            # Determine peer name for UI
             if role == "creator":
                 target_name = "Peer"
                 if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
                     target_name = self.online_users[self._calling_user_id].get("name", "Peer")
                 self.call_connected_signal.emit(target_name)
             elif role == "joiner":
-                # Callee: show the call UI now that we're actually connected
                 caller_name = "Peer"
                 if hasattr(self, 'pending_from_id') and self.pending_from_id in self.online_users:
                     caller_name = self.online_users[self.pending_from_id].get("name", "Peer")
                 self.call_connected_signal.emit(caller_name)
+
             self._start_open_line_if_ready()
             self._set_busy()
         else:
-            self.log(f"✗ Failed to join relay room {room_code}")
-            self.relay_status_signal.emit("Failed to join room")
+            self.log_signal.emit("Could not connect to peer.")
+            self.panel.set_connection(False)
 
     @Slot(str)
     def _on_call_connected(self, peer_name):
-        """Called on main thread when relay room join succeeds."""
+        """Called on main thread when call is established."""
         self.panel.hide_outgoing()
         self.panel.show_call(peer_name)
+        self.panel.set_connection(True, peer_name)
 
 
     @Slot(list)
@@ -543,9 +535,9 @@ class IntercomApp(QObject):
 
     @Slot(str, str, str)
     def _show_presence_request(self, from_name, from_id, room_code):
-        """Show incoming connection request via presence."""
+        """Show incoming call via presence."""
         self.pending_from_id = from_id
-        self.pending_room = room_code
+        self.pending_room = room_code  # Internal — not shown to user
         self.panel.show_incoming(from_name)
 
         # Show panel if hidden
@@ -565,14 +557,39 @@ class IntercomApp(QObject):
         if name not in self.peer_map:
             self.peer_map[name] = ip
             self.log(f"Found Peer: {name} ({ip})")
+            self._refresh_lan_user_list()
 
     def remove_peer_from_ui(self, name):
         if name in self.peer_map:
             del self.peer_map[name]
             self.log(f"Lost Peer: {name}")
+            self._refresh_lan_user_list()
+
+    def _refresh_lan_user_list(self):
+        """Update the panel user list from LAN-discovered peers."""
+        # If we have presence/relay users, those take priority
+        if self.online_users:
+            return
+        # Build user list from LAN peers
+        panel_users = []
+        for name, ip in self.peer_map.items():
+            # Extract a friendly name from the Zeroconf service name
+            # Format: "Office Hours (hostname)._talkback._tcp.local."
+            friendly = name
+            if '(' in name and ')' in name:
+                friendly = name.split('(')[1].split(')')[0]
+            elif '._talkback' in name:
+                friendly = name.split('._talkback')[0]
+            panel_users.append({
+                'id': name,
+                'name': friendly,
+                'mode': 'GREEN',
+                'has_message': False,
+            })
+        self.panel.set_users(panel_users)
 
     def log(self, msg):
-        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+        log.info(msg)
 
     # ── Button / Deck Logic ───────────────────────────────────────
 
@@ -673,6 +690,14 @@ class IntercomApp(QObject):
         self.update_deck_display()
         self._update_ptt_for_mode()
 
+    def _hotkey_talk_press(self):
+        """Called from pynput thread — emit signal to run on Qt thread."""
+        self.hotkey_press_signal.emit()
+
+    def _hotkey_talk_release(self):
+        """Called from pynput thread — emit signal to run on Qt thread."""
+        self.hotkey_release_signal.emit()
+
     def _update_ptt_for_mode(self):
         # PTT state is handled by panel.set_mode() now
         # Just update deck
@@ -697,7 +722,7 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_START":
             self.peer_talking = True
-            self.log_signal.emit("📡 Peer is talking...")
+            self.log_signal.emit("Peer is talking...")
 
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
@@ -705,7 +730,7 @@ class IntercomApp(QObject):
         elif msg_type == "PEER_CONNECTED":
             ip = payload.get("ip", "unknown")
             self.peer_ip = ip
-            self.log_signal.emit(f"Direct connection from {ip} (waiting for call request)")
+            self.log_signal.emit(f"Direct connection from {ip}")
 
         elif msg_type == "CONNECTION_REQUEST":
             requester_name = payload.get("name", "Unknown")
@@ -714,7 +739,7 @@ class IntercomApp(QObject):
             self._incoming_caller_name = requester_name
             # Show accept/decline UI
             self.pending_from_id = self.peer_ip or "direct"
-            self.pending_room = None  # No relay room for direct calls
+            self.pending_room = None  # No relay session for direct calls
             self.presence_request_signal.emit(requester_name, self.pending_from_id, "")
 
         elif msg_type == "CONNECTION_ACCEPTED":
@@ -725,6 +750,16 @@ class IntercomApp(QObject):
             self._set_busy()
 
 
+        elif msg_type == "CALL_ENDED":
+            # Remote peer ended the call — disconnect our side and restore mode
+            self.log_signal.emit("Call ended by peer.")
+            self.audio.stop_streaming()
+            self._clear_busy()
+            self.peer_talking = False
+            self.network.disconnect()
+            self.panel.set_connection(False)
+            self.panel.hide_call()
+
         elif msg_type == "CONNECTION_REJECTED":
             self.log_signal.emit("Connection declined.")
             self.pending_connection = False
@@ -732,14 +767,17 @@ class IntercomApp(QObject):
             self.network.disconnect()
 
         elif msg_type == "FILE_HEADER":
-            self.incoming_file_size = payload.get("size")
+            self.incoming_file_size = payload.get("size", 0)
+            if self.incoming_file_size > MAX_FILE_SIZE:
+                self.log_signal.emit(f"Rejected message: too large ({self.incoming_file_size} bytes, max {MAX_FILE_SIZE})")
+                return
             self.log_signal.emit(f"Receiving Message ({self.incoming_file_size} bytes)...")
 
         elif msg_type == "BINARY_DATA":
             data = payload
             self.log_signal.emit(f"File Received: {len(data)} bytes")
             try:
-                fn = os.path.join(os.path.dirname(os.path.abspath(__file__)), "incoming_message.wav")
+                fn = os.path.join(_config_dir(), "incoming_message.wav")
                 with open(fn, 'wb') as f:
                     f.write(data)
                 self.incoming_message_path = fn
@@ -795,9 +833,9 @@ class IntercomApp(QObject):
             self.deck.update_key_color(1, 0, 0, 0, "")
 
     def _cleanup_messages(self):
-        app_dir = os.path.dirname(os.path.abspath(__file__))
+        cfg_dir = _config_dir()
         for fname in ("outgoing_message.wav", "incoming_message.wav"):
-            path = os.path.join(app_dir, fname)
+            path = os.path.join(cfg_dir, fname)
             try:
                 if os.path.exists(path):
                     os.remove(path)
@@ -820,8 +858,24 @@ class IntercomApp(QObject):
         self.panel.apply_dark_mode(enabled)
         self.log(f"Dark mode {'ON' if enabled else 'OFF'}")
 
+    def _on_name_changed(self, new_name):
+        """Handle display name change from settings menu."""
+        self.display_name = new_name
+        set_display_name(new_name)
+        self.network.display_name = new_name
+        self.panel.set_display_name(new_name)
+        self.log(f"Display name changed to: {new_name}")
+        # Re-register Zeroconf with updated name
+        try:
+            self.discovery.close()
+            self.discovery.register_service()
+            self.discovery.start_browsing()
+        except Exception as e:
+            self.log(f"Could not re-register service: {e}")
+
     def _quit(self):
         self._cleanup_messages()
+        self.hotkey.stop()
         self.discovery.close()
         self.network.close()
         self.tray.setVisible(False)

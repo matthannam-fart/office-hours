@@ -45,6 +45,7 @@ except ImportError:
                         sample = -sample
                     result.extend(struct.pack('<h', max(-32768, min(32767, sample))))
                 return bytes(result)
+import sys
 import time
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
 
@@ -53,13 +54,29 @@ DUCK_ATTENUATION = 0.05
 # How long to keep ducking after last incoming audio chunk (seconds)
 DUCK_HOLDOFF = 0.2
 
+def _configure_audio_backend():
+    """Configure sounddevice for lowest latency on the current platform."""
+    if sys.platform == 'win32':
+        # Prefer WASAPI on Windows for lowest latency
+        try:
+            hostapis = sd.query_hostapis()
+            for i, api in enumerate(hostapis):
+                if 'wasapi' in api['name'].lower():
+                    # WASAPI gives ~10ms latency vs ~40ms for MME/DirectSound
+                    sd.default.hostapi = i
+                    break
+        except Exception:
+            pass  # Fall back to default
+
+_configure_audio_backend()
+
 class AudioManager:
     def __init__(self, network_manager, log_callback=None):
         self.network_manager = network_manager
         self.log_callback = log_callback
         self.recording = False
         self.streaming = False
-        self.audio_queue = queue.Queue()
+        self.audio_queue = queue.Queue(maxsize=10)  # Cap queue to prevent latency buildup
         self.input_device = None
         self.output_device = None
 
@@ -68,6 +85,13 @@ class AudioManager:
 
         # Echo ducking state
         self._last_incoming_time = 0.0  # timestamp of last incoming audio
+
+        # Audio level callbacks (0.0–1.0 range)
+        self.mic_level_callback = None    # Called with mic RMS level
+        self.speaker_level_callback = None  # Called with speaker RMS level
+
+        # Threading guard
+        self._stream_lock = threading.Lock()
     def log(self, msg):
         if self.log_callback:
             self.log_callback(msg)
@@ -95,9 +119,11 @@ class AudioManager:
 
     def start_streaming(self):
         """Green Mode: Start streaming mic to UDP"""
-        if self.streaming: return
-        self.streaming = True
-        self.stream_thread = threading.Thread(target=self._stream_mic)
+        with self._stream_lock:
+            if self.streaming:
+                return
+            self.streaming = True
+        self.stream_thread = threading.Thread(target=self._stream_mic, daemon=True)
         self.stream_thread.start()
 
     def stop_streaming(self):
@@ -118,6 +144,14 @@ class AudioManager:
                     raw = ducked.tobytes()
                 else:
                     raw = indata.tobytes()
+
+                # Report mic level (RMS normalised to 0–1)
+                if self.mic_level_callback:
+                    rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
+                    # int16 range: normalise by 32768
+                    level = min(1.0, rms / 32768.0 * 10)  # ×10 for visible range
+                    self.mic_level_callback(level)
+
                 # Compress with µ-law: 16-bit → 8-bit (halves bandwidth)
                 compressed = audioop.lin2ulaw(raw, 2)
                 self.network_manager.send_audio(compressed)
@@ -125,9 +159,9 @@ class AudioManager:
         try:
             with sd.InputStream(device=self.input_device, samplerate=SAMPLE_RATE,
                                 channels=CHANNELS, dtype=DTYPE, callback=callback,
-                                blocksize=CHUNK_SIZE):
+                                blocksize=CHUNK_SIZE, latency='low'):
                 while self.streaming:
-                    sd.sleep(100)
+                    sd.sleep(50)
         except Exception as e:
             self.log(f"Mic Stream Error: {e}")
 
@@ -138,12 +172,16 @@ class AudioManager:
         self.record_thread = threading.Thread(target=self._record_buffer)
         self.record_thread.start()
 
-    def stop_recording_message(self, filename="outgoing_message.wav"):
+    def stop_recording_message(self, filename=None):
         """Stop recording and save to file"""
         self.recording = False
         if not self.message_buffer:
             return None
-        
+
+        if filename is None:
+            from user_settings import _config_dir
+            filename = os.path.join(_config_dir(), "outgoing_message.wav")
+
         # Save to file
         data = np.concatenate(self.message_buffer, axis=0)
         sf.write(filename, data, SAMPLE_RATE)
@@ -181,7 +219,22 @@ class AudioManager:
                  return
 
             audio_data = audio_data.reshape(-1, CHANNELS)
-            self.audio_queue.put(audio_data)
+
+            # Report speaker level
+            if self.speaker_level_callback:
+                rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
+                level = min(1.0, rms / 32768.0 * 10)
+                self.speaker_level_callback(level)
+
+            # Drop oldest chunks if queue is full (prevents latency snowball)
+            if self.audio_queue.full():
+                try:
+                    self.audio_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self.audio_queue.put_nowait(audio_data)
+        except queue.Full:
+            pass  # Drop frame rather than block
         except Exception as e:
             print(f"Audio Decode Error: {e}")
 
@@ -208,9 +261,9 @@ class AudioManager:
         try:
              with sd.OutputStream(device=self.output_device, samplerate=SAMPLE_RATE,
                                   channels=CHANNELS, dtype=DTYPE, callback=callback,
-                                  blocksize=CHUNK_SIZE):
+                                  blocksize=CHUNK_SIZE, latency='low'):
                 while self.listening:
-                    sd.sleep(100)
+                    sd.sleep(50)
         except Exception as e:
             self.log(f"Audio Stream Error: {e}")
             

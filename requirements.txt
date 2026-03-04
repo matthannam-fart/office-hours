@@ -5,3 +5,5 @@ zeroconf
 soundfile
 streamdeck==0.9.3
 Pillow
+cryptography
+pynput
