@@ -11,6 +11,7 @@ import json
 import urllib.request
 import urllib.error
 import urllib.parse
+from datetime import datetime, timezone
 from config import SUPABASE_URL, SUPABASE_ANON_KEY, log
 
 
@@ -53,10 +54,11 @@ def _request(method, path, body=None, headers_extra=None, params=None):
 # ── Profiles ─────────────────────────────────────────────────────
 
 def ensure_profile(user_id: str, display_name: str):
-    """Upsert the user's profile on app launch."""
+    """Upsert the user's profile on app launch. Updates last_seen timestamp."""
+    now = datetime.now(timezone.utc).isoformat()
     result = _request(
         "POST", "profiles",
-        body={"id": user_id, "display_name": display_name},
+        body={"id": user_id, "display_name": display_name, "last_seen": now},
         headers_extra={
             "Prefer": "return=representation,resolution=merge-duplicates",
         },

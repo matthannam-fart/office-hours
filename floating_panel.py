@@ -90,6 +90,7 @@ class FloatingPanel(QWidget):
     request_to_join = Signal(str, str, str)   # team_id, team_name, admin_id (lobby join request)
     join_request_accepted = Signal(str)        # request_id — admin accepted a join request
     join_request_declined = Signal(str, str)   # request_id, requester_id — admin declined
+    team_selected_from_lobby = Signal(str, str)  # team_id, team_name — user picked existing team
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -519,7 +520,7 @@ class FloatingPanel(QWidget):
         layout.addWidget(title)
         layout.addSpacing(4)
 
-        subtitle = QLabel("Set your name, then join or create a team.")
+        subtitle = QLabel("Set your name and pick a team.")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']};")
@@ -653,9 +654,10 @@ class FloatingPanel(QWidget):
 
         return frame
 
-    def set_available_teams(self, teams):
+    def set_available_teams(self, teams, my_teams=None):
         """Populate the lobby team list on the onboarding screen.
-        teams: [{id, name, created_by}, ...]
+        teams: [{id, name, created_by}, ...] — teams user can request to join
+        my_teams: [{id, name, role}, ...] — teams user already belongs to (shown first with Select btn)
         """
         # Clear existing items
         while self._lobby_layout.count() > 0:
@@ -664,51 +666,107 @@ class FloatingPanel(QWidget):
             if w:
                 w.deleteLater()
 
-        if not teams:
+        has_content = False
+
+        # ── Show user's own teams first (with "Select" button) ──
+        if my_teams:
+            has_content = True
+            section_lbl = QLabel("YOUR TEAMS")
+            section_lbl.setStyleSheet(f"font-size: 8px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px; padding: 4px 2px 2px 2px;")
+            self._lobby_layout.addWidget(section_lbl)
+
+            for team in my_teams:
+                row = QFrame()
+                row.setStyleSheet(f"""
+                    QFrame {{ background: transparent; border-radius: 4px; }}
+                    QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
+                """)
+                h = QHBoxLayout(row)
+                h.setContentsMargins(6, 3, 6, 3)
+                h.setSpacing(6)
+
+                name_lbl = QLabel(team["name"])
+                name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {DARK['TEXT']};")
+                h.addWidget(name_lbl, 1)
+
+                select_btn = QPushButton("Select")
+                select_btn.setCursor(Qt.PointingHandCursor)
+                select_btn.setFixedSize(54, 24)
+                select_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {COLORS['GREEN']}; color: white; border: none;
+                        border-radius: 4px; font-size: 10px; font-weight: 700;
+                    }}
+                    QPushButton:hover {{ background: #2bbd6e; }}
+                """)
+                team_id = team["id"]
+                team_name = team["name"]
+                select_btn.clicked.connect(
+                    lambda checked=False, tid=team_id, tn=team_name:
+                        self._on_lobby_select_click(tid, tn)
+                )
+                h.addWidget(select_btn)
+                self._lobby_layout.addWidget(row)
+
+        # ── Show other teams (with "Join" button) ──
+        if teams:
+            has_content = True
+            if my_teams:
+                # Add a small divider between sections
+                section_lbl2 = QLabel("OTHER TEAMS")
+                section_lbl2.setStyleSheet(f"font-size: 8px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px; padding: 6px 2px 2px 2px;")
+                self._lobby_layout.addWidget(section_lbl2)
+
+            for team in teams:
+                row = QFrame()
+                row.setStyleSheet(f"""
+                    QFrame {{ background: transparent; border-radius: 4px; }}
+                    QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
+                """)
+                h = QHBoxLayout(row)
+                h.setContentsMargins(6, 3, 6, 3)
+                h.setSpacing(6)
+
+                name_lbl = QLabel(team["name"])
+                name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {DARK['TEXT']};")
+                h.addWidget(name_lbl, 1)
+
+                join_btn = QPushButton("Join")
+                join_btn.setCursor(Qt.PointingHandCursor)
+                join_btn.setFixedSize(50, 24)
+                join_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {DARK['ACCENT']}; color: white; border: none;
+                        border-radius: 4px; font-size: 10px; font-weight: 700;
+                    }}
+                    QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+                    QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
+                """)
+                team_id = team["id"]
+                team_name = team["name"]
+                admin_id = team.get("created_by", "")
+                join_btn.clicked.connect(
+                    lambda checked=False, tid=team_id, tn=team_name, aid=admin_id, btn=join_btn:
+                        self._on_lobby_join_click(tid, tn, aid, btn)
+                )
+                h.addWidget(join_btn)
+                self._lobby_layout.addWidget(row)
+
+        if not has_content:
             empty = QLabel("No teams yet — create one!")
             empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
             self._lobby_layout.addWidget(empty)
-            self._lobby_layout.addStretch()
-            return
-
-        for team in teams:
-            row = QFrame()
-            row.setStyleSheet(f"""
-                QFrame {{ background: transparent; border-radius: 4px; }}
-                QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
-            """)
-            h = QHBoxLayout(row)
-            h.setContentsMargins(6, 3, 6, 3)
-            h.setSpacing(6)
-
-            name_lbl = QLabel(team["name"])
-            name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {DARK['TEXT']};")
-            h.addWidget(name_lbl, 1)
-
-            join_btn = QPushButton("Join")
-            join_btn.setCursor(Qt.PointingHandCursor)
-            join_btn.setFixedSize(50, 24)
-            join_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {DARK['ACCENT']}; color: white; border: none;
-                    border-radius: 4px; font-size: 10px; font-weight: 700;
-                }}
-                QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
-                QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
-            """)
-            team_id = team["id"]
-            team_name = team["name"]
-            admin_id = team.get("created_by", "")
-            join_btn.clicked.connect(
-                lambda checked=False, tid=team_id, tn=team_name, aid=admin_id, btn=join_btn:
-                    self._on_lobby_join_click(tid, tn, aid, btn)
-            )
-            h.addWidget(join_btn)
-
-            self._lobby_layout.addWidget(row)
 
         self._lobby_layout.addStretch()
+
+    def _on_lobby_select_click(self, team_id, team_name):
+        """User clicked 'Select' on one of their own teams in the lobby."""
+        if not self._get_onboarding_name():
+            return
+        # Emit name first
+        self.name_change_requested.emit(self._onboarding_name_input.text().strip())
+        self.team_selected_from_lobby.emit(team_id, team_name)
 
     def _on_lobby_join_click(self, team_id, team_name, admin_id, btn):
         """User clicked 'Join' on a team in the lobby."""
@@ -908,25 +966,29 @@ class FloatingPanel(QWidget):
         if ok and name.strip():
             self.create_team_requested.emit(name.strip())
 
-    def set_teams(self, teams, active_team_id=""):
+    def set_teams(self, teams, active_team_id="", force_lobby=False):
         """Update the team dropdown with available teams.
         teams: [{id, name, invite_code, role}, ...]
-        If no teams, show onboarding instead.
+        If no teams or force_lobby, show onboarding/lobby instead.
         """
         has_teams = bool(teams)
 
-        # Toggle onboarding vs normal UI
-        self._onboarding.setVisible(not has_teams)
-        self._team_bar.setVisible(has_teams)
-        self._user_section.setVisible(has_teams)
-        self._ptt_bar.setVisible(has_teams)
-        # Hide disconn bar during onboarding (it's distracting)
-        if not has_teams:
+        if force_lobby or not has_teams:
+            # Show lobby (onboarding) — user picks their team
+            self._onboarding.setVisible(True)
+            self._team_bar.setVisible(False)
+            self._user_section.setVisible(False)
+            self._ptt_bar.setVisible(False)
             self._is_onboarding = True
             self._disconn_bar.setVisible(False)
-            # Lock the height for the full onboarding form (taller for lobby list)
             self.setFixedHeight(500)
             return
+
+        # Transition to normal team UI (after user selected a team)
+        self._onboarding.setVisible(False)
+        self._team_bar.setVisible(True)
+        self._user_section.setVisible(True)
+        self._ptt_bar.setVisible(True)
 
         # Leaving onboarding — clear height lock
         self._is_onboarding = False

@@ -216,6 +216,7 @@ class IntercomApp(QObject):
         self.panel.request_to_join.connect(self._on_request_to_join)
         self.panel.join_request_accepted.connect(self._on_approve_join)
         self.panel.join_request_declined.connect(self._on_decline_join)
+        self.panel.team_selected_from_lobby.connect(self._on_team_selected_from_lobby)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -519,42 +520,28 @@ class IntercomApp(QObject):
             supabase_client.ensure_profile(self.user_id, self.display_name)
             teams = supabase_client.get_my_teams(self.user_id)
             self.my_teams = teams or []
-            if teams:
-                # If no active team set, pick the first one
-                if not self.active_team_id:
-                    self.active_team_id = teams[0]["id"]
-                    self.active_team_name = teams[0]["name"]
-                    set_active_team(self.active_team_id)
-                    set_active_team_name(self.active_team_name)
-                else:
-                    # Verify active team is still valid
-                    valid_ids = {t["id"] for t in teams}
-                    if self.active_team_id not in valid_ids:
-                        self.active_team_id = teams[0]["id"]
-                        self.active_team_name = teams[0]["name"]
-                        set_active_team(self.active_team_id)
-                        set_active_team_name(self.active_team_name)
-            # Always update panel team selector (even with 0 teams, shows "+" button)
-            self._teams_loaded_signal.emit()
             self.log_signal.emit(f"Supabase: {len(self.my_teams)} team(s) loaded")
 
-            # If no teams, load available teams for the lobby
-            if not self.my_teams:
-                try:
-                    all_teams = supabase_client.get_all_teams()
-                    my_ids = {t["id"] for t in self.my_teams}
-                    available = [t for t in (all_teams or []) if t["id"] not in my_ids]
-                    print(f"[DEBUG] Lobby: {len(available)} teams available")
-                    self._available_teams_signal.emit(available)
-                except Exception as e:
-                    self.log_signal.emit(f"Could not load available teams: {e}")
+            # Always load all available teams for the lobby
+            all_teams = supabase_client.get_all_teams() or []
+            my_ids = {t["id"] for t in self.my_teams}
+            available = [t for t in all_teams if t["id"] not in my_ids]
+            print(f"[DEBUG] Lobby: {len(self.my_teams)} my teams, {len(available)} other teams")
+
+            # Always show the lobby on launch so user picks their team
+            self._teams_loaded_signal.emit()  # Shows lobby (force_lobby mode)
+            self._available_teams_signal.emit([available, self.my_teams])  # Pass both lists
+
         except Exception as e:
             self.log_signal.emit(f"Supabase sync: {e}")
+            # Still show lobby even if Supabase fails
+            self._teams_loaded_signal.emit()
 
+        # Connect to presence with empty team (user hasn't chosen yet)
         try:
             success = self.network.connect_presence(
                 RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
-                self.mode, self.active_team_id,
+                self.mode, "",  # Empty team — will be set when user picks
             )
             if success:
                 self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
@@ -1059,14 +1046,21 @@ class IntercomApp(QObject):
 
     @Slot()
     def _on_teams_loaded(self):
-        """Called on main thread when Supabase teams are loaded."""
-        self.panel.set_teams(self.my_teams, self.active_team_id)
+        """Called on main thread when Supabase teams are loaded.
+        Always shows lobby on launch so user picks their team."""
+        self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
 
     @Slot(list)
-    def _set_available_teams(self, teams):
-        """Called on main thread to populate the lobby with available teams."""
-        print(f"[DEBUG] _set_available_teams: {len(teams)} teams")
-        self.panel.set_available_teams(teams)
+    def _set_available_teams(self, data):
+        """Called on main thread to populate the lobby with available + my teams.
+        data is [available_teams, my_teams] or just [available_teams]."""
+        if isinstance(data, list) and len(data) == 2 and isinstance(data[0], list):
+            available, my_teams = data[0], data[1]
+            print(f"[DEBUG] _set_available_teams: {len(available)} available, {len(my_teams)} mine")
+            self.panel.set_available_teams(available, my_teams=my_teams)
+        else:
+            print(f"[DEBUG] _set_available_teams: {len(data)} teams")
+            self.panel.set_available_teams(data)
 
     @Slot(str)
     def _on_team_changed(self, team_id):
@@ -1141,7 +1135,8 @@ class IntercomApp(QObject):
                 set_active_team(self.active_team_id)
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
-                QTimer.singleShot(0, lambda: self._on_teams_loaded())
+                # Transition directly to team view (not back to lobby)
+                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()
@@ -1167,7 +1162,8 @@ class IntercomApp(QObject):
                 set_active_team(self.active_team_id)
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
-                QTimer.singleShot(0, lambda: self._on_teams_loaded())
+                # Transition directly to team view (not back to lobby)
+                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
             else:
                 self.log_signal.emit(f"Invalid invite code: {invite_code}")
                 # Show error on onboarding screen (must happen on main thread)
@@ -1233,6 +1229,23 @@ class IntercomApp(QObject):
             supabase_client.remove_member(team_id, user_id)
             self.log_signal.emit("Member removed from team")
         threading.Thread(target=_do_remove, daemon=True).start()
+
+    # ── Lobby Team Selection ──────────────────────────────────
+
+    @Slot(str, str)
+    def _on_team_selected_from_lobby(self, team_id, team_name):
+        """User selected one of their own teams from the lobby."""
+        self.active_team_id = team_id
+        self.active_team_name = team_name
+        set_active_team(team_id)
+        set_active_team_name(team_name)
+        self.log(f"Selected team: {team_name}")
+
+        # Update presence with the chosen team
+        self.network.update_presence_team(team_id)
+
+        # Transition from lobby to normal team view
+        self.panel.set_teams(self.my_teams, self.active_team_id)
 
     # ── Lobby Join Request Flow ─────────────────────────────────
 
@@ -1340,12 +1353,14 @@ class IntercomApp(QObject):
                 teams = supabase_client.get_my_teams(self.user_id)
                 self.my_teams = teams or []
                 if self.my_teams:
-                    self.active_team_id = self.my_teams[0]["id"]
-                    self.active_team_name = self.my_teams[0]["name"]
+                    # Select the most recently joined team (last in list)
+                    self.active_team_id = self.my_teams[-1]["id"]
+                    self.active_team_name = self.my_teams[-1]["name"]
                     set_active_team(self.active_team_id)
                     set_active_team_name(self.active_team_name)
                     self.network.update_presence_team(self.active_team_id)
-                QTimer.singleShot(0, lambda: self._on_teams_loaded())
+                # Transition directly to team view (not back to lobby)
+                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
             threading.Thread(target=_reload, daemon=True).start()
         else:
             self.log("Join request was declined.")
@@ -1388,8 +1403,11 @@ class IntercomApp(QObject):
 
     def _quit(self):
         self._cleanup_messages()
+        self.log("Shutting down...")
         self.hotkey.stop()
         self.discovery.close()
+        # Disconnect presence first so relay broadcasts our departure
+        self.network.disconnect_presence()
         self.network.close()
         self.tray.setVisible(False)
         QApplication.quit()
