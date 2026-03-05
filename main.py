@@ -319,16 +319,11 @@ class IntercomApp(QObject):
     def _on_accept_call(self):
         self.panel.hide_incoming()
         self.log(f"Accept: room={self.pending_room!r} from_id={self.pending_from_id!r} connected={self.network.connected}")
-        if self.pending_room and self.pending_from_id:
+        if self.pending_room:
             # Relay-based call: send ACCEPT to presence server
-            self.log("Accepted relay call — connecting...")
+            self.log(f"Accepted relay call — connecting to room {self.pending_room}...")
             self.network.accept_presence_connection(self.pending_room, self.pending_from_id)
-        elif self.pending_from_id and not self.pending_room:
-            # Have a from_id but no room — try relay accept anyway
-            # (handles edge case where pending_room was cleared by race condition)
-            self.log("Accepted call — requesting relay room from presence...")
-            self.network.accept_presence_connection_by_id(self.pending_from_id)
-        elif self.network.connected and not self.pending_room:
+        elif self.network.connected:
             # Direct LAN call: send CONNECTION_ACCEPTED via TCP
             self.log("Accepted direct LAN call")
             self.network.send_control("CONNECTION_ACCEPTED", {
@@ -340,6 +335,10 @@ class IntercomApp(QObject):
             self.call_connected_signal.emit(caller_name)
             self._start_open_line_if_ready()
             self._set_busy()
+        elif self.pending_from_id:
+            # Have a from_id but no room — try relay accept by ID
+            self.log("Accepted call — requesting relay room from presence...")
+            self.network.accept_presence_connection_by_id(self.pending_from_id)
         else:
             self.log("Accept failed — no active connection (no room, no from_id, not connected)")
 
