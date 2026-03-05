@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QRectF,
 from PySide6.QtGui import QColor, QPainter, QBrush, QRadialGradient, QPen
 
 # Import shared constants (from separate module to avoid circular imports)
-from ui_constants import COLORS
+from ui_constants import COLORS, DARK
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -102,7 +102,7 @@ class LevelMeter(QWidget):
         super().__init__(parent)
         self._level = 0.0  # 0.0–1.0
         self._color = QColor(color)
-        self._bg = QColor("#e0e0e0")
+        self._bg = QColor(DARK['BORDER'])
         self.setFixedSize(width, height)
 
     def set_level(self, level):
@@ -180,12 +180,23 @@ class UserRow(QWidget):
         super().__init__(parent)
         self.user_id = user_id
         self._hovered = False
-        self.setFixedHeight(44)
+        self.setFixedHeight(46)
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
 
+        # Card-style background
+        self.setStyleSheet(f"""
+            UserRow {{
+                background: {DARK['BG_RAISED']};
+                border-radius: 8px;
+            }}
+            UserRow:hover {{
+                background: {DARK['BG_HOVER']};
+            }}
+        """)
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 6, 8, 6)
+        layout.setContentsMargins(10, 6, 8, 6)
         layout.setSpacing(8)
 
         # Orb
@@ -194,47 +205,56 @@ class UserRow(QWidget):
 
         # Name
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet("font-size: 14px; font-weight: 500; color: #3a3a3a; padding-bottom: 1px;")
+        self.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {DARK['TEXT']}; padding-bottom: 1px;")
         layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # Message indicator (amber dot)
         self.msg_dot = QLabel()
         self.msg_dot.setFixedSize(18, 18)
-        self.msg_dot.setStyleSheet("""
-            background: #fff4cc;
-            border: 1px solid #ffe066;
+        self.msg_dot.setStyleSheet(f"""
+            background: rgba(230, 175, 0, 0.20);
+            border: 1px solid rgba(230, 175, 0, 0.40);
             border-radius: 9px;
         """)
         self.msg_dot.setVisible(has_message)
         layout.addWidget(self.msg_dot)
 
-        # Call button (hidden until hover)
-        if mode == 'BUSY':
-            btn_text = "Join"
-        elif mode == 'YELLOW':
-            btn_text = "Page"
-        else:
-            btn_text = "Call"
+        # Call button (hidden until hover) — label depends on mode
+        btn_labels = {
+            'GREEN': 'Intercom', 'YELLOW': 'Page', 'RED': 'Message',
+            'BUSY': 'Join', 'OPEN': 'Intercom',
+        }
+        btn_text = btn_labels.get(mode, 'Call')
         self.call_btn = QPushButton(btn_text)
-        self.call_btn.setFixedWidth(36)
+        self.call_btn.setFixedWidth(52)
         self.call_btn.setCursor(Qt.PointingHandCursor)
         if mode == 'YELLOW':
-            self.call_btn.setStyleSheet("""
-                QPushButton {
-                    background: #fff4cc; color: #b8860b; border: 1px solid #ffe066;
+            self.call_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(230, 175, 0, 0.15); color: {DARK['WARN']};
+                    border: 1px solid rgba(230, 175, 0, 0.30);
                     border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
-                }
-                QPushButton:hover { background: #ffe680; }
+                }}
+                QPushButton:hover {{ background: rgba(230, 175, 0, 0.25); }}
             """)
         elif mode == 'RED':
-            self.call_btn.setVisible(False)  # Can't call DND users
-        else:
-            self.call_btn.setStyleSheet("""
-                QPushButton {
-                    background: #e6f9ed; color: #008040; border: 1px solid #80e6a0;
+            # Message button — muted styling
+            self.call_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255,255,255,0.06); color: {DARK['TEXT_DIM']};
+                    border: 1px solid {DARK['BORDER']};
                     border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
-                }
-                QPushButton:hover { background: #c8f0d8; }
+                }}
+                QPushButton:hover {{ background: rgba(255,255,255,0.10); }}
+            """)
+        else:
+            self.call_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(0, 166, 81, 0.12); color: {DARK['ACCENT']};
+                    border: 1px solid rgba(0, 166, 81, 0.25);
+                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
+                }}
+                QPushButton:hover {{ background: rgba(0, 166, 81, 0.22); }}
             """)
         self.call_btn.setVisible(False)
         self.call_btn.clicked.connect(lambda: self.call_clicked.emit(self.user_id))
@@ -284,7 +304,7 @@ class ToggleSwitch(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         # Track
-        track_color = QColor('#2ABFBF') if self._on else QColor('#ddd')
+        track_color = QColor('#2ABFBF') if self._on else QColor(DARK['BORDER'])
         p.setBrush(QBrush(track_color))
         p.setPen(Qt.NoPen)
         p.drawRoundedRect(QRectF(0, 0, 36, 20), 10, 10)

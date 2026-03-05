@@ -695,6 +695,17 @@ class NetworkManager:
         self._presence_team_id = team_id
         self.update_presence_mode(self._presence_mode, team_id=team_id)
 
+    def update_presence_name(self, new_name):
+        """Notify the presence server of a display name change."""
+        self.display_name = new_name
+        if not self.presence_connected or not self.presence_socket:
+            return
+        try:
+            msg = json.dumps({"action": "NAME_UPDATE", "name": new_name}).encode('utf-8')
+            self._send_frame_on(self.presence_socket, msg)
+        except Exception as e:
+            self._log(f"Presence name update failed: {e}")
+
     def connect_to_user(self, target_user_id):
         """Request a connection to a specific online user via presence"""
         if not self.presence_connected or not self.presence_socket:

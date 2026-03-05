@@ -9,7 +9,7 @@ from ctypes import c_void_p
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QSystemTrayIcon, QMenu, QLineEdit, QSpacerItem, QSlider, QWidgetAction,
+    QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
     QComboBox
 )
 from PySide6.QtCore import (
@@ -24,7 +24,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtCore import QUrl
 
 # Shared constants (extracted to ui_constants.py)
-from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS
+from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK
 
 # Widget classes (extracted to widgets.py)
 from widgets import GlowingOrb, LevelMeter, SmallOrb, UserRow, ToggleSwitch
@@ -33,17 +33,24 @@ from widgets import GlowingOrb, LevelMeter, SmallOrb, UserRow, ToggleSwitch
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         'commercial-type-2507-JRGALW-desktop')
 FONT_FAMILY = 'Focal'
+# Fallback chain for systems without the bundled font
+FONT_FALLBACK = 'SF Pro Display, -apple-system, Helvetica Neue, Arial'
 
 def _load_fonts():
-    """Load bundled Focal font family into Qt."""
+    """Load bundled Focal font family into Qt.
+    Returns True if at least one font loaded successfully."""
     if not os.path.isdir(FONT_DIR):
-        return
+        return False
+    loaded = False
     for fname in sorted(os.listdir(FONT_DIR)):
         if fname.endswith(('.otf', '.ttf')):
             fpath = os.path.join(FONT_DIR, fname)
             font_id = QFontDatabase.addApplicationFont(fpath)
-            if font_id < 0:
+            if font_id >= 0:
+                loaded = True
+            else:
                 print(f"Warning: could not load font {fname}")
+    return loaded
 
 _fonts_loaded = False
 
@@ -56,10 +63,12 @@ class FloatingPanel(QWidget):
 
     # Signals to communicate back to IntercomApp
     mode_cycle_requested = Signal()
-    open_toggled = Signal(bool)
+    hotline_toggled = Signal(bool)
     pin_toggled = Signal(bool)
     ptt_pressed = Signal()
     ptt_released = Signal()
+    page_all_pressed = Signal()
+    page_all_released = Signal()
     call_user_requested = Signal(str)     # user_id
     leave_requested = Signal()
     accept_call_requested = Signal()
@@ -83,16 +92,17 @@ class FloatingPanel(QWidget):
         # Load fonts once (must happen after QApplication exists)
         global _fonts_loaded
         if not _fonts_loaded:
-            _load_fonts()
-            _fonts_loaded = True
-        # Set panel font to Focal
-        self.setFont(QFont(FONT_FAMILY, 11))
+            _fonts_loaded = _load_fonts()
+        # Set panel font — Focal if available, else system fallback
+        font_family = FONT_FAMILY if _fonts_loaded else FONT_FALLBACK.split(',')[0].strip()
+        self.setFont(QFont(font_family, 11))
         self._pinned = False
         self._connected = False
         self._current_mode = 'GREEN'
         self._is_open_line = False
         self._incognito = False
-        self._dark_mode = False
+        self._dark_mode = True
+        self._is_onboarding = False  # True while onboarding is shown
         self._radio_station = None  # currently playing station name
 
         # Radio player
@@ -137,21 +147,23 @@ class FloatingPanel(QWidget):
         self._frame.setObjectName("panelFrame")
         self._frame.setStyleSheet(f"""
             #panelFrame {{
-                background: rgba(245, 245, 243, 200);
-                border: 1px solid rgba(0, 0, 0, 0.08);
+                background: {DARK['BG']};
+                border: 1px solid {DARK['BORDER']};
                 border-radius: {PANEL_RADIUS}px;
             }}
         """)
 
+        self._notch_h = 7  # Height of the notch triangle
+
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 1, 0, 9)  # nudged up for visual center
+        outer.setContentsMargins(0, self._notch_h, 0, 9)
         outer.addWidget(self._frame)
 
-        # Drop shadow
+        # Drop shadow — subtle on dark
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(0, 0, 0, 40))
+        shadow.setBlurRadius(32)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 80))
         self._frame.setGraphicsEffect(shadow)
 
 
@@ -203,7 +215,7 @@ class FloatingPanel(QWidget):
         # ── Onboarding (shown when no teams) ─────────────────
         self._onboarding = self._build_onboarding()
         self._onboarding.setVisible(False)
-        root.addWidget(self._onboarding)
+        root.addWidget(self._onboarding, 1)
 
         # ── User List ─────────────────────────────────────────
         self._user_section = self._build_user_section()
@@ -229,52 +241,58 @@ class FloatingPanel(QWidget):
     # ── Header ────────────────────────────────────────────────────
     def _build_header(self):
         header = QFrame()
-        header.setStyleSheet("border-bottom: 1px solid #eae8e4;")
+        header.setStyleSheet(f"border-bottom: 1px solid {DARK['BORDER']};")
         header.setFixedHeight(48)
 
         h = QHBoxLayout(header)
         h.setContentsMargins(12, 8, 10, 8)
         h.setSpacing(8)
 
-        # Glowing orb (24px)
-        self.orb = GlowingOrb(24)
+        # Status orb (16px — color conveys mode)
+        self.orb = GlowingOrb(16)
         h.addWidget(self.orb)
 
-        # Mode cycle button with custom-painted dot + label
+        # Mode cycle button
         self.mode_btn = QPushButton()
         self.mode_btn.setCursor(Qt.PointingHandCursor)
         self.mode_btn.setMinimumHeight(28)
         self.mode_btn.clicked.connect(self.mode_cycle_requested.emit)
         h.addWidget(self.mode_btn)
 
-        # The colored dot inside the mode button is drawn via stylesheet
         self._update_mode_btn()
 
         # Spacer
         h.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
-        # Thin vertical divider
-        divider = QFrame()
-        divider.setFixedSize(1, 22)
-        divider.setStyleSheet("background: #e0ddd8; border: none;")
-        h.addWidget(divider)
-
-        # Open toggle with label
-        open_lbl = QLabel("Open")
-        open_lbl.setStyleSheet("font-size: 12px; color: #999; font-weight: 500; border: none;")
-        h.addWidget(open_lbl)
+        # Hotline toggle with label
+        self._hotline_lbl = QLabel("Hotline")
+        self._hotline_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
+        h.addWidget(self._hotline_lbl)
 
         self.open_toggle = ToggleSwitch()
-        self.open_toggle.toggled.connect(self.open_toggled.emit)
+        self.open_toggle.toggled.connect(self.hotline_toggled.emit)
         h.addWidget(self.open_toggle)
 
-        # Pin button — custom painted
+        # Hamburger / settings button (replaces pin in header)
+        self.menu_btn = QPushButton("···")
+        self.menu_btn.setFixedSize(26, 26)
+        self.menu_btn.setCursor(Qt.PointingHandCursor)
+        self.menu_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 14px; font-weight: 900; color: {DARK['TEXT_DIM']};
+                background: transparent; border: none;
+                border-radius: 6px; padding: 0 0 4px 0; letter-spacing: 1px;
+            }}
+            QPushButton:hover {{ background: rgba(255,255,255,0.06); }}
+        """)
+        self.menu_btn.clicked.connect(self._show_hamburger_menu)
+        h.addWidget(self.menu_btn)
+
+        # Hidden pin button (used programmatically, no longer in header)
         self.pin_btn = QPushButton()
-        self.pin_btn.setFixedSize(26, 26)
-        self.pin_btn.setCursor(Qt.PointingHandCursor)
+        self.pin_btn.setFixedSize(0, 0)
+        self.pin_btn.setVisible(False)
         self._update_pin_style(False)
-        self.pin_btn.clicked.connect(self._toggle_pin)
-        h.addWidget(self.pin_btn)
 
         return header
 
@@ -283,56 +301,55 @@ class FloatingPanel(QWidget):
             self.pin_btn.setText("v")
             self.pin_btn.setStyleSheet("""
                 QPushButton {
-                    border: none; background: rgba(255,152,0,0.12);
-                    font-size: 16px; font-weight: 900; color: #f57c00;
+                    border: none; background: rgba(255,152,0,0.15);
+                    font-size: 16px; font-weight: 900; color: #ffb74d;
                     border-radius: 6px;
                 }
-                QPushButton:hover { background: rgba(255,152,0,0.22); }
+                QPushButton:hover { background: rgba(255,152,0,0.25); }
             """)
         else:
             self.pin_btn.setText("^")
             self.pin_btn.setStyleSheet("""
                 QPushButton {
-                    border: none; background: rgba(255,152,0,0.08);
+                    border: none; background: rgba(255,152,0,0.10);
                     font-size: 16px; font-weight: 900; color: #ff9800;
                     border-radius: 6px;
                 }
-                QPushButton:hover { background: rgba(255,152,0,0.18); color: #f57c00; }
+                QPushButton:hover { background: rgba(255,152,0,0.18); color: #ffb74d; }
             """)
 
     def _update_mode_btn(self):
         mode = self._current_mode
         color = COLORS.get(mode, COLORS['GREEN'])
-        # Darker text colors for each mode (from wireframe)
+        # Lighter text colors for dark background
         text_colors = {
-            'GREEN': '#008040', 'YELLOW': '#cc9900',
-            'RED': '#c41a12', 'OPEN': '#1a8f8f'
+            'GREEN': '#4cdf80', 'YELLOW': '#f0c040',
+            'RED': '#f06060', 'OPEN': '#4cd8d8'
         }
-        text_color = text_colors.get(mode, '#008040')
+        text_color = text_colors.get(mode, '#4cdf80')
         label = MODE_LABELS.get(mode, 'Available')
 
-        # Use HTML to render a colored circle + text since QPushButton supports rich text via stylesheet
         self.mode_btn.setText(label)
         self.mode_btn.setStyleSheet(f"""
             QPushButton {{
-                padding: 5px 12px 5px 10px;
+                padding: 4px 10px;
                 border-radius: 8px;
-                border: 1px solid rgba(0,0,0,0.06);
-                background: rgba(0,0,0,0.03);
-                font-size: 13px;
+                border: 1px solid {DARK['BORDER']};
+                background: {DARK['BG_RAISED']};
+                font-size: 12px;
                 font-weight: 600;
                 color: {text_color};
                 text-align: left;
             }}
             QPushButton:hover {{
-                background: rgba(0,0,0,0.07);
+                background: {DARK['BG_HOVER']};
             }}
         """)
 
     # ── Connection Bar ────────────────────────────────────────────
     def _build_conn_bar(self):
         bar = QFrame()
-        bar.setStyleSheet("background: #fafaf8; border-bottom: 1px solid #eae8e4;")
+        bar.setStyleSheet(f"background: {DARK['BG_RAISED']}; border-bottom: 1px solid {DARK['BORDER']};")
         bar.setFixedHeight(36)
 
         h = QHBoxLayout(bar)
@@ -341,38 +358,38 @@ class FloatingPanel(QWidget):
 
         # Green dot
         dot = QLabel("●")
-        dot.setStyleSheet("color: #00a651; font-size: 10px; border: none;")
+        dot.setStyleSheet(f"color: {COLORS['GREEN']}; font-size: 10px; border: none;")
         h.addWidget(dot)
 
         # Connection label
         self.conn_label = QLabel("Connected")
-        self.conn_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #5a5a5a; letter-spacing: 0.5px; border: none;")
+        self.conn_label.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {DARK['TEXT']}; letter-spacing: 0.5px; border: none;")
         h.addWidget(self.conn_label, 1)
 
         # Leave button
         self.leave_btn = QPushButton("Leave")
         self.leave_btn.setCursor(Qt.PointingHandCursor)
-        self.leave_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 11px; font-weight: 700; color: #c0392b;
-                background: transparent; border: 1px solid #e8c4c0;
+        self.leave_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 11px; font-weight: 700; color: {DARK['DANGER']};
+                background: transparent; border: 1px solid rgba(229,57,53,0.3);
                 border-radius: 8px; padding: 3px 10px;
-            }
-            QPushButton:hover { background: #fde8e5; }
+            }}
+            QPushButton:hover {{ background: rgba(229,57,53,0.12); }}
         """)
         self.leave_btn.clicked.connect(self.leave_requested.emit)
         h.addWidget(self.leave_btn)
 
-        # Quit button (gear icon)
+        # Quit button
         gear = QPushButton("✕")
         gear.setFixedSize(24, 24)
         gear.setToolTip("Quit Office Hours")
-        gear.setStyleSheet("""
-            QPushButton {
+        gear.setStyleSheet(f"""
+            QPushButton {{
                 border: none; background: transparent; font-size: 13px;
-                color: #ccc; border-radius: 4px;
-            }
-            QPushButton:hover { color: #c0392b; background: rgba(192,57,43,0.08); }
+                color: {DARK['TEXT_FAINT']}; border-radius: 4px;
+            }}
+            QPushButton:hover {{ color: {DARK['DANGER']}; background: rgba(229,57,53,0.10); }}
         """)
         gear.clicked.connect(self.quit_requested.emit)
         h.addWidget(gear)
@@ -382,32 +399,16 @@ class FloatingPanel(QWidget):
     # ── Disconnected Bar ──────────────────────────────────────────
     def _build_disconn_bar(self):
         bar = QFrame()
-        bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(0,0,0,0.06);")
-        bar.setFixedHeight(46)
+        bar.setStyleSheet(f"background: transparent; border-bottom: 1px solid {DARK['BORDER']};")
+        bar.setFixedHeight(32)
 
         h = QHBoxLayout(bar)
-        h.setContentsMargins(12, 4, 8, 4)
-        h.setSpacing(6)
+        h.setContentsMargins(14, 4, 14, 4)
 
         # Status label
-        status_lbl = QLabel("Connecting...")
-        status_lbl.setStyleSheet("font-size: 12px; color: #aaa; font-weight: 500;")
-        h.addWidget(status_lbl, 1)
-
-        # Hamburger menu (☰)
-        self.menu_btn = QPushButton("☰")
-        self.menu_btn.setFixedSize(24, 24)
-        self.menu_btn.setCursor(Qt.PointingHandCursor)
-        self.menu_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 17px; color: #888;
-                background: transparent; border: none;
-                border-radius: 12px; padding: 0 0 2px 0;
-            }
-            QPushButton:hover { background: rgba(0,0,0,0.06); }
-        """)
-        self.menu_btn.clicked.connect(self._show_hamburger_menu)
-        h.addWidget(self.menu_btn)
+        self._disconn_label = QLabel("Connecting...")
+        self._disconn_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; font-weight: 500;")
+        h.addWidget(self._disconn_label, 1)
 
         return bar
 
@@ -420,22 +421,24 @@ class FloatingPanel(QWidget):
         h.setSpacing(6)
 
         lbl = QLabel("TEAM")
-        lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
         h.addWidget(lbl)
 
         self._team_combo = QComboBox()
-        self._team_combo.setStyleSheet("""
-            QComboBox {
-                background: #f0eeeb; border: 1px solid #ddd; border-radius: 6px;
-                padding: 3px 8px; font-size: 12px; color: #333; min-width: 120px;
-            }
-            QComboBox::drop-down {
+        self._team_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 3px 8px; font-size: 12px;
+                color: {DARK['TEXT']}; min-width: 120px;
+            }}
+            QComboBox::drop-down {{
                 border: none; width: 20px;
-            }
-            QComboBox QAbstractItemView {
-                background: white; border: 1px solid #ddd; border-radius: 4px;
-                selection-background-color: #e8e6e3;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 4px; selection-background-color: {DARK['BG_HOVER']};
+                color: {DARK['TEXT']};
+            }}
         """)
         self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
         h.addWidget(self._team_combo, 1)
@@ -443,11 +446,11 @@ class FloatingPanel(QWidget):
         # Manage button (gear icon) — only shown for admins
         self._team_manage_btn = QPushButton("⚙")
         self._team_manage_btn.setFixedSize(24, 24)
-        self._team_manage_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; border: none; font-size: 14px; color: #888;
-            }
-            QPushButton:hover { color: #333; }
+        self._team_manage_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none; font-size: 14px; color: {DARK['TEXT_DIM']};
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT']}; }}
         """)
         self._team_manage_btn.setToolTip("Manage Team")
         self._team_manage_btn.clicked.connect(self.manage_team_requested.emit)
@@ -457,12 +460,13 @@ class FloatingPanel(QWidget):
         # + button to create a new team
         add_btn = QPushButton("+")
         add_btn.setFixedSize(24, 24)
-        add_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; border: 1px solid #ccc; border-radius: 12px;
-                font-size: 16px; font-weight: bold; color: #888;
-            }
-            QPushButton:hover { background: #e8e6e3; color: #333; }
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid {DARK['BORDER']};
+                border-radius: 12px; font-size: 16px; font-weight: bold;
+                color: {DARK['TEXT_DIM']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
         """)
         add_btn.setToolTip("Create Team")
         add_btn.clicked.connect(self._on_create_team_click)
@@ -473,106 +477,145 @@ class FloatingPanel(QWidget):
     # ── Onboarding (no teams yet) ────────────────────────────
     def _build_onboarding(self):
         """First-launch screen: set your name + enter invite code or create a team."""
-        frame = QFrame()
+        # Custom frame that paints an "OH" watermark behind the content
+        class WatermarkFrame(QFrame):
+            def paintEvent(self, event):
+                super().paintEvent(event)
+                p = QPainter(self)
+                p.setRenderHint(QPainter.Antialiasing)
+                # Look for oh_bg image first, fall back to painted text
+                bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oh_bg.png")
+                if os.path.exists(bg_path):
+                    pm = QPixmap(bg_path)
+                    # Scale to fit width, center vertically
+                    scaled = pm.scaledToWidth(self.width(), Qt.SmoothTransformation)
+                    y = (self.height() - scaled.height()) // 2
+                    p.setOpacity(0.08)
+                    p.drawPixmap(0, y, scaled)
+                else:
+                    # Paint "OH" in large text as watermark
+                    font = QFont(FONT_FAMILY, 160)
+                    font.setWeight(QFont.Black)
+                    p.setFont(font)
+                    color = QColor(DARK['TEAL'])
+                    color.setAlpha(18)
+                    p.setPen(color)
+                    r = self.rect()
+                    r.moveTop(-10)
+                    p.drawText(r, Qt.AlignCenter, "OH")
+                p.end()
+
+        frame = WatermarkFrame()
         frame.setStyleSheet("border: none;")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(0)
 
         # Title
         title = QLabel("Welcome to Office Hours")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #333;")
+        title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {DARK['TEXT']};")
         layout.addWidget(title)
+        layout.addSpacing(4)
 
         subtitle = QLabel("Set your name, then join a team or start a new one.")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 11px; color: #888;")
+        subtitle.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']};")
         layout.addWidget(subtitle)
+        layout.addSpacing(16)
 
         # ── Name input ──
         name_lbl = QLabel("YOUR NAME")
-        name_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        name_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
         layout.addWidget(name_lbl)
+        layout.addSpacing(3)
 
         self._onboarding_name_input = QLineEdit()
         self._onboarding_name_input.setPlaceholderText("Display name")
-        self._onboarding_name_input.setStyleSheet("""
-            QLineEdit {
-                background: white; border: 1px solid #ccc; border-radius: 8px;
-                padding: 8px 12px; font-size: 13px; color: #333;
-            }
-            QLineEdit:focus { border-color: #4caf50; }
+        self._onboarding_name_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 7px 10px; font-size: 12px;
+                color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
         """)
         self._onboarding_name_input.setMaxLength(30)
         layout.addWidget(self._onboarding_name_input)
-
-        # Spacer
-        layout.addSpacing(4)
+        layout.addSpacing(12)
 
         # ── Invite code section ──
         code_lbl = QLabel("INVITE CODE")
-        code_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        code_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
         layout.addWidget(code_lbl)
+        layout.addSpacing(3)
 
         self._invite_input = QLineEdit()
         self._invite_input.setPlaceholderText("e.g. OH-7X3K5")
         self._invite_input.setAlignment(Qt.AlignCenter)
-        self._invite_input.setStyleSheet("""
-            QLineEdit {
-                background: white; border: 1px solid #ccc; border-radius: 8px;
-                padding: 10px 14px; font-size: 15px; font-weight: 600;
-                letter-spacing: 2px; color: #333;
-            }
-            QLineEdit:focus { border-color: #4caf50; }
+        self._invite_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 7px 10px; font-size: 13px;
+                font-weight: 600; letter-spacing: 2px; color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
         """)
         self._invite_input.setMaxLength(10)
         layout.addWidget(self._invite_input)
+        layout.addSpacing(8)
 
         # Join button
         join_btn = QPushButton("Join Team")
-        join_btn.setStyleSheet("""
-            QPushButton {
-                background: #4caf50; color: white; border: none; border-radius: 8px;
-                padding: 10px; font-size: 13px; font-weight: 600;
-            }
-            QPushButton:hover { background: #43a047; }
-            QPushButton:disabled { background: #ccc; }
+        join_btn.setCursor(Qt.PointingHandCursor)
+        join_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
+                border-radius: 6px; padding: 8px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+            QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
         """)
         join_btn.clicked.connect(self._on_join_code_click)
         self._join_btn = join_btn
         layout.addWidget(join_btn)
+        layout.addSpacing(12)
 
         # Divider
         divider_row = QHBoxLayout()
-        line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet("color: #ddd;")
-        line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet("color: #ddd;")
+        divider_row.setContentsMargins(0, 0, 0, 0)
+        line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet(f"color: {DARK['BORDER']};")
+        line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet(f"color: {DARK['BORDER']};")
         or_lbl = QLabel("or")
-        or_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+        or_lbl.setStyleSheet(f"color: {DARK['TEXT_FAINT']}; font-size: 10px;")
         or_lbl.setAlignment(Qt.AlignCenter)
         divider_row.addWidget(line_l, 1)
         divider_row.addWidget(or_lbl)
         divider_row.addWidget(line_r, 1)
         layout.addLayout(divider_row)
+        layout.addSpacing(12)
 
         # Create team button
         create_btn = QPushButton("Create a New Team")
-        create_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #4caf50; border: 1px solid #4caf50;
-                border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600;
-            }
-            QPushButton:hover { background: rgba(76, 175, 80, 0.08); }
+        create_btn.setCursor(Qt.PointingHandCursor)
+        create_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT_DIM']};
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                padding: 8px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
         create_btn.clicked.connect(self._on_create_team_click)
         layout.addWidget(create_btn)
 
         # Status label for errors
+        layout.addSpacing(8)
         self._onboarding_status = QLabel("")
         self._onboarding_status.setAlignment(Qt.AlignCenter)
         self._onboarding_status.setWordWrap(True)
-        self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
         self._onboarding_status.setVisible(False)
         layout.addWidget(self._onboarding_status)
 
@@ -583,7 +626,7 @@ class FloatingPanel(QWidget):
         name = self._onboarding_name_input.text().strip()
         if not name:
             self._onboarding_status.setText("Please enter your name first.")
-            self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+            self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
             self._onboarding_status.setVisible(True)
             return None
         return name
@@ -603,13 +646,13 @@ class FloatingPanel(QWidget):
         code = self._invite_input.text().strip().upper()
         if not code:
             self._onboarding_status.setText("Please enter an invite code.")
-            self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+            self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
             self._onboarding_status.setVisible(True)
             return
         # Emit the name change first
         self.name_change_requested.emit(self._onboarding_name_input.text().strip())
         self._onboarding_status.setText("Joining...")
-        self._onboarding_status.setStyleSheet("font-size: 11px; color: #888;")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
         self._onboarding_status.setVisible(True)
         self._join_btn.setEnabled(False)
         self.join_code_requested.emit(code)
@@ -618,7 +661,7 @@ class FloatingPanel(QWidget):
     def set_onboarding_error(self, message):
         """Show an error on the onboarding screen."""
         self._onboarding_status.setText(message)
-        self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
         self._onboarding_status.setVisible(True)
         self._join_btn.setEnabled(True)
 
@@ -657,10 +700,18 @@ class FloatingPanel(QWidget):
         self._team_bar.setVisible(has_teams)
         self._user_section.setVisible(has_teams)
         self._ptt_bar.setVisible(has_teams)
-
+        # Hide disconn bar during onboarding (it's distracting)
         if not has_teams:
-            self.adjustSize()
+            self._is_onboarding = True
+            self._disconn_bar.setVisible(False)
+            # Lock the height for the full onboarding form
+            self.setFixedHeight(450)
             return
+
+        # Leaving onboarding — clear height lock
+        self._is_onboarding = False
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)  # Qt default max
 
         self._team_combo.blockSignals(True)
         self._team_combo.clear()
@@ -677,7 +728,7 @@ class FloatingPanel(QWidget):
         # Show manage button if admin of current team
         if active_index < len(teams):
             self._team_manage_btn.setVisible(teams[active_index].get("role") == "admin")
-        self.adjustSize()
+        self._resize_panel()
 
     def show_manage_team_dialog(self, team_name, team_id, members, invite_code="", add_callback=None, remove_callback=None):
         """Show a dialog to manage team members."""
@@ -690,14 +741,14 @@ class FloatingPanel(QWidget):
         # Invite code display
         if invite_code:
             code_frame = QFrame()
-            code_frame.setStyleSheet("background: #f0f7f0; border: 1px solid #c8e6c9; border-radius: 8px;")
+            code_frame.setStyleSheet(f"background: rgba(0, 166, 81, 0.08); border: 1px solid rgba(0, 166, 81, 0.20); border-radius: 8px;")
             code_layout = QVBoxLayout(code_frame)
             code_layout.setContentsMargins(12, 10, 12, 10)
             code_lbl = QLabel("Invite Code")
             code_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #888; letter-spacing: 1px; border: none;")
             code_layout.addWidget(code_lbl, alignment=Qt.AlignCenter)
             code_val = QLabel(invite_code)
-            code_val.setStyleSheet("font-size: 18px; font-weight: 700; color: #2e7d32; letter-spacing: 3px; border: none;")
+            code_val.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {DARK['ACCENT']}; letter-spacing: 3px; border: none;")
             code_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
             code_layout.addWidget(code_val, alignment=Qt.AlignCenter)
             hint = QLabel("Share this code so others can join")
@@ -717,7 +768,7 @@ class FloatingPanel(QWidget):
 
         # Remove button
         remove_btn = QPushButton("Remove Selected")
-        remove_btn.setStyleSheet("background: #e53935; color: white; border: none; border-radius: 4px; padding: 6px;")
+        remove_btn.setStyleSheet(f"background: {DARK['DANGER']}; color: white; border: none; border-radius: 4px; padding: 6px;")
         def _on_remove():
             item = member_list.currentItem()
             if item:
@@ -738,7 +789,7 @@ class FloatingPanel(QWidget):
         name_input.setPlaceholderText("Display name...")
         add_row.addWidget(name_input, 1)
         add_btn = QPushButton("Add")
-        add_btn.setStyleSheet("background: #4caf50; color: white; border: none; border-radius: 4px; padding: 6px 12px;")
+        add_btn.setStyleSheet(f"background: {DARK['ACCENT']}; color: white; border: none; border-radius: 4px; padding: 6px 12px;")
         def _on_add():
             name = name_input.text().strip()
             if name and add_callback:
@@ -768,13 +819,13 @@ class FloatingPanel(QWidget):
         sec_hdr = QHBoxLayout()
         sec_hdr.setContentsMargins(14, 10, 14, 4)
         self._online_label = QLabel("ONLINE")
-        self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        self._online_label.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
         sec_hdr.addWidget(self._online_label)
         sec_hdr.addStretch()
         self.online_count = QLabel("0")
-        self.online_count.setStyleSheet("""
-            font-size: 11px; font-weight: 700; color: #bbb;
-            background: #f0eeeb; border-radius: 8px; padding: 2px 7px;
+        self.online_count.setStyleSheet(f"""
+            font-size: 11px; font-weight: 700; color: {DARK['TEXT_DIM']};
+            background: {DARK['BG_RAISED']}; border-radius: 8px; padding: 2px 7px;
         """)
         sec_hdr.addWidget(self.online_count)
         v.addLayout(sec_hdr)
@@ -784,23 +835,23 @@ class FloatingPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical {
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
                 width: 4px; background: transparent;
-            }
-            QScrollBar::handle:vertical {
-                background: #ddd; border-radius: 2px; min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            }}
+            QScrollBar::handle:vertical {{
+                background: {DARK['BORDER']}; border-radius: 2px; min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0;
-            }
+            }}
         """)
 
         self._user_container = QWidget()
         self._user_layout = QVBoxLayout(self._user_container)
-        self._user_layout.setContentsMargins(6, 0, 6, 6)
-        self._user_layout.setSpacing(2)
+        self._user_layout.setContentsMargins(6, 2, 6, 6)
+        self._user_layout.setSpacing(4)
         self._user_layout.addStretch()
 
         scroll.setWidget(self._user_container)
@@ -811,32 +862,56 @@ class FloatingPanel(QWidget):
     # ── PTT Bar ───────────────────────────────────────────────────
     def _build_ptt_bar(self):
         bar = QFrame()
-        bar.setStyleSheet("border-top: 1px solid #eae8e4;")
+        bar.setStyleSheet(f"border-top: 1px solid {DARK['BORDER']};")
         bar.setFixedHeight(60)
 
         v = QVBoxLayout(bar)
         v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(4)
 
+        # Horizontal row: PTT (5/6) + Page All (1/6)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+
         # PTT button
-        self.ptt_btn = QPushButton("⬤  Hold to Talk")
+        self.ptt_btn = QPushButton("●  Hold to Talk")
         self.ptt_btn.setCursor(Qt.PointingHandCursor)
-        self.ptt_btn.setStyleSheet("""
-            QPushButton {
-                background: #fafaf8; border: 1px solid #e0ded8;
+        self.ptt_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
                 border-radius: 10px; padding: 8px; font-size: 13px;
-                font-weight: 500; color: #888;
-            }
-            QPushButton:hover { background: #f0eeeb; border-color: #ccc; }
-            QPushButton:pressed { background: #e8e6e2; }
+                font-weight: 500; color: {DARK['TEXT_DIM']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['BORDER']}; }}
+            QPushButton:pressed {{ background: {DARK['BG']}; }}
         """)
         self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
         self.ptt_btn.released.connect(self.ptt_released.emit)
-        v.addWidget(self.ptt_btn)
+        self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        btn_row.addWidget(self.ptt_btn, 5)
 
-        # Mode label below
-        self.ptt_mode_label = QLabel("Open — always-on hot mic.")
-        self.ptt_mode_label.setStyleSheet("font-size: 11px; color: #bbb; border: none;")
+        # Page All button
+        self.page_all_btn = QPushButton("Page All")
+        self.page_all_btn.setCursor(Qt.PointingHandCursor)
+        self.page_all_btn.setFixedWidth(62)
+        self.page_all_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 10px; padding: 8px; font-size: 11px;
+                font-weight: 600; color: {DARK['TEXT_FAINT']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT_DIM']}; }}
+            QPushButton:pressed {{ background: {DARK['BG']}; }}
+        """)
+        self.page_all_btn.pressed.connect(self.page_all_pressed.emit)
+        self.page_all_btn.released.connect(self.page_all_released.emit)
+        btn_row.addWidget(self.page_all_btn, 1)
+
+        v.addLayout(btn_row)
+
+        # Mode label below both buttons
+        self.ptt_mode_label = QLabel("Hotline — always-on hot mic.")
+        self.ptt_mode_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
         self.ptt_mode_label.setAlignment(Qt.AlignCenter)
         self.ptt_mode_label.setVisible(False)
         v.addWidget(self.ptt_mode_label)
@@ -847,10 +922,9 @@ class FloatingPanel(QWidget):
     # ── Outgoing Call Banner ────────────────────────────────────────
     def _build_outgoing_banner(self):
         banner = QFrame()
-        banner.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #e3f2fd, stop:1 #f0f7ff);
-            border-bottom: 1px solid #bbdefb;
+        banner.setStyleSheet(f"""
+            background: rgba(30, 70, 120, 0.25);
+            border-bottom: 1px solid {DARK['BORDER']};
         """)
 
         v = QVBoxLayout(banner)
@@ -865,10 +939,10 @@ class FloatingPanel(QWidget):
 
         call_info = QVBoxLayout()
         self.outgoing_name = QLabel("")
-        self.outgoing_name.setStyleSheet("font-size: 14px; font-weight: 600; color: #1565c0;")
+        self.outgoing_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['INFO_LT']};")
         call_info.addWidget(self.outgoing_name)
         self.outgoing_sub = QLabel("Calling...")
-        self.outgoing_sub.setStyleSheet("font-size: 11px; color: #64b5f6;")
+        self.outgoing_sub.setStyleSheet(f"font-size: 11px; color: {DARK['INFO']};")
         call_info.addWidget(self.outgoing_sub)
         top.addLayout(call_info, 1)
         v.addLayout(top)
@@ -876,13 +950,14 @@ class FloatingPanel(QWidget):
         # Cancel button
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #d32f2f; border: 1px solid #ef9a9a;
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['DANGER']};
+                border: 1px solid rgba(229,57,53,0.3);
                 border-radius: 8px; padding: 6px 16px; font-weight: 600;
                 font-size: 13px;
-            }
-            QPushButton:hover { background: #ffebee; }
+            }}
+            QPushButton:hover {{ background: rgba(229,57,53,0.12); }}
         """)
         cancel_btn.clicked.connect(self.cancel_call_requested.emit)
         v.addWidget(cancel_btn)
@@ -892,10 +967,9 @@ class FloatingPanel(QWidget):
     # ── Incoming Call Banner ───────────────────────────────────────
     def _build_incoming_banner(self):
         banner = QFrame()
-        banner.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #e8f5e9, stop:1 #f1f8f2);
-            border-bottom: 1px solid #c8e6c9;
+        banner.setStyleSheet(f"""
+            background: rgba(0, 100, 50, 0.20);
+            border-bottom: 1px solid {DARK['BORDER']};
         """)
 
         v = QVBoxLayout(banner)
@@ -910,10 +984,10 @@ class FloatingPanel(QWidget):
 
         caller_info = QVBoxLayout()
         self.incoming_name = QLabel("Jane D.")
-        self.incoming_name.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
+        self.incoming_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['ACCENT_LT']};")
         caller_info.addWidget(self.incoming_name)
         caller_sub = QLabel("wants to connect")
-        caller_sub.setStyleSheet("font-size: 11px; color: #66bb6a;")
+        caller_sub.setStyleSheet(f"font-size: 11px; color: {DARK['ACCENT_LT']};")
         caller_info.addWidget(caller_sub)
         top.addLayout(caller_info, 1)
         v.addLayout(top)
@@ -922,26 +996,27 @@ class FloatingPanel(QWidget):
         btns = QHBoxLayout()
         accept_btn = QPushButton("Accept")
         accept_btn.setCursor(Qt.PointingHandCursor)
-        accept_btn.setStyleSheet("""
-            QPushButton {
-                background: #43a047; color: white; border: none;
+        accept_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
                 border-radius: 8px; padding: 6px 16px; font-weight: 700;
                 font-size: 13px;
-            }
-            QPushButton:hover { background: #388e3c; }
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
         """)
         accept_btn.clicked.connect(self.accept_call_requested.emit)
         btns.addWidget(accept_btn)
 
         decline_btn = QPushButton("Decline")
         decline_btn.setCursor(Qt.PointingHandCursor)
-        decline_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #999; border: 1px solid #ddd;
+        decline_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT_DIM']};
+                border: 1px solid {DARK['BORDER']};
                 border-radius: 8px; padding: 6px 16px; font-weight: 600;
                 font-size: 13px;
-            }
-            QPushButton:hover { background: #f5f5f5; }
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
         decline_btn.clicked.connect(self.decline_call_requested.emit)
         btns.addWidget(decline_btn)
@@ -952,10 +1027,9 @@ class FloatingPanel(QWidget):
     # ── Call Banner ────────────────────────────────────────────────
     def _build_call_banner(self):
         banner = QFrame()
-        banner.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #e8f5e9, stop:1 #f1f8f2);
-            border-bottom: 1px solid #c8e6c9;
+        banner.setStyleSheet(f"""
+            background: rgba(0, 100, 50, 0.20);
+            border-bottom: 1px solid {DARK['BORDER']};
         """)
 
         outer = QVBoxLayout(banner)
@@ -971,18 +1045,18 @@ class FloatingPanel(QWidget):
         top.addWidget(call_orb)
 
         self.call_name_label = QLabel("")
-        self.call_name_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #2e7d32;")
+        self.call_name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['ACCENT_LT']};")
         top.addWidget(self.call_name_label, 1)
 
         end_btn = QPushButton("End")
         end_btn.setCursor(Qt.PointingHandCursor)
-        end_btn.setStyleSheet("""
-            QPushButton {
-                background: #ef5350; color: white; border: none;
+        end_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['DANGER']}; color: white; border: none;
                 border-radius: 8px; padding: 4px 12px; font-weight: 700;
                 font-size: 12px;
-            }
-            QPushButton:hover { background: #e53935; }
+            }}
+            QPushButton:hover {{ background: #c62828; }}
         """)
         end_btn.clicked.connect(self.end_call_requested.emit)
         top.addWidget(end_btn)
@@ -992,20 +1066,20 @@ class FloatingPanel(QWidget):
         meters = QHBoxLayout()
         meters.setSpacing(6)
 
-        mic_icon = QLabel("\U0001F3A4")  # 🎤
-        mic_icon.setFixedWidth(14)
-        mic_icon.setStyleSheet("font-size: 10px;")
+        mic_icon = QLabel("●")
+        mic_icon.setFixedWidth(12)
+        mic_icon.setStyleSheet(f"font-size: 8px; color: {DARK['ACCENT']};")
         meters.addWidget(mic_icon)
-        self.mic_meter = LevelMeter(color="#4caf50", width=80, height=5)
+        self.mic_meter = LevelMeter(color=DARK['ACCENT'], width=80, height=5)
         meters.addWidget(self.mic_meter)
 
         meters.addSpacing(8)
 
-        spk_icon = QLabel("\U0001F50A")  # 🔊
-        spk_icon.setFixedWidth(14)
-        spk_icon.setStyleSheet("font-size: 10px;")
+        spk_icon = QLabel("●")
+        spk_icon.setFixedWidth(12)
+        spk_icon.setStyleSheet(f"font-size: 8px; color: {DARK['INFO']};")
         meters.addWidget(spk_icon)
-        self.speaker_meter = LevelMeter(color="#2196f3", width=80, height=5)
+        self.speaker_meter = LevelMeter(color=DARK['INFO'], width=80, height=5)
         meters.addWidget(self.speaker_meter)
 
         meters.addStretch()
@@ -1024,45 +1098,44 @@ class FloatingPanel(QWidget):
     # ── Pinned Compact ────────────────────────────────────────────
     def _build_message_banner(self):
         banner = QFrame()
-        banner.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #fff8e1, stop:1 #fffde7);
-            border-bottom: 1px solid #ffe082;
+        banner.setStyleSheet(f"""
+            background: rgba(120, 100, 0, 0.20);
+            border-bottom: 1px solid {DARK['BORDER']};
         """)
 
         h = QHBoxLayout(banner)
         h.setContentsMargins(14, 8, 14, 8)
         h.setSpacing(8)
 
-        icon = QLabel("\U0001f4e9")
-        icon.setStyleSheet("font-size: 18px;")
+        icon = QLabel("›")
+        icon.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {DARK['WARN']};")
         h.addWidget(icon)
 
         self._msg_label = QLabel("New Message")
-        self._msg_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #f57f17;")
+        self._msg_label.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {DARK['WARN']};")
         h.addWidget(self._msg_label, 1)
 
         play_btn = QPushButton("\u25b6 Play")
         play_btn.setCursor(Qt.PointingHandCursor)
-        play_btn.setStyleSheet("""
-            QPushButton {
-                background: #43a047; color: white; border: none;
+        play_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
                 border-radius: 8px; padding: 4px 12px; font-weight: 700;
                 font-size: 12px;
-            }
-            QPushButton:hover { background: #388e3c; }
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
         """)
         play_btn.clicked.connect(self.play_message_requested.emit)
         h.addWidget(play_btn)
 
         dismiss_btn = QPushButton("\u2715")
         dismiss_btn.setCursor(Qt.PointingHandCursor)
-        dismiss_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #999; border: none;
+        dismiss_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT_FAINT']}; border: none;
                 font-size: 16px; font-weight: 700; padding: 2px 6px;
-            }
-            QPushButton:hover { color: #555; }
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT_DIM']}; }}
         """)
         dismiss_btn.clicked.connect(lambda: self._message_banner.setVisible(False))
         h.addWidget(dismiss_btn)
@@ -1072,12 +1145,12 @@ class FloatingPanel(QWidget):
     def show_message(self):
         """Show the new message indicator banner."""
         self._message_banner.setVisible(True)
-        self.adjustSize()
+        self._resize_panel()
 
     def hide_message(self):
         """Hide the message indicator banner."""
         self._message_banner.setVisible(False)
-        self.adjustSize()
+        self._resize_panel()
 
     # ── Pinned Compact ────────────────────────────────────────────
     def _build_pinned_compact(self):
@@ -1147,37 +1220,45 @@ class FloatingPanel(QWidget):
         # PTT state
         if mode == 'RED':
             self.ptt_btn.setEnabled(False)
-            self.ptt_btn.setStyleSheet("""
-                QPushButton {
-                    background: #fafaf8; border: 1px solid #e0ded8;
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
                     border-radius: 10px; padding: 8px; font-size: 13px;
-                    font-weight: 500; color: #ccc;
-                }
+                    font-weight: 500; color: {DARK['TEXT_FAINT']};
+                }}
             """)
             self.ptt_mode_label.setVisible(False)
         else:
             self.ptt_btn.setEnabled(True)
-            self.ptt_btn.setStyleSheet("""
-                QPushButton {
-                    background: #fafaf8; border: 1px solid #e0ded8;
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
                     border-radius: 10px; padding: 8px; font-size: 13px;
-                    font-weight: 500; color: #888;
-                }
-                QPushButton:hover { background: #f0eeeb; border-color: #ccc; }
-                QPushButton:pressed { background: #e8e6e2; }
+                    font-weight: 500; color: {DARK['TEXT_DIM']};
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['BORDER']}; }}
+                QPushButton:pressed {{ background: {DARK['BG']}; }}
             """)
 
-    def set_open_line(self, is_open):
-        """Toggle open line state."""
-        self._is_open_line = is_open
-        self.open_toggle.set_on(is_open)
-        if is_open:
-            self.ptt_btn.setText("⬤  Open Line")
-            self.ptt_mode_label.setText("Open — always-on hot mic.")
+    def set_hotline(self, is_on):
+        """Toggle hotline state."""
+        self._is_open_line = is_on
+        self.open_toggle.set_on(is_on)
+        if is_on:
+            self.ptt_btn.setText("●  Hotline")
+            self.ptt_mode_label.setText("Hotline — always-on hot mic.")
             self.ptt_mode_label.setVisible(True)
         else:
-            self.ptt_btn.setText("⬤  Hold to Talk")
+            self.ptt_btn.setText("●  Hold to Talk")
             self.ptt_mode_label.setVisible(False)
+
+    def set_hotline_enabled(self, enabled):
+        """Enable/disable hotline toggle (only active when connected)."""
+        self.open_toggle.setEnabled(enabled)
+        if not enabled and not self._is_open_line:
+            self._hotline_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_FAINT']}; font-weight: 500; border: none;")
+        else:
+            self._hotline_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
 
     def set_display_name(self, name):
         """Set the display name shown in the pinned compact bar."""
@@ -1188,7 +1269,8 @@ class FloatingPanel(QWidget):
         """Switch between connected and disconnected states."""
         self._connected = connected
         self._conn_bar.setVisible(connected)
-        self._disconn_bar.setVisible(not connected)
+        # Only show disconn bar if not in onboarding mode
+        self._disconn_bar.setVisible(not connected and not self._onboarding.isVisible())
         if connected and peer_name:
             self.conn_label.setText(f"Connected to {peer_name}")
         elif connected:
@@ -1215,12 +1297,12 @@ class FloatingPanel(QWidget):
         self.online_count.setText(str(len(users)))
 
         # Dynamic panel height based on user count
-        if not self._pinned:
-            # Fixed chrome: header(48) + disconn/conn(46) + section hdr(28) + ptt(60) + margins(20)
-            chrome_height = 48 + 46 + 28 + 60 + 20
+        if not self._pinned and not self._is_onboarding:
+            # Fixed chrome: header(48) + disconn/conn(36) + team(28) + section hdr(28) + ptt(60) + margins(16)
+            chrome_height = 48 + 36 + 28 + 28 + 60 + 16
             user_height = len(users) * 46
             target = chrome_height + max(user_height, 46)  # min space for 1 row
-            target = min(target, 500)  # cap so it doesn't go off-screen
+            target = min(target, 520)  # cap so it doesn't go off-screen
             self.setFixedHeight(target)
 
     def _hide_all_banners(self):
@@ -1236,13 +1318,13 @@ class FloatingPanel(QWidget):
         self.outgoing_sub.setText("Calling...")
         self._outgoing_banner.setVisible(True)
         self._user_section.setVisible(False)
-        self.adjustSize()
+        self._resize_panel()
 
     def hide_outgoing(self):
         """Hide the outgoing call banner."""
         self._outgoing_banner.setVisible(False)
         self._user_section.setVisible(True)
-        self.adjustSize()
+        self._resize_panel()
 
     def show_incoming(self, caller_name):
         """Show the incoming call banner."""
@@ -1250,14 +1332,14 @@ class FloatingPanel(QWidget):
         self.incoming_name.setText(caller_name)
         self._incoming_banner.setVisible(True)
         self._user_section.setVisible(False)
-        self.adjustSize()
+        self._resize_panel()
 
     def hide_incoming(self):
         """Hide the incoming call banner."""
         self._incoming_banner.setVisible(False)
         if not self._outgoing_banner.isVisible() and not self._call_banner.isVisible():
             self._user_section.setVisible(True)
-        self.adjustSize()
+        self._resize_panel()
 
     def show_call(self, caller_name):
         """Show the in-call banner."""
@@ -1265,23 +1347,33 @@ class FloatingPanel(QWidget):
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
         self._user_section.setVisible(False)
-        self.adjustSize()
+        # Update PTT to show who you're talking to
+        self._call_peer_name = caller_name
+        if not self._is_open_line:
+            self.ptt_btn.setText(f"●  Talking to {caller_name}")
+        self._resize_panel()
 
     def hide_call(self):
         """Hide the in-call banner and restore normal layout."""
         self._hide_all_banners()
         self._user_section.setVisible(True)
-        self.adjustSize()
+        self._call_peer_name = None
+        # Reset PTT text
+        if self._is_open_line:
+            self.ptt_btn.setText("●  Hotline")
+        else:
+            self.ptt_btn.setText("●  Hold to Talk")
+        self._resize_panel()
 
     def set_ptt_active(self, active):
         """Visual feedback when PTT is held."""
         if active:
-            self.ptt_btn.setStyleSheet("""
-                QPushButton {
-                    background: #fee; border: 2px solid #e22a1a;
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(226, 42, 26, 0.15); border: 2px solid {DARK['DANGER']};
                     border-radius: 10px; padding: 8px; font-size: 13px;
-                    font-weight: 600; color: #e22a1a;
-                }
+                    font-weight: 600; color: {DARK['DANGER']};
+                }}
             """)
         else:
             # Restore normal style
@@ -1299,7 +1391,7 @@ class FloatingPanel(QWidget):
 
         # ── Header with back button ──
         hdr = QFrame()
-        hdr.setStyleSheet("border-bottom: 1px solid #eae8e4;")
+        hdr.setStyleSheet(f"border-bottom: 1px solid {DARK['BORDER']};")
         hdr.setFixedHeight(40)
         hdr_layout = QHBoxLayout(hdr)
         hdr_layout.setContentsMargins(10, 0, 10, 0)
@@ -1308,18 +1400,18 @@ class FloatingPanel(QWidget):
         back_btn = QPushButton("<")
         back_btn.setFixedSize(28, 28)
         back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 16px; font-weight: 700; color: #2ABFBF;
+        back_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 16px; font-weight: 700; color: {DARK['TEAL']};
                 background: transparent; border: none; border-radius: 6px;
-            }
-            QPushButton:hover { background: rgba(42,191,191,0.1); }
+            }}
+            QPushButton:hover {{ background: rgba(42,191,191,0.12); }}
         """)
         back_btn.clicked.connect(self._close_settings)
         hdr_layout.addWidget(back_btn)
 
         title = QLabel("Settings")
-        title.setStyleSheet("font-size: 13px; font-weight: 700; color: #555; border: none;")
+        title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
         hdr_layout.addWidget(title, 1)
         v.addWidget(hdr)
 
@@ -1328,11 +1420,11 @@ class FloatingPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical { width: 4px; background: transparent; }
-            QScrollBar::handle:vertical { background: #ddd; border-radius: 2px; min-height: 20px; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{ width: 4px; background: transparent; }}
+            QScrollBar::handle:vertical {{ background: {DARK['BORDER']}; border-radius: 2px; min-height: 20px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
         container = QWidget()
@@ -1341,6 +1433,7 @@ class FloatingPanel(QWidget):
         self._settings_layout.setSpacing(2)
 
         scroll.setWidget(container)
+        scroll.setMinimumHeight(250)  # Ensure settings view gets enough vertical space
         v.addWidget(scroll, 1)
 
         return view
@@ -1355,47 +1448,47 @@ class FloatingPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        row_style = """
-            QPushButton {
+        row_style = f"""
+            QPushButton {{
                 text-align: left; padding: 8px 12px; font-size: 13px;
-                font-weight: 500; color: #444; background: transparent;
+                font-weight: 500; color: {DARK['TEXT']}; background: transparent;
                 border: none; border-radius: 8px;
-            }
-            QPushButton:hover { background: rgba(0,0,0,0.04); }
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """
 
         # ── Change Name ──
-        name_btn = QPushButton(f"✏️   Change Name")
+        name_btn = QPushButton("Change Name")
         name_btn.setCursor(Qt.PointingHandCursor)
         name_btn.setStyleSheet(row_style)
         name_btn.clicked.connect(lambda: (self._close_settings(), self._change_name_dialog()))
         layout.addWidget(name_btn)
 
         # ── Incognito ──
-        incognito_text = "👻   Visible" if self._incognito else "👻   Incognito"
+        incognito_text = "Visible" if self._incognito else "Incognito"
         incognito_btn = QPushButton(incognito_text)
         incognito_btn.setCursor(Qt.PointingHandCursor)
         incognito_btn.setStyleSheet(row_style)
         incognito_btn.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
         layout.addWidget(incognito_btn)
 
-        # ── Dark Mode ──
-        dark_text = "☀️   Light Mode" if self._dark_mode else "🌙   Dark Mode"
-        dark_btn = QPushButton(dark_text)
-        dark_btn.setCursor(Qt.PointingHandCursor)
-        dark_btn.setStyleSheet(row_style)
-        dark_btn.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
-        layout.addWidget(dark_btn)
+        # ── Pin Window ──
+        pin_text = "Unpin Window" if self._pinned else "Pin Window"
+        pin_btn = QPushButton(pin_text)
+        pin_btn.setCursor(Qt.PointingHandCursor)
+        pin_btn.setStyleSheet(row_style)
+        pin_btn.clicked.connect(lambda: (self._close_settings(), self._toggle_pin()))
+        layout.addWidget(pin_btn)
 
         # ── Divider ──
         div1 = QFrame()
         div1.setFixedHeight(1)
-        div1.setStyleSheet("background: rgba(0,0,0,0.06); margin: 4px 12px;")
+        div1.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
         layout.addWidget(div1)
 
         # ── Radio ──
         if self._radio_station:
-            radio_btn = QPushButton("📻   Stop Radio")
+            radio_btn = QPushButton("Stop Radio")
             radio_btn.setCursor(Qt.PointingHandCursor)
             radio_btn.setStyleSheet(row_style)
             radio_btn.clicked.connect(lambda: (self._stop_radio(), self._populate_settings()))
@@ -1406,22 +1499,19 @@ class FloatingPanel(QWidget):
             vol_h = QHBoxLayout(vol_row)
             vol_h.setContentsMargins(12, 4, 12, 4)
             vol_h.setSpacing(8)
-            vol_icon = QLabel("🔊")
-            vol_icon.setStyleSheet("font-size: 12px;")
-            vol_h.addWidget(vol_icon)
             vol_slider = QSlider(Qt.Horizontal)
             vol_slider.setRange(0, 100)
             vol_slider.setValue(int(self._audio_output.volume() * 100))
-            vol_slider.setStyleSheet("""
-                QSlider::groove:horizontal { height: 3px; background: rgba(0,0,0,0.1); border-radius: 1px; }
-                QSlider::handle:horizontal { width: 10px; height: 10px; margin: -4px 0; background: #2ABFBF; border-radius: 5px; }
-                QSlider::sub-page:horizontal { background: #2ABFBF; border-radius: 1px; }
+            vol_slider.setStyleSheet(f"""
+                QSlider::groove:horizontal {{ height: 3px; background: {DARK['BORDER']}; border-radius: 1px; }}
+                QSlider::handle:horizontal {{ width: 10px; height: 10px; margin: -4px 0; background: {DARK['TEAL']}; border-radius: 5px; }}
+                QSlider::sub-page:horizontal {{ background: {DARK['TEAL']}; border-radius: 1px; }}
             """)
             vol_slider.valueChanged.connect(lambda v: self._audio_output.setVolume(v / 100.0))
             vol_h.addWidget(vol_slider, 1)
             layout.addWidget(vol_row)
         else:
-            radio_btn = QPushButton("📻   Radio")
+            radio_btn = QPushButton("Radio")
             radio_btn.setCursor(Qt.PointingHandCursor)
             radio_btn.setStyleSheet(row_style)
             radio_btn.clicked.connect(lambda: (self._play_radio('NTS Radio'), self._populate_settings()))
@@ -1430,7 +1520,7 @@ class FloatingPanel(QWidget):
         # ── Divider ──
         div2 = QFrame()
         div2.setFixedHeight(1)
-        div2.setStyleSheet("background: rgba(0,0,0,0.06); margin: 4px 12px;")
+        div2.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
         layout.addWidget(div2)
 
         # ── Audio Devices ──
@@ -1443,16 +1533,21 @@ class FloatingPanel(QWidget):
             in_h = QHBoxLayout(in_row)
             in_h.setContentsMargins(12, 4, 12, 4)
             in_h.setSpacing(8)
-            in_icon = QLabel("🎤")
-            in_icon.setStyleSheet("font-size: 13px;")
+            in_icon = QLabel("Input")
+            in_icon.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']};")
             in_h.addWidget(in_icon)
             in_combo = QComboBox()
-            in_combo.setStyleSheet("""
-                QComboBox {
+            in_combo.setStyleSheet(f"""
+                QComboBox {{
                     font-size: 11px; padding: 3px 6px;
-                    border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
-                    background: white;
-                }
+                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                    border: 1px solid {DARK['BORDER']};
+                    selection-background-color: {DARK['BG_HOVER']};
+                }}
             """)
             in_combo.addItem("System Default", None)
             current_in = getattr(self, '_current_input_idx', None)
@@ -1472,16 +1567,22 @@ class FloatingPanel(QWidget):
             out_h = QHBoxLayout(out_row)
             out_h.setContentsMargins(12, 4, 12, 4)
             out_h.setSpacing(8)
-            out_icon = QLabel("🔈")
-            out_icon.setStyleSheet("font-size: 13px;")
+            out_icon = QLabel("Output")
+            out_icon.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']};")
             out_h.addWidget(out_icon)
             out_combo = QComboBox()
-            out_combo.setStyleSheet("""
-                QComboBox {
+            out_combo.setStyleSheet(f"""
+                QComboBox {{
                     font-size: 11px; padding: 3px 6px;
-                    border: 1px solid rgba(0,0,0,0.1); border-radius: 6px;
-                    background: white; min-width: 100px;
-                }
+                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                    min-width: 100px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                    border: 1px solid {DARK['BORDER']};
+                    selection-background-color: {DARK['BG_HOVER']};
+                }}
             """)
             out_combo.addItem("System Default", None)
             current_out = getattr(self, '_current_output_idx', None)
@@ -1501,25 +1602,22 @@ class FloatingPanel(QWidget):
         # ── Divider ──
         div3 = QFrame()
         div3.setFixedHeight(1)
-        div3.setStyleSheet("background: rgba(0,0,0,0.06); margin: 4px 12px;")
+        div3.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
         layout.addWidget(div3)
 
         # ── Quit ──
-        quit_btn = QPushButton("🙊   Quit OH")
+        quit_btn = QPushButton("Quit OH")
         quit_btn.setCursor(Qt.PointingHandCursor)
-        quit_btn.setStyleSheet("""
-            QPushButton {
+        quit_btn.setStyleSheet(f"""
+            QPushButton {{
                 text-align: left; padding: 8px 12px; font-size: 13px;
-                font-weight: 500; color: #c0392b; background: transparent;
+                font-weight: 500; color: {DARK['DANGER']}; background: transparent;
                 border: none; border-radius: 8px;
-            }
-            QPushButton:hover { background: rgba(192,57,43,0.06); }
+            }}
+            QPushButton:hover {{ background: rgba(229,57,53,0.10); }}
         """)
         quit_btn.clicked.connect(self.quit_requested.emit)
         layout.addWidget(quit_btn)
-
-        # Stretch at bottom
-        layout.addStretch()
 
     def _show_hamburger_menu(self):
         """Toggle the inline settings view."""
@@ -1531,17 +1629,53 @@ class FloatingPanel(QWidget):
     def _open_settings(self):
         """Show the inline settings, hiding main content."""
         self._populate_settings()
+        # Save visibility state of all main sections
+        self._pre_settings_vis = {
+            'user':      self._user_section.isVisible(),
+            'ptt':       self._ptt_bar.isVisible(),
+            'disconn':   self._disconn_bar.isVisible(),
+            'conn':      self._conn_bar.isVisible(),
+            'team':      self._team_bar.isVisible(),
+            'onboarding': self._onboarding.isVisible(),
+            'outgoing':  self._outgoing_banner.isVisible(),
+            'incoming':  self._incoming_banner.isVisible(),
+            'call':      self._call_banner.isVisible(),
+            'message':   self._message_banner.isVisible(),
+        }
+        # Hide everything
         self._user_section.setVisible(False)
         self._ptt_bar.setVisible(False)
+        self._disconn_bar.setVisible(False)
+        self._conn_bar.setVisible(False)
+        self._team_bar.setVisible(False)
+        self._onboarding.setVisible(False)
+        self._outgoing_banner.setVisible(False)
+        self._incoming_banner.setVisible(False)
+        self._call_banner.setVisible(False)
+        self._message_banner.setVisible(False)
         self._settings_view.setVisible(True)
-        self.adjustSize()
+        # Expand panel to fit settings content (header + settings items)
+        self.setMinimumHeight(380)
+        self._resize_panel()
 
     def _close_settings(self):
         """Hide settings, restore main content."""
         self._settings_view.setVisible(False)
-        self._user_section.setVisible(True)
-        self._ptt_bar.setVisible(True)
-        self.adjustSize()
+        # Clear the minimum height set by _open_settings
+        self.setMinimumHeight(0)
+        # Restore previous visibility state
+        vis = getattr(self, '_pre_settings_vis', {})
+        self._user_section.setVisible(vis.get('user', True))
+        self._ptt_bar.setVisible(vis.get('ptt', True))
+        self._disconn_bar.setVisible(vis.get('disconn', False))
+        self._conn_bar.setVisible(vis.get('conn', False))
+        self._team_bar.setVisible(vis.get('team', False))
+        self._onboarding.setVisible(vis.get('onboarding', False))
+        self._outgoing_banner.setVisible(vis.get('outgoing', False))
+        self._incoming_banner.setVisible(vis.get('incoming', False))
+        self._call_banner.setVisible(vis.get('call', False))
+        self._message_banner.setVisible(vis.get('message', False))
+        self._resize_panel()
 
     def _on_input_device_changed(self, device_index):
         self._current_input_idx = device_index
@@ -1570,16 +1704,16 @@ class FloatingPanel(QWidget):
             self._pre_incognito_mode = self._current_mode
             self.orb.set_mode('INCOGNITO')
             self.mode_btn.setText("Incognito")
-            self.mode_btn.setStyleSheet("""
-                QPushButton {
+            self.mode_btn.setStyleSheet(f"""
+                QPushButton {{
                     padding: 5px 12px 5px 10px;
                     border-radius: 8px;
-                    border: 1px solid rgba(0,0,0,0.06);
-                    background: rgba(0,0,0,0.03);
+                    border: 1px solid {DARK['BORDER']};
+                    background: {DARK['BG_RAISED']};
                     font-size: 13px; font-weight: 600;
-                    color: #555; text-align: left;
-                }
-                QPushButton:hover { background: rgba(0,0,0,0.07); }
+                    color: {DARK['TEXT_DIM']}; text-align: left;
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
             """)
         else:
             # Restore previous mode
@@ -1607,51 +1741,16 @@ class FloatingPanel(QWidget):
         self.dark_mode_toggled.emit(self._dark_mode)
 
     def apply_dark_mode(self, enabled):
-        """Apply dark or light mode color palette to the panel."""
+        """Apply dark or light mode color palette to the panel.
+        Note: The panel defaults to dark. This method exists for the settings toggle.
+        """
         self._dark_mode = enabled
-        if enabled:
-            # Dark frame
-            self._frame.setStyleSheet(f"""
-                #panelFrame {{
-                    background: rgba(30, 30, 30, 230);
-                    border: 1px solid rgba(255, 255, 255, 0.08);
-                    border-radius: {PANEL_RADIUS}px;
-                }}
-            """)
-            # Header
-            self._header.setStyleSheet("border-bottom: 1px solid rgba(255,255,255,0.08);")
-            # Disconn bar
-            self._disconn_bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(255,255,255,0.06);")
-            # Section labels
-            self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #666; letter-spacing: 2px;")
-            self.online_count.setStyleSheet("""
-                font-size: 11px; font-weight: 700; color: #888;
-                background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px;
-            """)
-            # PTT bar
-            self._ptt_bar.setStyleSheet("border-top: 1px solid rgba(255,255,255,0.08);")
-        else:
-            # Light frame (original)
-            self._frame.setStyleSheet(f"""
-                #panelFrame {{
-                    background: rgba(245, 245, 243, 200);
-                    border: 1px solid rgba(0, 0, 0, 0.08);
-                    border-radius: {PANEL_RADIUS}px;
-                }}
-            """)
-            self._header.setStyleSheet("border-bottom: 1px solid #eae8e4;")
-            self._disconn_bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(0,0,0,0.06);")
-            self._online_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #bbb; letter-spacing: 2px;")
-            self.online_count.setStyleSheet("""
-                font-size: 11px; font-weight: 700; color: #bbb;
-                background: #f0eeeb; border-radius: 4px; padding: 1px 6px;
-            """)
-            self._ptt_bar.setStyleSheet("border-top: 1px solid #eae8e4;")
-
-        # Update user row text color
-        text_color = "#ccc" if enabled else "#3a3a3a"
-        for i in range(self._user_list_layout.count()):
-            widget = self._user_list_layout.itemAt(i).widget()
+        # Since dark is now the default, this is a no-op for enabled=True.
+        # A full light-mode implementation would require restyling everything;
+        # for now we just update user row text color for consistency.
+        text_color = DARK['TEXT'] if enabled else "#3a3a3a"
+        for i in range(self._user_layout.count()):
+            widget = self._user_layout.itemAt(i).widget()
             if widget and hasattr(widget, 'name_label'):
                 widget.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {text_color}; padding-bottom: 1px;")
 
@@ -1683,15 +1782,42 @@ class FloatingPanel(QWidget):
             self._user_section.setVisible(True)
             self._ptt_bar.setVisible(True)
             self._pinned_compact.setVisible(False)
-            self.adjustSize()
+            self._resize_panel()
 
     def is_pinned(self):
         return self._pinned
 
+    # ── Notch (triangle pointing to tray icon) ──────────────────
+    def paintEvent(self, event):
+        """Draw a small notch/triangle at the top of the panel pointing up."""
+        super().paintEvent(event)
+        anchor_x = getattr(self, '_notch_x', self.width() // 2)
+        h = self._notch_h
+        w = 14  # notch base width
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(DARK['BG']))
+
+        path = QPainterPath()
+        path.moveTo(anchor_x - w // 2, h)
+        path.lineTo(anchor_x, 0)
+        path.lineTo(anchor_x + w // 2, h)
+        path.closeSubpath()
+        p.drawPath(path)
+        p.end()
+
+    # ── Size Management ─────────────────────────────────────────
+    def _resize_panel(self):
+        """Resize the panel, but skip during onboarding (height is locked)."""
+        if self._is_onboarding:
+            return
+        self.adjustSize()
+
     # ── Positioning ───────────────────────────────────────────────
     def show_at(self, global_pos):
         """Show panel anchored below a global position (tray icon)."""
-        self.adjustSize()
         x = global_pos.x() - self.width() // 2
         y = global_pos.y() + 4
         # Keep on screen
@@ -1700,6 +1826,8 @@ class FloatingPanel(QWidget):
             x = screen.right() - self.width() - 4
         if x < screen.left():
             x = screen.left() + 4
+        # Store notch x position (where the tray icon is, relative to panel)
+        self._notch_x = global_pos.x() - x
         self.move(x, y)
         self.show()
         self.raise_()
@@ -1803,14 +1931,14 @@ if __name__ == '__main__':
 
     panel.mode_cycle_requested.connect(on_mode_cycle)
 
-    def on_open_toggle(is_on):
-        panel.set_open_line(is_on)
+    def on_hotline_toggle(is_on):
+        panel.set_hotline(is_on)
         if is_on:
             tray.setIcon(create_oh_icon(COLORS['OPEN']))
         else:
             tray.setIcon(create_oh_icon(COLORS[modes[mode_idx[0]]]))
 
-    panel.open_toggled.connect(on_open_toggle)
+    panel.hotline_toggled.connect(on_hotline_toggle)
 
     def on_leave():
         panel.set_connection(False)

@@ -56,7 +56,6 @@ class IntercomApp(QObject):
     MODE_RED = "RED"
     MODE_OPEN = "OPEN"
     MODE_LABELS = {"GREEN": "Available", "YELLOW": "Busy", "RED": "DND", "OPEN": "Open"}
-    MODE_COLORS = {"GREEN": "#4caf50", "YELLOW": "#ffb300", "RED": "#e53935", "OPEN": "#9c27b0"}
 
     def __init__(self):
         super().__init__()
@@ -180,7 +179,9 @@ class IntercomApp(QObject):
     # ── Panel Signal Wiring ───────────────────────────────────────
     def _connect_panel_signals(self):
         self.panel.mode_cycle_requested.connect(self.cycle_mode)
-        self.panel.open_toggled.connect(self._on_open_toggle)
+        self.panel.hotline_toggled.connect(self._on_hotline_toggle)
+        self.panel.page_all_pressed.connect(self.on_page_all_press)
+        self.panel.page_all_released.connect(self.on_page_all_release)
         self.panel.ptt_pressed.connect(self.on_talk_press)
         self.panel.ptt_released.connect(self.on_talk_release)
         self.panel.call_user_requested.connect(self._on_call_user)
@@ -234,25 +235,25 @@ class IntercomApp(QObject):
         color = COLORS.get(self.mode, COLORS['GREEN'])
         self.tray.setIcon(create_oh_icon(color))
 
-    # ── Open Toggle ───────────────────────────────────────────────
-    def _on_open_toggle(self, is_on):
+    # ── Hotline Toggle ─────────────────────────────────────────────
+    def _on_hotline_toggle(self, is_on):
         if is_on:
             old_mode = self.mode
             self.mode = self.MODE_OPEN
-            self.panel.set_open_line(True)
+            self.panel.set_hotline(True)
             self.panel.set_mode(self.MODE_OPEN)
             self.tray.setIcon(create_oh_icon(COLORS['OPEN']))
-            self.audio.set_vox(True)  # Voice-activated transmit for open line
+            self.audio.set_vox(True)  # Voice-activated transmit for hotline
             if self.network.connected:
                 self.audio.start_streaming()
             self.send_status()
             self.network.update_presence_mode(self.mode)
         else:
-            # Restore to GREEN (default when turning off open)
+            # Restore to GREEN (default when turning off hotline)
             self.mode = self.MODE_GREEN
             self.audio.set_vox(False)
             self.audio.stop_streaming()
-            self.panel.set_open_line(False)
+            self.panel.set_hotline(False)
             self.panel.set_mode(self.MODE_GREEN)
             self._update_tray_icon()
             self.send_status()
@@ -260,12 +261,11 @@ class IntercomApp(QObject):
         self.update_deck_display()
         self._update_ptt_for_mode()
 
-    # ── Call User ─────────────────────────────────────────────────
+    # ── Call User (mode-based routing) ───────────────────────────
     def _on_call_user(self, user_id):
         # Check LAN peers first (user_id is the Zeroconf service name)
         if user_id in self.peer_map:
             lan_ip = self.peer_map[user_id]
-            # Extract friendly name
             target_name = user_id
             if '(' in user_id and ')' in user_id:
                 target_name = user_id.split('(')[1].split(')')[0]
@@ -281,22 +281,33 @@ class IntercomApp(QObject):
             ).start()
             return
 
-        # Fall back to relay/presence users
-        target_name = self.online_users.get(user_id, {}).get("name", "Unknown")
-        self.log(f"Calling {target_name}...")
-        self._calling_user_id = user_id
-        self.panel.show_outgoing(target_name)
+        # Relay/presence users — route based on target's mode
+        target = self.online_users.get(user_id, {})
+        target_name = target.get("name", "Unknown")
+        target_mode = target.get("mode", "GREEN")
+        target_room = target.get("room", "")
 
-        target_mode = self.online_users.get(user_id, {}).get("mode", "GREEN")
-        target_room = self.online_users.get(user_id, {}).get("room", "")
+        # RED (DND): record voice message, no connection attempt
+        if target_mode == self.MODE_RED:
+            self._record_message_for(user_id, target_name)
+            return
 
-        # If target is BUSY and in a call, join their session (conference)
+        # BUSY: try to join their existing room
         if target_mode == "BUSY" and target_room:
             self.log(f"Joining {target_name}'s call...")
+            self._calling_user_id = user_id
+            self.panel.show_outgoing(target_name)
             threading.Thread(
                 target=self._join_relay_room, args=(target_room, "joiner"), daemon=True
             ).start()
             return
+
+        # GREEN, YELLOW, OPEN: initiate connection
+        # Green targets will auto-accept on their end
+        # Yellow targets will see accept/decline banner
+        self.log(f"Calling {target_name}...")
+        self._calling_user_id = user_id
+        self.panel.show_outgoing(target_name)
 
         lan_ip = self._find_lan_ip(target_name)
         if lan_ip:
@@ -307,6 +318,16 @@ class IntercomApp(QObject):
         else:
             self.log("Connecting via relay...")
             self.network.connect_to_user(user_id)
+
+    def _record_message_for(self, user_id, target_name):
+        """Start recording a voice message for a DND user."""
+        self.log(f"Recording message for {target_name}...")
+        self.panel.set_ptt_active(True)
+        self.audio.start_recording_message()
+        # Message will be completed on PTT release or via a timer
+        # Store target so we know who to deliver to
+        self._message_target_id = user_id
+        self._message_target_name = target_name
 
     def _find_lan_ip(self, target_name):
         """Find a peer's LAN IP from Zeroconf-discovered peers by matching name."""
@@ -386,9 +407,15 @@ class IntercomApp(QObject):
 
     def _show_connection_request(self, requester_name, ip):
         """Show incoming connection request as a panel banner."""
-        self.panel.show_incoming(requester_name)
-        # Store for accept/decline
         self.pending_from_id = ip
+
+        # Green mode: auto-accept (intercom behavior)
+        if self.mode == self.MODE_GREEN:
+            self.log(f"Auto-accepting from {requester_name} (green mode)")
+            self._on_accept_call()
+            return
+
+        self.panel.show_incoming(requester_name)
 
         # Show the panel if hidden
         if not self.panel.isVisible():
@@ -419,12 +446,13 @@ class IntercomApp(QObject):
             except Exception:
                 pass  # Best-effort — connection may already be broken
 
-        self.audio.stop_streaming()  # Stop any active stream (PTT or open line)
+        self.audio.stop_streaming()  # Stop any active stream (PTT or hotline)
         self._clear_busy()
         self.peer_talking = False
         self._connected_peer_id = None  # Clear so they reappear in user list
         self.network.disconnect()
         self.panel.set_connection(False)
+        self.panel.set_hotline_enabled(False)
         self.panel.hide_call()
 
         self.log("Disconnected.")
@@ -447,7 +475,7 @@ class IntercomApp(QObject):
     def _start_open_line_if_ready(self):
         if self.mode == self.MODE_OPEN and self.network.connected:
             self.audio.start_streaming()
-            self.log("Open line active — streaming...")
+            self.log("Hotline active — streaming...")
 
     # ── Presence Methods ──────────────────────────────────────────
 
@@ -574,6 +602,7 @@ class IntercomApp(QObject):
         self.panel.hide_outgoing()
         self.panel.show_call(peer_name)
         self.panel.set_connection(True, peer_name)
+        self.panel.set_hotline_enabled(True)
 
 
     @Slot(list)
@@ -609,6 +638,13 @@ class IntercomApp(QObject):
         self.log(f"Incoming call from {from_name} (id={from_id}, room={room_code!r})")
         self.pending_from_id = from_id
         self.pending_room = room_code  # Internal — not shown to user
+
+        # Green mode: auto-accept (intercom behavior)
+        if self.mode == self.MODE_GREEN:
+            self.log(f"Auto-accepting from {from_name} (green mode)")
+            self._on_accept_call()
+            return
+
         self.panel.show_incoming(from_name)
 
         # Show panel if hidden
@@ -715,6 +751,25 @@ class IntercomApp(QObject):
 
         self.update_deck_display()
 
+    # ── Page All ───────────────────────────────────────────────────
+    def on_page_all_press(self):
+        """Record a broadcast message."""
+        self.audio.start_recording_message()
+        self.panel.set_ptt_active(True)
+        self.log("Broadcasting...")
+
+    def on_page_all_release(self):
+        """Stop recording and broadcast to team."""
+        filename = self.audio.stop_recording_message()
+        self.panel.set_ptt_active(False)
+        if not filename:
+            return
+        # Send to currently connected peer if any
+        # Full multi-user broadcast needs server-side message relay (deferred)
+        if self.network.connected:
+            self.network.send_file(filename)
+        self.log("Broadcast sent")
+
     def on_answer(self):
         if self.has_message and self.incoming_message_path:
             self.log("Playing Message...")
@@ -748,7 +803,7 @@ class IntercomApp(QObject):
         # Handle streaming transitions for OPEN mode
         if old_mode == self.MODE_OPEN and self.mode != self.MODE_OPEN:
             self.audio.stop_streaming()
-            self.panel.set_open_line(False)
+            self.panel.set_hotline(False)
 
         # Update UI
         self.panel.set_mode(self.mode)
@@ -940,13 +995,15 @@ class IntercomApp(QObject):
         self.network.display_name = new_name
         self.panel.set_display_name(new_name)
         self.log(f"Display name changed to: {new_name}")
-        # Re-register Zeroconf with updated name
-        try:
-            self.discovery.close()
-            self.discovery.register_service()
-            self.discovery.start_browsing()
-        except Exception as e:
-            self.log(f"Could not re-register service: {e}")
+        # Sync to Supabase in background so it persists across launches
+        import threading
+        threading.Thread(
+            target=lambda: supabase_client.ensure_profile(self.user_id, new_name),
+            daemon=True,
+        ).start()
+        # Update presence server with new name
+        if self.network.presence_connected:
+            self.network.update_presence_name(new_name)
 
     # ── Team Management ─────────────────────────────────────────
 
@@ -993,8 +1050,10 @@ class IntercomApp(QObject):
     def _ensure_presence_connected(self):
         """Ensure Supabase profile exists and presence server is connected.
         Call from background threads after onboarding sets a name."""
-        supabase_client.ensure_profile(self.user_id, self.display_name)
-        if not self.network._presence_sock:
+        if not self.network.presence_connected:
+            # Only sync profile if we need to connect (avoids extra round-trip)
+            supabase_client.ensure_profile(self.user_id, self.display_name)
+        if not self.network.presence_connected:
             try:
                 success = self.network.connect_presence(
                     RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
@@ -1013,16 +1072,20 @@ class IntercomApp(QObject):
             result = supabase_client.create_team(team_name, self.user_id)
             if result:
                 self.log_signal.emit(f"Created team: {team_name}")
-                # Reload teams
-                teams = supabase_client.get_my_teams(self.user_id)
-                if teams:
-                    self.my_teams = teams
-                    self.active_team_id = result["id"]
-                    self.active_team_name = team_name
-                    set_active_team(self.active_team_id)
-                    set_active_team_name(self.active_team_name)
-                    self.network.update_presence_team(self.active_team_id)
-                    self._teams_loaded_signal.emit()
+                # Use the result directly — no need to reload from server
+                team_entry = {
+                    "id": result["id"],
+                    "name": team_name,
+                    "invite_code": result.get("invite_code", ""),
+                    "role": "admin",
+                }
+                self.my_teams = [team_entry]
+                self.active_team_id = result["id"]
+                self.active_team_name = team_name
+                set_active_team(self.active_team_id)
+                set_active_team_name(self.active_team_name)
+                self.network.update_presence_team(self.active_team_id)
+                self._teams_loaded_signal.emit()
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()
@@ -1035,16 +1098,20 @@ class IntercomApp(QObject):
             result = supabase_client.join_team_by_code(invite_code, self.user_id)
             if result:
                 self.log_signal.emit(f"Joined team: {result['name']}")
-                # Reload teams
-                teams = supabase_client.get_my_teams(self.user_id)
-                if teams:
-                    self.my_teams = teams
-                    self.active_team_id = result["id"]
-                    self.active_team_name = result["name"]
-                    set_active_team(self.active_team_id)
-                    set_active_team_name(self.active_team_name)
-                    self.network.update_presence_team(self.active_team_id)
-                    self._teams_loaded_signal.emit()
+                # Use the result directly — no extra round-trip
+                team_entry = {
+                    "id": result["id"],
+                    "name": result["name"],
+                    "invite_code": result.get("invite_code", ""),
+                    "role": "member",
+                }
+                self.my_teams.append(team_entry)
+                self.active_team_id = result["id"]
+                self.active_team_name = result["name"]
+                set_active_team(self.active_team_id)
+                set_active_team_name(self.active_team_name)
+                self.network.update_presence_team(self.active_team_id)
+                self._teams_loaded_signal.emit()
             else:
                 self.log_signal.emit(f"Invalid invite code: {invite_code}")
                 # Show error on onboarding screen (must happen on main thread)
