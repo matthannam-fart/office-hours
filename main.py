@@ -55,6 +55,8 @@ class IntercomApp(QObject):
     _join_request_failed_signal = Signal(str)           # reason
     _show_manage_dialog_signal = Signal(list)             # members list — thread-safe bounce
     _available_teams_signal = Signal(list)                  # lobby teams — thread-safe bounce
+    _switch_to_team_signal = Signal()                         # transition from lobby to team view (thread-safe)
+    _join_pending_signal = Signal(str)                          # show "waiting for admin" (thread-safe)
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -175,6 +177,8 @@ class IntercomApp(QObject):
         self._join_request_failed_signal.connect(self._handle_join_request_failed)
         self._show_manage_dialog_signal.connect(self._show_manage_team_dialog)
         self._available_teams_signal.connect(self._set_available_teams)
+        self._switch_to_team_signal.connect(self._switch_to_team_view)
+        self._join_pending_signal.connect(lambda name: self.panel.show_join_pending(name))
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -1108,6 +1112,12 @@ class IntercomApp(QObject):
             except Exception as e:
                 self.log_signal.emit(f"Presence connect failed: {e}")
 
+    @Slot()
+    def _switch_to_team_view(self):
+        """Thread-safe transition from lobby to team view.
+        Called via signal from background threads after create/join/approve."""
+        self.panel.set_teams(self.my_teams, self.active_team_id)
+
     @Slot(str)
     def _on_create_team(self, team_name):
         """Create a new team (runs on background thread)."""
@@ -1130,7 +1140,7 @@ class IntercomApp(QObject):
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
                 # Transition directly to team view (not back to lobby)
-                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
+                self._switch_to_team_signal.emit()
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()
@@ -1157,7 +1167,7 @@ class IntercomApp(QObject):
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
                 # Transition directly to team view (not back to lobby)
-                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
+                self._switch_to_team_signal.emit()
             else:
                 self.log_signal.emit(f"Invalid invite code: {invite_code}")
                 # Show error on onboarding screen (must happen on main thread)
@@ -1251,8 +1261,7 @@ class IntercomApp(QObject):
             result = supabase_client.submit_join_request(team_id, self.user_id)
             if not result:
                 self.log_signal.emit("Failed to submit join request")
-                QTimer.singleShot(0, lambda: self.panel.show_join_request_failed(
-                    "Could not submit request. Try again."))
+                self._join_request_failed_signal.emit("Could not submit request. Try again.")
                 return
 
             request_id = result[0]["id"] if isinstance(result, list) and result else ""
@@ -1271,7 +1280,7 @@ class IntercomApp(QObject):
                 "request_id": request_id,
             })
 
-            QTimer.singleShot(0, lambda: self.panel.show_join_pending(team_name))
+            self._join_pending_signal.emit(team_name)
 
         threading.Thread(target=_do_request, daemon=True).start()
 
@@ -1354,7 +1363,7 @@ class IntercomApp(QObject):
                     set_active_team_name(self.active_team_name)
                     self.network.update_presence_team(self.active_team_id)
                 # Transition directly to team view (not back to lobby)
-                QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
+                self._switch_to_team_signal.emit()
             threading.Thread(target=_reload, daemon=True).start()
         else:
             self.log("Join request was declined.")
@@ -1392,7 +1401,7 @@ class IntercomApp(QObject):
                 set_active_team("")
                 set_active_team_name("")
             # Update UI on main thread
-            QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
+            self._switch_to_team_signal.emit()
         threading.Thread(target=_do_leave, daemon=True).start()
 
     def _quit(self):
