@@ -444,16 +444,16 @@ class FloatingPanel(QWidget):
         self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
         h.addWidget(self._team_combo, 1)
 
-        # Manage button (gear icon) — only shown for admins
+        # Manage button (gear icon) — shows team info for all members
         self._team_manage_btn = QPushButton("⚙")
-        self._team_manage_btn.setFixedSize(24, 24)
+        self._team_manage_btn.setFixedSize(28, 28)
         self._team_manage_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; border: none; font-size: 14px; color: {DARK['TEXT_DIM']};
+                background: transparent; border: none; font-size: 18px; color: {DARK['TEXT_DIM']};
             }}
             QPushButton:hover {{ color: {DARK['TEXT']}; }}
         """)
-        self._team_manage_btn.setToolTip("Manage Team")
+        self._team_manage_btn.setToolTip("Team Info")
         self._team_manage_btn.clicked.connect(self.manage_team_requested.emit)
         self._team_manage_btn.setVisible(False)
         h.addWidget(self._team_manage_btn)
@@ -674,7 +674,7 @@ class FloatingPanel(QWidget):
             self.team_changed.emit(team_id)
             # Show manage button only if admin
             role = self._team_combo.itemData(index, Qt.UserRole + 1)
-            self._team_manage_btn.setVisible(role == "admin")
+            self._team_manage_btn.setVisible(True)
 
     def _on_create_team_click(self):
         """Prompt for a team name and emit create signal."""
@@ -728,14 +728,15 @@ class FloatingPanel(QWidget):
         self._team_combo.blockSignals(False)
         # Show manage button if admin of current team
         if active_index < len(teams):
-            self._team_manage_btn.setVisible(teams[active_index].get("role") == "admin")
+            self._team_manage_btn.setVisible(True)
         self._resize_panel()
 
-    def show_manage_team_dialog(self, team_name, team_id, members, invite_code="", add_callback=None, remove_callback=None):
-        """Show a dialog to manage team members."""
+    def show_manage_team_dialog(self, team_name, team_id, members, invite_code="",
+                               is_admin=False, add_callback=None, remove_callback=None):
+        """Show team info dialog. All members see code + members, admins can add/remove."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Manage: {team_name}")
+        dlg.setWindowTitle(team_name)
         dlg.setFixedWidth(320)
         layout = QVBoxLayout(dlg)
 
@@ -755,6 +756,19 @@ class FloatingPanel(QWidget):
             hint = QLabel("Share this code so others can join")
             hint.setStyleSheet("font-size: 10px; color: #999; border: none;")
             code_layout.addWidget(hint, alignment=Qt.AlignCenter)
+
+            # Copy button
+            copy_btn = QPushButton("Copy Code")
+            copy_btn.setCursor(Qt.PointingHandCursor)
+            copy_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {DARK['ACCENT']}; border: 1px solid rgba(0,166,81,0.3);
+                    border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+                }}
+                QPushButton:hover {{ background: rgba(0,166,81,0.10); }}
+            """)
+            copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(invite_code))
+            code_layout.addWidget(copy_btn, alignment=Qt.AlignCenter)
             layout.addWidget(code_frame)
 
         # Members list
@@ -767,39 +781,39 @@ class FloatingPanel(QWidget):
             member_list.addItem(item)
         layout.addWidget(member_list)
 
-        # Remove button
-        remove_btn = QPushButton("Remove Selected")
-        remove_btn.setStyleSheet(f"background: {DARK['DANGER']}; color: white; border: none; border-radius: 4px; padding: 6px;")
-        def _on_remove():
-            item = member_list.currentItem()
-            if item:
-                uid = item.data(Qt.UserRole)
-                role = item.data(Qt.UserRole + 1)
-                if role == "admin":
-                    return  # Can't remove admin
-                if remove_callback:
-                    remove_callback(team_id, uid)
-                member_list.takeItem(member_list.row(item))
-        remove_btn.clicked.connect(_on_remove)
-        layout.addWidget(remove_btn)
+        # Admin-only: Remove and Add
+        if is_admin:
+            remove_btn = QPushButton("Remove Selected")
+            remove_btn.setStyleSheet(f"background: {DARK['DANGER']}; color: white; border: none; border-radius: 4px; padding: 6px;")
+            def _on_remove():
+                item = member_list.currentItem()
+                if item:
+                    uid = item.data(Qt.UserRole)
+                    role = item.data(Qt.UserRole + 1)
+                    if role == "admin":
+                        return  # Can't remove admin
+                    if remove_callback:
+                        remove_callback(team_id, uid)
+                    member_list.takeItem(member_list.row(item))
+            remove_btn.clicked.connect(_on_remove)
+            layout.addWidget(remove_btn)
 
-        # Add member section
-        layout.addWidget(QLabel("Add member by name:"))
-        add_row = QHBoxLayout()
-        name_input = QLineEdit()
-        name_input.setPlaceholderText("Display name...")
-        add_row.addWidget(name_input, 1)
-        add_btn = QPushButton("Add")
-        add_btn.setStyleSheet(f"background: {DARK['ACCENT']}; color: white; border: none; border-radius: 4px; padding: 6px 12px;")
-        def _on_add():
-            name = name_input.text().strip()
-            if name and add_callback:
-                add_callback(team_id, name)
-                member_list.addItem(f"{name} (member)")
-                name_input.clear()
-        add_btn.clicked.connect(_on_add)
-        add_row.addWidget(add_btn)
-        layout.addLayout(add_row)
+            layout.addWidget(QLabel("Add member by name:"))
+            add_row = QHBoxLayout()
+            name_input = QLineEdit()
+            name_input.setPlaceholderText("Display name...")
+            add_row.addWidget(name_input, 1)
+            add_btn = QPushButton("Add")
+            add_btn.setStyleSheet(f"background: {DARK['ACCENT']}; color: white; border: none; border-radius: 4px; padding: 6px 12px;")
+            def _on_add():
+                name = name_input.text().strip()
+                if name and add_callback:
+                    add_callback(team_id, name)
+                    member_list.addItem(f"{name} (member)")
+                    name_input.clear()
+            add_btn.clicked.connect(_on_add)
+            add_row.addWidget(add_btn)
+            layout.addLayout(add_row)
 
         # Close button
         close_btn = QPushButton("Close")

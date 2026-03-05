@@ -1086,7 +1086,7 @@ class IntercomApp(QObject):
                 set_active_team(self.active_team_id)
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
-                self._teams_loaded_signal.emit()
+                QTimer.singleShot(0, lambda: self._on_teams_loaded())
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()
@@ -1112,7 +1112,7 @@ class IntercomApp(QObject):
                 set_active_team(self.active_team_id)
                 set_active_team_name(self.active_team_name)
                 self.network.update_presence_team(self.active_team_id)
-                self._teams_loaded_signal.emit()
+                QTimer.singleShot(0, lambda: self._on_teams_loaded())
             else:
                 self.log_signal.emit(f"Invalid invite code: {invite_code}")
                 # Show error on onboarding screen (must happen on main thread)
@@ -1126,17 +1126,8 @@ class IntercomApp(QObject):
 
     @Slot()
     def _on_manage_team(self):
-        """Open team management dialog (admin only)."""
+        """Open team info dialog (all members can view, only admins can remove)."""
         if not self.active_team_id:
-            return
-        # Check if current user is admin of active team
-        role = "member"
-        for t in self.my_teams:
-            if t["id"] == self.active_team_id:
-                role = t.get("role", "member")
-                break
-        if role != "admin":
-            self.log("Only team admins can manage members")
             return
         # Fetch current members in background, then show dialog
         def _fetch_and_show():
@@ -1147,15 +1138,18 @@ class IntercomApp(QObject):
 
     def _show_manage_team_dialog(self, members):
         """Show team management dialog on the main thread."""
-        # Get invite code for current team
+        # Get invite code and role for current team
         invite_code = ""
+        is_admin = False
         for t in self.my_teams:
             if t["id"] == self.active_team_id:
                 invite_code = t.get("invite_code", "")
+                is_admin = t.get("role") == "admin"
                 break
         self.panel.show_manage_team_dialog(
             self.active_team_name, self.active_team_id, members,
             invite_code=invite_code,
+            is_admin=is_admin,
             add_callback=self._add_team_member,
             remove_callback=self._remove_team_member,
         )
