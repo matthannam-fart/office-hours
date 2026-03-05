@@ -859,7 +859,7 @@ class FloatingPanel(QWidget):
         v.setSpacing(6)
 
         top = QHBoxLayout()
-        orb = SmallOrb(DARK['TEAL'], 10)
+        orb = SmallOrb('OPEN')  # Teal orb
         top.addWidget(orb)
 
         info = QVBoxLayout()
