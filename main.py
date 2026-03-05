@@ -1059,9 +1059,21 @@ class IntercomApp(QObject):
     @Slot()
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded.
-        Always shows lobby on launch so user picks their team."""
-        self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
-        self._lobby_refresh_timer.start()  # Start polling for new teams
+        Auto-selects if the user has exactly one team; otherwise shows lobby."""
+        if len(self.my_teams) == 1:
+            # Only one team — skip the lobby and go straight in
+            t = self.my_teams[0]
+            self.active_team_id = t["id"]
+            self.active_team_name = t["name"]
+            set_active_team(self.active_team_id)
+            set_active_team_name(self.active_team_name)
+            self.network.update_presence_team(self.active_team_id)
+            self.log(f"Auto-selected team: {self.active_team_name}")
+            self.panel.set_teams(self.my_teams, self.active_team_id)
+        else:
+            # Multiple teams or none — show lobby so user can pick or create
+            self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
+            self._lobby_refresh_timer.start()  # Start polling for new teams
 
     @Slot(list)
     def _set_available_teams(self, data):
