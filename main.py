@@ -1315,9 +1315,12 @@ class IntercomApp(QObject):
             "requester_name": requester_name,
         }
         self.log(f"Join request from {requester_name}")
-        # Set requester_id on panel for the decline signal
-        self.panel._active_join_requester_id = requester_id
-        QTimer.singleShot(0, lambda: self.panel.show_join_request(request_id, requester_name))
+        # Show banner and set requester context AFTER show_join_request
+        # (show_join_request resets _active_join_requester_id to None)
+        def _show():
+            self.panel.show_join_request(request_id, requester_name)
+            self.panel._active_join_requester_id = requester_id
+        QTimer.singleShot(0, _show)
 
     @Slot(str)
     def _on_approve_join(self, request_id):
