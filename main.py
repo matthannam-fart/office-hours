@@ -545,11 +545,11 @@ class IntercomApp(QObject):
             # Still show lobby even if Supabase fails
             self._teams_loaded_signal.emit()
 
-        # Connect to presence with empty team (user hasn't chosen yet)
+        # Connect to presence — use active_team_id if auto-selected, else empty
         try:
             success = self.network.connect_presence(
                 RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
-                self.mode, "",  # Empty team — will be set when user picks
+                self.mode, self.active_team_id or "",
             )
             if success:
                 self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
