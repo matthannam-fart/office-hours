@@ -831,13 +831,20 @@ class FloatingPanel(QWidget):
         self._join_req_name.setText(f"{requester_name}")
         self._join_req_sub.setText("wants to join your team")
         self._join_request_banner.setVisible(True)
-        self._resize_panel()
+        # If on lobby, grow panel to fit banner; otherwise normal resize
+        if self._is_onboarding:
+            self.setFixedHeight(580)
+        else:
+            self._resize_panel()
 
     def hide_join_request(self):
         """Hide the join request notification banner."""
         if hasattr(self, '_join_request_banner'):
             self._join_request_banner.setVisible(False)
-            self._resize_panel()
+            if self._is_onboarding:
+                self.setFixedHeight(500)
+            else:
+                self._resize_panel()
 
     def _build_join_request_banner(self):
         """Build the admin join request notification banner."""

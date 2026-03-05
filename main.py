@@ -526,7 +526,6 @@ class IntercomApp(QObject):
             all_teams = supabase_client.get_all_teams() or []
             my_ids = {t["id"] for t in self.my_teams}
             available = [t for t in all_teams if t["id"] not in my_ids]
-            print(f"[DEBUG] Lobby: {len(self.my_teams)} my teams, {len(available)} other teams")
 
             # Always show the lobby on launch so user picks their team
             self._teams_loaded_signal.emit()  # Shows lobby (force_lobby mode)
@@ -644,21 +643,18 @@ class IntercomApp(QObject):
         """Update the panel user list from presence data, filtered by active team."""
         self.online_users = {}
         panel_users = []
-        print(f"[DEBUG] Presence update: {len(users)} users, my team={self.active_team_id!r}")
 
         for user in users:
             uid = user.get("user_id", "")
             name = user.get("name", "Unknown")
             mode = user.get("mode", "GREEN")
             team_id = user.get("team_id", "")
-            print(f"[DEBUG]   user={name!r} team={team_id!r} mode={mode}")
             self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": team_id}
             # Don't show the peer we're currently in a call with — they're in the call banner
             if uid == self._connected_peer_id:
                 continue
             # Filter by active team — only show users in the same team
             if self.active_team_id and team_id != self.active_team_id:
-                print(f"[DEBUG]   -> FILTERED OUT (team mismatch)")
                 continue
             panel_users.append({
                 'id': uid,
@@ -1056,10 +1052,8 @@ class IntercomApp(QObject):
         data is [available_teams, my_teams] or just [available_teams]."""
         if isinstance(data, list) and len(data) == 2 and isinstance(data[0], list):
             available, my_teams = data[0], data[1]
-            print(f"[DEBUG] _set_available_teams: {len(available)} available, {len(my_teams)} mine")
             self.panel.set_available_teams(available, my_teams=my_teams)
         else:
-            print(f"[DEBUG] _set_available_teams: {len(data)} teams")
             self.panel.set_available_teams(data)
 
     @Slot(str)
