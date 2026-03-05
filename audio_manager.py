@@ -49,10 +49,15 @@ import sys
 import time
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
 
-# Ducking: how much to attenuate mic when speaker is active (0.05 = 95% reduction)
-DUCK_ATTENUATION = 0.05
+# Ducking: how much to attenuate mic when speaker is active (0.3 = 70% reduction)
+DUCK_ATTENUATION = 0.3
 # How long to keep ducking after last incoming audio chunk (seconds)
-DUCK_HOLDOFF = 0.2
+DUCK_HOLDOFF = 0.15
+
+# VOX (voice-activated transmit) settings
+VOX_THRESHOLD = 150       # RMS amplitude to trigger transmit (int16 scale, ~0.5% of max)
+VOX_HOLDOFF = 0.4         # Keep transmitting for this long after voice stops (seconds)
+VOX_ATTACK_FRAMES = 1     # Frames above threshold to open gate (prevents click triggering)
 
 def _configure_audio_backend():
     """Configure sounddevice for lowest latency on the current platform."""
@@ -85,6 +90,12 @@ class AudioManager:
 
         # Echo ducking state
         self._last_incoming_time = 0.0  # timestamp of last incoming audio
+
+        # VOX gate state
+        self._vox_enabled = False         # Toggled on for open-line mode
+        self._vox_open = False            # Gate currently open (transmitting)
+        self._vox_last_voice = 0.0        # Timestamp of last voice-level audio
+        self._vox_attack_count = 0        # Consecutive frames above threshold
 
         # Audio level callbacks (0.0–1.0 range)
         self.mic_level_callback = None    # Called with mic RMS level
@@ -138,19 +149,36 @@ class AudioManager:
             if status:
                 self.log(str(status))
             if self.streaming:
+                # Calculate RMS for level meter and VOX
+                rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
+
+                # Report mic level (RMS normalised to 0–1)
+                if self.mic_level_callback:
+                    level = min(1.0, rms / 32768.0 * 10)  # ×10 for visible range
+                    self.mic_level_callback(level)
+
+                # VOX gate: only transmit when voice is detected
+                if self._vox_enabled:
+                    now = time.time()
+                    if rms >= VOX_THRESHOLD:
+                        self._vox_attack_count += 1
+                        if self._vox_attack_count >= VOX_ATTACK_FRAMES:
+                            self._vox_open = True
+                            self._vox_last_voice = now
+                    else:
+                        self._vox_attack_count = 0
+                        if self._vox_open and (now - self._vox_last_voice) > VOX_HOLDOFF:
+                            self._vox_open = False
+
+                    if not self._vox_open:
+                        return  # Gate closed — don't transmit silence
+
+                # Apply ducking (lighter now: 70% reduction instead of 95%)
                 if self._is_ducking():
-                    # Attenuate mic to prevent echo
                     ducked = (indata * DUCK_ATTENUATION).astype(DTYPE)
                     raw = ducked.tobytes()
                 else:
                     raw = indata.tobytes()
-
-                # Report mic level (RMS normalised to 0–1)
-                if self.mic_level_callback:
-                    rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
-                    # int16 range: normalise by 32768
-                    level = min(1.0, rms / 32768.0 * 10)  # ×10 for visible range
-                    self.mic_level_callback(level)
 
                 # Compress with µ-law: 16-bit → 8-bit (halves bandwidth)
                 compressed = audioop.lin2ulaw(raw, 2)
@@ -164,6 +192,13 @@ class AudioManager:
                     sd.sleep(50)
         except Exception as e:
             self.log(f"Mic Stream Error: {e}")
+
+    def set_vox(self, enabled):
+        """Enable/disable voice-activated transmit for open-line mode."""
+        self._vox_enabled = enabled
+        if not enabled:
+            self._vox_open = False
+            self._vox_attack_count = 0
 
     def start_recording_message(self):
         """Yellow Mode: Start recording to buffer"""

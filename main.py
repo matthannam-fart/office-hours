@@ -222,6 +222,7 @@ class IntercomApp(QObject):
             self.panel.set_open_line(True)
             self.panel.set_mode(self.MODE_OPEN)
             self.tray.setIcon(create_oh_icon(COLORS['OPEN']))
+            self.audio.set_vox(True)  # Voice-activated transmit for open line
             if self.network.connected:
                 self.audio.start_streaming()
             self.send_status()
@@ -229,6 +230,7 @@ class IntercomApp(QObject):
         else:
             # Restore to GREEN (default when turning off open)
             self.mode = self.MODE_GREEN
+            self.audio.set_vox(False)
             self.audio.stop_streaming()
             self.panel.set_open_line(False)
             self.panel.set_mode(self.MODE_GREEN)

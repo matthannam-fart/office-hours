@@ -864,47 +864,53 @@ class FloatingPanel(QWidget):
             target = min(target, 500)  # cap so it doesn't go off-screen
             self.setFixedHeight(target)
 
+    def _hide_all_banners(self):
+        """Clear all call banners — ensures clean state."""
+        self._outgoing_banner.setVisible(False)
+        self._incoming_banner.setVisible(False)
+        self._call_banner.setVisible(False)
+
     def show_outgoing(self, target_name):
         """Show the outgoing call banner while waiting for response."""
+        self._hide_all_banners()
         self.outgoing_name.setText(target_name)
         self.outgoing_sub.setText("Calling...")
         self._outgoing_banner.setVisible(True)
-
         self._user_section.setVisible(False)
         self.adjustSize()
 
     def hide_outgoing(self):
         """Hide the outgoing call banner."""
         self._outgoing_banner.setVisible(False)
-
         self._user_section.setVisible(True)
         self.adjustSize()
 
     def show_incoming(self, caller_name):
         """Show the incoming call banner."""
+        self._hide_all_banners()
         self.incoming_name.setText(caller_name)
         self._incoming_banner.setVisible(True)
-
         self._user_section.setVisible(False)
         self.adjustSize()
 
     def hide_incoming(self):
         """Hide the incoming call banner."""
         self._incoming_banner.setVisible(False)
+        if not self._outgoing_banner.isVisible() and not self._call_banner.isVisible():
+            self._user_section.setVisible(True)
         self.adjustSize()
 
     def show_call(self, caller_name):
         """Show the in-call banner."""
+        self._hide_all_banners()
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
-        self._incoming_banner.setVisible(False)
-        self._outgoing_banner.setVisible(False)
         self._user_section.setVisible(False)
         self.adjustSize()
 
     def hide_call(self):
         """Hide the in-call banner and restore normal layout."""
-        self._call_banner.setVisible(False)
+        self._hide_all_banners()
         self._user_section.setVisible(True)
         self.adjustSize()
 
