@@ -230,11 +230,18 @@ def get_all_teams():
 
 
 def submit_join_request(team_id: str, user_id: str):
-    """Submit a join request. Uses upsert to handle duplicates."""
+    """Submit a join request. Deletes any prior request first to avoid duplicates."""
+    # Clear any stale/declined request for this team+user combo
+    _request(
+        "DELETE", "join_requests",
+        params={
+            "team_id": f"eq.{team_id}",
+            "requester_id": f"eq.{user_id}",
+        },
+    )
     return _request(
         "POST", "join_requests",
         body={"team_id": team_id, "requester_id": user_id, "status": "pending"},
-        headers_extra={"Prefer": "return=representation,resolution=merge-duplicates"},
     )
 
 
