@@ -53,6 +53,7 @@ class IntercomApp(QObject):
     _join_request_signal = Signal(str, str, str, str)  # request_id, team_id, requester_name, requester_id
     _join_response_signal = Signal(str, bool)          # request_id, approved
     _join_request_failed_signal = Signal(str)           # reason
+    _show_manage_dialog_signal = Signal(list)             # members list — thread-safe bounce
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -171,6 +172,7 @@ class IntercomApp(QObject):
         self._join_request_signal.connect(self._show_join_request)
         self._join_response_signal.connect(self._handle_join_response)
         self._join_request_failed_signal.connect(self._handle_join_request_failed)
+        self._show_manage_dialog_signal.connect(self._show_manage_team_dialog)
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -1171,11 +1173,13 @@ class IntercomApp(QObject):
         """Open team info dialog (all members can view, only admins can remove)."""
         if not self.active_team_id:
             return
-        # Fetch current members in background, then show dialog
+        # Fetch current members in background, then show dialog via signal
         def _fetch_and_show():
-            members = supabase_client.get_team_members(self.active_team_id)
-            # Bounce to main thread via QTimer (avoids Q_ARG type issues)
-            QTimer.singleShot(0, lambda: self._show_manage_team_dialog(members))
+            try:
+                members = supabase_client.get_team_members(self.active_team_id)
+                self._show_manage_dialog_signal.emit(members)
+            except Exception as e:
+                self.log(f"Failed to fetch team members: {e}")
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
     def _show_manage_team_dialog(self, members):

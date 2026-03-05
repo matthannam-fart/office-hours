@@ -954,8 +954,9 @@ class FloatingPanel(QWidget):
                                is_admin=False, add_callback=None, remove_callback=None):
         """Show team info dialog. All members see code + members, admins can add/remove."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
-        dlg = QDialog()  # No parent — avoids macOS tool-window z-order issues
-        dlg.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        # Store ref to prevent garbage collection; use panel as parent but override window flags
+        self._manage_dlg = dlg = QDialog(self)
+        dlg.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
         dlg.setWindowTitle(team_name)
         dlg.setFixedWidth(320)
         dlg.setStyleSheet(f"""
@@ -1050,6 +1051,9 @@ class FloatingPanel(QWidget):
         close_btn.clicked.connect(dlg.accept)
         layout.addWidget(close_btn)
 
+        print(f"[DEBUG] About to show manage dialog, size={dlg.sizeHint()}")
+        dlg.raise_()
+        dlg.activateWindow()
         dlg.exec()
 
     # ── User Section ──────────────────────────────────────────────
