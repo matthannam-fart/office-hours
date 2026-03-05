@@ -50,6 +50,9 @@ class IntercomApp(QObject):
     mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
     speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
     _teams_loaded_signal = Signal()                   # Supabase teams loaded (internal)
+    _join_request_signal = Signal(str, str, str, str)  # request_id, team_id, requester_name, requester_id
+    _join_response_signal = Signal(str, bool)          # request_id, approved
+    _join_request_failed_signal = Signal(str)           # reason
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -86,6 +89,7 @@ class IntercomApp(QObject):
         self.active_team_id = get_active_team() or ""
         self.active_team_name = get_active_team_name() or ""
         self.my_teams = []  # [{id, name, role}, ...] loaded from Supabase
+        self._pending_join_requests = {}  # request_id -> {team_id, requester_id, requester_name}
 
         # Managers
         self.network = NetworkManager(self.handle_network_message, log_callback=self.log_signal.emit)
@@ -164,6 +168,9 @@ class IntercomApp(QObject):
         self.mic_level_signal.connect(self.panel.set_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
+        self._join_request_signal.connect(self._show_join_request)
+        self._join_response_signal.connect(self._handle_join_response)
+        self._join_request_failed_signal.connect(self._handle_join_request_failed)
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -202,6 +209,9 @@ class IntercomApp(QObject):
         self.panel.manage_team_requested.connect(self._on_manage_team)
         self.panel.join_code_requested.connect(self._on_join_code)
         self.panel.leave_team_requested.connect(self._on_leave_team)
+        self.panel.request_to_join.connect(self._on_request_to_join)
+        self.panel.join_request_accepted.connect(self._on_approve_join)
+        self.panel.join_request_declined.connect(self._on_decline_join)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -523,6 +533,17 @@ class IntercomApp(QObject):
             # Always update panel team selector (even with 0 teams, shows "+" button)
             self._teams_loaded_signal.emit()
             self.log_signal.emit(f"Supabase: {len(self.my_teams)} team(s) loaded")
+
+            # If no teams, load available teams for the lobby
+            if not self.my_teams:
+                try:
+                    all_teams = supabase_client.get_all_teams()
+                    # Filter out any teams user is already in (shouldn't be any, but be safe)
+                    my_ids = {t["id"] for t in self.my_teams}
+                    available = [t for t in (all_teams or []) if t["id"] not in my_ids]
+                    QTimer.singleShot(0, lambda: self.panel.set_available_teams(available))
+                except Exception as e:
+                    self.log_signal.emit(f"Could not load available teams: {e}")
         except Exception as e:
             self.log_signal.emit(f"Supabase sync: {e}")
 
@@ -570,6 +591,27 @@ class IntercomApp(QObject):
             self.panel.hide_incoming()
             self.pending_room = None
             self.pending_from_id = None
+
+        elif msg_type == "JOIN_REQUEST":
+            # Admin received a join request from lobby
+            self._join_request_signal.emit(
+                msg.get("request_id", ""),
+                msg.get("team_id", ""),
+                msg.get("requester_name", "Someone"),
+                msg.get("requester_id", ""),
+            )
+
+        elif msg_type == "JOIN_RESPONSE":
+            # Requester received a response from admin
+            self._join_response_signal.emit(
+                msg.get("request_id", ""),
+                msg.get("approved", False),
+            )
+
+        elif msg_type == "JOIN_REQUEST_FAILED":
+            self._join_request_failed_signal.emit(
+                msg.get("reason", "Could not reach team admin")
+            )
 
     def _join_relay_room(self, room_code, role):
         """Connect to relay for an active call. Room code is internal — never shown to user."""
@@ -1176,6 +1218,129 @@ class IntercomApp(QObject):
             supabase_client.remove_member(team_id, user_id)
             self.log_signal.emit("Member removed from team")
         threading.Thread(target=_do_remove, daemon=True).start()
+
+    # ── Lobby Join Request Flow ─────────────────────────────────
+
+    @Slot(str, str, str)
+    def _on_request_to_join(self, team_id, team_name, admin_id):
+        """User clicked 'Join' on a team in the lobby."""
+        def _do_request():
+            self._ensure_presence_connected()
+            result = supabase_client.submit_join_request(team_id, self.user_id)
+            if not result:
+                self.log_signal.emit("Failed to submit join request")
+                QTimer.singleShot(0, lambda: self.panel.show_join_request_failed(
+                    "Could not submit request. Try again."))
+                return
+
+            request_id = result[0]["id"] if isinstance(result, list) and result else ""
+            if not request_id:
+                self.log_signal.emit("Join request returned no ID")
+                return
+
+            self.log_signal.emit(f"Submitted join request for '{team_name}'")
+
+            # Send JOIN_REQUEST via relay to admin
+            self.network.send_presence_message({
+                "action": "JOIN_REQUEST",
+                "team_id": team_id,
+                "admin_id": admin_id,
+                "requester_name": self.display_name,
+                "request_id": request_id,
+            })
+
+            QTimer.singleShot(0, lambda: self.panel.show_join_pending(team_name))
+
+        threading.Thread(target=_do_request, daemon=True).start()
+
+    @Slot(str, str, str, str)
+    def _show_join_request(self, request_id, team_id, requester_name, requester_id):
+        """Admin received a join request — show notification banner."""
+        self._pending_join_requests[request_id] = {
+            "team_id": team_id,
+            "requester_id": requester_id,
+            "requester_name": requester_name,
+        }
+        self.log(f"Join request from {requester_name}")
+        # Set requester_id on panel for the decline signal
+        self.panel._active_join_requester_id = requester_id
+        QTimer.singleShot(0, lambda: self.panel.show_join_request(request_id, requester_name))
+
+    @Slot(str)
+    def _on_approve_join(self, request_id):
+        """Admin clicked Accept on a join request."""
+        ctx = self._pending_join_requests.pop(request_id, {})
+        team_id = ctx.get("team_id", self.active_team_id)
+        requester_id = ctx.get("requester_id", "")
+        requester_name = ctx.get("requester_name", "Unknown")
+
+        def _do_approve():
+            result = supabase_client.approve_join_request(
+                request_id, team_id, requester_id, self.user_id)
+            if result:
+                self.log_signal.emit(f"Approved {requester_name}")
+            else:
+                self.log_signal.emit(f"Failed to approve {requester_name}")
+
+            # Notify requester via relay
+            self.network.send_presence_message({
+                "action": "JOIN_RESPONSE",
+                "request_id": request_id,
+                "approved": True,
+                "requester_id": requester_id,
+            })
+
+        threading.Thread(target=_do_approve, daemon=True).start()
+        self.panel.hide_join_request()
+
+    @Slot(str, str)
+    def _on_decline_join(self, request_id, requester_id):
+        """Admin clicked Decline on a join request."""
+        ctx = self._pending_join_requests.pop(request_id, {})
+        requester_id = requester_id or ctx.get("requester_id", "")
+
+        def _do_decline():
+            supabase_client.decline_join_request(request_id, self.user_id)
+            self.log_signal.emit("Join request declined")
+
+            # Notify requester via relay
+            self.network.send_presence_message({
+                "action": "JOIN_RESPONSE",
+                "request_id": request_id,
+                "approved": False,
+                "requester_id": requester_id,
+            })
+
+        threading.Thread(target=_do_decline, daemon=True).start()
+        self.panel.hide_join_request()
+
+    @Slot(str, bool)
+    def _handle_join_response(self, request_id, approved):
+        """Requester received a response from the admin."""
+        if approved:
+            self.log("Join request approved! Loading teams...")
+            # Reload teams from Supabase after short delay
+            def _reload():
+                time.sleep(0.5)  # Let Supabase catch up
+                teams = supabase_client.get_my_teams(self.user_id)
+                self.my_teams = teams or []
+                if self.my_teams:
+                    self.active_team_id = self.my_teams[0]["id"]
+                    self.active_team_name = self.my_teams[0]["name"]
+                    set_active_team(self.active_team_id)
+                    set_active_team_name(self.active_team_name)
+                    self.network.update_presence_team(self.active_team_id)
+                QTimer.singleShot(0, lambda: self._on_teams_loaded())
+            threading.Thread(target=_reload, daemon=True).start()
+        else:
+            self.log("Join request was declined.")
+            QTimer.singleShot(0, lambda: self.panel.show_join_declined())
+
+    @Slot(str)
+    def _handle_join_request_failed(self, reason):
+        """Join request couldn't be routed (admin offline, etc.)."""
+        self.log(f"Join request failed: {reason}")
+        QTimer.singleShot(0, lambda: self.panel.show_join_request_failed(reason))
 
     def _on_leave_team(self):
         """User wants to leave the current team."""

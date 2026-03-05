@@ -220,6 +220,41 @@ def leave_team(team_id: str, user_id: str):
     return remove_member(team_id, user_id)
 
 
+# ── Join Requests (Lobby) ──────────────────────────────────────
+
+def get_all_teams():
+    """Fetch all teams for lobby listing."""
+    return _request("GET", "teams", params={"select": "id,name,created_by"}) or []
+
+
+def submit_join_request(team_id: str, user_id: str):
+    """Submit a join request. Uses upsert to handle duplicates."""
+    return _request(
+        "POST", "join_requests",
+        body={"team_id": team_id, "requester_id": user_id, "status": "pending"},
+        headers_extra={"Prefer": "return=representation,resolution=merge-duplicates"},
+    )
+
+
+def approve_join_request(request_id: str, team_id: str, requester_id: str, admin_id: str):
+    """Approve request: update status + add to team_members."""
+    _request(
+        "PATCH", "join_requests",
+        params={"id": f"eq.{request_id}"},
+        body={"status": "approved", "responded_by": admin_id},
+    )
+    return add_member(team_id, requester_id)
+
+
+def decline_join_request(request_id: str, admin_id: str):
+    """Decline a join request."""
+    return _request(
+        "PATCH", "join_requests",
+        params={"id": f"eq.{request_id}"},
+        body={"status": "declined", "responded_by": admin_id},
+    )
+
+
 def delete_team(team_id: str):
     """Delete a team and all memberships."""
     # Delete memberships first (cascade may handle this, but be explicit)

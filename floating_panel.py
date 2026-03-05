@@ -87,6 +87,9 @@ class FloatingPanel(QWidget):
     manage_team_requested = Signal()       # open team management
     join_code_requested = Signal(str)      # invite_code — user wants to join a team
     leave_team_requested = Signal()        # user wants to leave current team
+    request_to_join = Signal(str, str, str)   # team_id, team_name, admin_id (lobby join request)
+    join_request_accepted = Signal(str)        # request_id — admin accepted a join request
+    join_request_declined = Signal(str, str)   # request_id, requester_id — admin declined
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -477,24 +480,21 @@ class FloatingPanel(QWidget):
 
     # ── Onboarding (no teams yet) ────────────────────────────
     def _build_onboarding(self):
-        """First-launch screen: set your name + enter invite code or create a team."""
+        """First-launch screen: set your name, browse available teams, or create/join with code."""
         # Custom frame that paints an "OH" watermark behind the content
         class WatermarkFrame(QFrame):
             def paintEvent(self, event):
                 super().paintEvent(event)
                 p = QPainter(self)
                 p.setRenderHint(QPainter.Antialiasing)
-                # Look for oh_bg image first, fall back to painted text
                 bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oh_bg.png")
                 if os.path.exists(bg_path):
                     pm = QPixmap(bg_path)
-                    # Scale to fit width, center vertically
                     scaled = pm.scaledToWidth(self.width(), Qt.SmoothTransformation)
                     y = (self.height() - scaled.height()) // 2
                     p.setOpacity(0.08)
                     p.drawPixmap(0, y, scaled)
                 else:
-                    # Paint "OH" in large text as watermark
                     font = QFont(FONT_FAMILY, 160)
                     font.setWeight(QFont.Black)
                     p.setFont(font)
@@ -509,7 +509,7 @@ class FloatingPanel(QWidget):
         frame = WatermarkFrame()
         frame.setStyleSheet("border: none;")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(0)
 
         # Title
@@ -519,12 +519,12 @@ class FloatingPanel(QWidget):
         layout.addWidget(title)
         layout.addSpacing(4)
 
-        subtitle = QLabel("Set your name, then join a team or start a new one.")
+        subtitle = QLabel("Set your name, then join or create a team.")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']};")
         layout.addWidget(subtitle)
-        layout.addSpacing(16)
+        layout.addSpacing(12)
 
         # ── Name input ──
         name_lbl = QLabel("YOUR NAME")
@@ -544,75 +544,106 @@ class FloatingPanel(QWidget):
         """)
         self._onboarding_name_input.setMaxLength(30)
         layout.addWidget(self._onboarding_name_input)
-        layout.addSpacing(12)
+        layout.addSpacing(10)
 
-        # ── Invite code section ──
-        code_lbl = QLabel("INVITE CODE")
-        code_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
-        layout.addWidget(code_lbl)
+        # ── Available Teams (lobby) ──
+        teams_lbl = QLabel("AVAILABLE TEAMS")
+        teams_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
+        layout.addWidget(teams_lbl)
         layout.addSpacing(3)
 
-        self._invite_input = QLineEdit()
-        self._invite_input.setPlaceholderText("e.g. OH-7X3K5")
-        self._invite_input.setAlignment(Qt.AlignCenter)
-        self._invite_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 6px; padding: 7px 10px; font-size: 13px;
-                font-weight: 600; letter-spacing: 2px; color: {DARK['TEXT']};
-            }}
-            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        # Scrollable team list
+        team_scroll = QScrollArea()
+        team_scroll.setWidgetResizable(True)
+        team_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        team_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        team_scroll.setFixedHeight(100)
+        team_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: 1px solid {DARK['BORDER']}; border-radius: 6px; background: {DARK['BG_RAISED']}; }}
+            QScrollBar:vertical {{ width: 4px; background: transparent; }}
+            QScrollBar::handle:vertical {{ background: {DARK['BORDER']}; border-radius: 2px; min-height: 20px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
-        self._invite_input.setMaxLength(10)
-        layout.addWidget(self._invite_input)
+
+        self._lobby_container = QWidget()
+        self._lobby_layout = QVBoxLayout(self._lobby_container)
+        self._lobby_layout.setContentsMargins(6, 4, 6, 4)
+        self._lobby_layout.setSpacing(2)
+
+        # Placeholder while loading
+        self._lobby_empty_label = QLabel("Loading teams...")
+        self._lobby_empty_label.setAlignment(Qt.AlignCenter)
+        self._lobby_empty_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
+        self._lobby_layout.addWidget(self._lobby_empty_label)
+        self._lobby_layout.addStretch()
+
+        team_scroll.setWidget(self._lobby_container)
+        layout.addWidget(team_scroll)
         layout.addSpacing(8)
 
-        # Join button
-        join_btn = QPushButton("Join Team")
-        join_btn.setCursor(Qt.PointingHandCursor)
-        join_btn.setStyleSheet(f"""
+        # Create team button
+        create_btn = QPushButton("+ Create a New Team")
+        create_btn.setCursor(Qt.PointingHandCursor)
+        create_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {DARK['ACCENT']}; color: white; border: none;
-                border-radius: 6px; padding: 8px; font-size: 11px; font-weight: 600;
+                background: transparent; color: {DARK['TEXT_DIM']};
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                padding: 7px; font-size: 11px; font-weight: 600;
             }}
-            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
-            QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
-        join_btn.clicked.connect(self._on_join_code_click)
-        self._join_btn = join_btn
-        layout.addWidget(join_btn)
-        layout.addSpacing(12)
+        create_btn.clicked.connect(self._on_create_team_click)
+        layout.addWidget(create_btn)
+        layout.addSpacing(6)
 
         # Divider
         divider_row = QHBoxLayout()
         divider_row.setContentsMargins(0, 0, 0, 0)
         line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet(f"color: {DARK['BORDER']};")
         line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet(f"color: {DARK['BORDER']};")
-        or_lbl = QLabel("or")
+        or_lbl = QLabel("or join with code")
         or_lbl.setStyleSheet(f"color: {DARK['TEXT_FAINT']}; font-size: 10px;")
         or_lbl.setAlignment(Qt.AlignCenter)
         divider_row.addWidget(line_l, 1)
         divider_row.addWidget(or_lbl)
         divider_row.addWidget(line_r, 1)
         layout.addLayout(divider_row)
-        layout.addSpacing(12)
+        layout.addSpacing(6)
 
-        # Create team button
-        create_btn = QPushButton("Create a New Team")
-        create_btn.setCursor(Qt.PointingHandCursor)
-        create_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; color: {DARK['TEXT_DIM']};
-                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-                padding: 8px; font-size: 11px; font-weight: 600;
+        # Invite code row (compact)
+        code_row = QHBoxLayout()
+        code_row.setSpacing(6)
+        self._invite_input = QLineEdit()
+        self._invite_input.setPlaceholderText("OH-XXXXX")
+        self._invite_input.setAlignment(Qt.AlignCenter)
+        self._invite_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 6px 8px; font-size: 12px;
+                font-weight: 600; letter-spacing: 2px; color: {DARK['TEXT']};
             }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
         """)
-        create_btn.clicked.connect(self._on_create_team_click)
-        layout.addWidget(create_btn)
+        self._invite_input.setMaxLength(10)
+        code_row.addWidget(self._invite_input, 1)
 
-        # Status label for errors
-        layout.addSpacing(8)
+        join_btn = QPushButton("Join")
+        join_btn.setCursor(Qt.PointingHandCursor)
+        join_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
+                border-radius: 6px; padding: 6px 14px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+            QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
+        """)
+        join_btn.clicked.connect(self._on_join_code_click)
+        self._join_btn = join_btn
+        code_row.addWidget(join_btn)
+        layout.addLayout(code_row)
+
+        # Status label for errors / pending
+        layout.addSpacing(6)
         self._onboarding_status = QLabel("")
         self._onboarding_status.setAlignment(Qt.AlignCenter)
         self._onboarding_status.setWordWrap(True)
@@ -621,6 +652,193 @@ class FloatingPanel(QWidget):
         layout.addWidget(self._onboarding_status)
 
         return frame
+
+    def set_available_teams(self, teams):
+        """Populate the lobby team list on the onboarding screen.
+        teams: [{id, name, created_by}, ...]
+        """
+        # Clear existing items
+        while self._lobby_layout.count() > 0:
+            item = self._lobby_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not teams:
+            empty = QLabel("No teams yet — create one!")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
+            self._lobby_layout.addWidget(empty)
+            self._lobby_layout.addStretch()
+            return
+
+        for team in teams:
+            row = QFrame()
+            row.setStyleSheet(f"""
+                QFrame {{ background: transparent; border-radius: 4px; }}
+                QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(6, 3, 6, 3)
+            h.setSpacing(6)
+
+            name_lbl = QLabel(team["name"])
+            name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {DARK['TEXT']};")
+            h.addWidget(name_lbl, 1)
+
+            join_btn = QPushButton("Join")
+            join_btn.setCursor(Qt.PointingHandCursor)
+            join_btn.setFixedSize(50, 24)
+            join_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {DARK['ACCENT']}; color: white; border: none;
+                    border-radius: 4px; font-size: 10px; font-weight: 700;
+                }}
+                QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+                QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
+            """)
+            team_id = team["id"]
+            team_name = team["name"]
+            admin_id = team.get("created_by", "")
+            join_btn.clicked.connect(
+                lambda checked=False, tid=team_id, tn=team_name, aid=admin_id, btn=join_btn:
+                    self._on_lobby_join_click(tid, tn, aid, btn)
+            )
+            h.addWidget(join_btn)
+
+            self._lobby_layout.addWidget(row)
+
+        self._lobby_layout.addStretch()
+
+    def _on_lobby_join_click(self, team_id, team_name, admin_id, btn):
+        """User clicked 'Join' on a team in the lobby."""
+        if not self._get_onboarding_name():
+            return
+        # Emit name first
+        self.name_change_requested.emit(self._onboarding_name_input.text().strip())
+        # Disable the button and show pending state
+        btn.setText("...")
+        btn.setEnabled(False)
+        self._onboarding_status.setText(f"Requesting to join {team_name}...")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
+        self._onboarding_status.setVisible(True)
+        self.request_to_join.emit(team_id, team_name, admin_id)
+
+    def show_join_pending(self, team_name):
+        """Show waiting-for-admin message on onboarding."""
+        self._onboarding_status.setText(f"Waiting for {team_name} admin to accept...")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
+        self._onboarding_status.setVisible(True)
+
+    def show_join_declined(self):
+        """Show declined message on onboarding, re-enable join buttons."""
+        self._onboarding_status.setText("Request declined. Try another team or create one.")
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
+        self._onboarding_status.setVisible(True)
+        # Re-enable all lobby join buttons
+        if hasattr(self, '_lobby_container'):
+            for i in range(self._lobby_layout.count()):
+                item = self._lobby_layout.itemAt(i)
+                if item and item.widget():
+                    for child in item.widget().findChildren(QPushButton):
+                        child.setText("Join")
+                        child.setEnabled(True)
+
+    def show_join_request_failed(self, reason=""):
+        """Show error when join request couldn't be sent."""
+        msg = reason or "Could not send request. Try again or use an invite code."
+        self._onboarding_status.setText(msg)
+        self._onboarding_status.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
+        self._onboarding_status.setVisible(True)
+        # Re-enable lobby buttons
+        if hasattr(self, '_lobby_container'):
+            for i in range(self._lobby_layout.count()):
+                item = self._lobby_layout.itemAt(i)
+                if item and item.widget():
+                    for child in item.widget().findChildren(QPushButton):
+                        child.setText("Join")
+                        child.setEnabled(True)
+
+    def show_join_request(self, request_id, requester_name):
+        """Show admin notification: someone wants to join your team."""
+        # Store the request_id for accept/decline
+        self._active_join_request_id = request_id
+        self._active_join_requester_id = None  # Will be set from main.py context
+
+        # Reuse the incoming banner area but with join request content
+        if not hasattr(self, '_join_request_banner'):
+            self._join_request_banner = self._build_join_request_banner()
+            self._root.insertWidget(4, self._join_request_banner)  # After message banner
+
+        self._join_req_name.setText(f"{requester_name}")
+        self._join_req_sub.setText("wants to join your team")
+        self._join_request_banner.setVisible(True)
+        self._resize_panel()
+
+    def hide_join_request(self):
+        """Hide the join request notification banner."""
+        if hasattr(self, '_join_request_banner'):
+            self._join_request_banner.setVisible(False)
+            self._resize_panel()
+
+    def _build_join_request_banner(self):
+        """Build the admin join request notification banner."""
+        banner = QFrame()
+        banner.setStyleSheet(f"""
+            background: rgba(42, 191, 191, 0.15);
+            border-bottom: 1px solid {DARK['BORDER']};
+        """)
+
+        v = QVBoxLayout(banner)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(6)
+
+        top = QHBoxLayout()
+        orb = SmallOrb(DARK['TEAL'], 10)
+        top.addWidget(orb)
+
+        info = QVBoxLayout()
+        self._join_req_name = QLabel("")
+        self._join_req_name.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {DARK['TEAL']};")
+        info.addWidget(self._join_req_name)
+        self._join_req_sub = QLabel("wants to join your team")
+        self._join_req_sub.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
+        info.addWidget(self._join_req_sub)
+        top.addLayout(info, 1)
+        v.addLayout(top)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        accept_btn = QPushButton("Accept")
+        accept_btn.setCursor(Qt.PointingHandCursor)
+        accept_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
+                border-radius: 8px; padding: 6px 16px; font-weight: 600; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+        """)
+        accept_btn.clicked.connect(lambda: self.join_request_accepted.emit(
+            getattr(self, '_active_join_request_id', '')))
+        btns.addWidget(accept_btn, 1)
+
+        decline_btn = QPushButton("Decline")
+        decline_btn.setCursor(Qt.PointingHandCursor)
+        decline_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['DANGER']};
+                border: 1px solid rgba(229,57,53,0.3);
+                border-radius: 8px; padding: 6px 16px; font-weight: 600; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: rgba(229,57,53,0.12); }}
+        """)
+        decline_btn.clicked.connect(lambda: self.join_request_declined.emit(
+            getattr(self, '_active_join_request_id', ''),
+            getattr(self, '_active_join_requester_id', '')))
+        btns.addWidget(decline_btn, 1)
+
+        v.addLayout(btns)
+        return banner
 
     def _get_onboarding_name(self):
         """Get the name from the onboarding input, or None if empty."""
@@ -685,7 +903,8 @@ class FloatingPanel(QWidget):
             # Emit name change
             self.name_change_requested.emit(self._onboarding_name_input.text().strip())
         from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "Create Team", "Team name:")
+        # Use None parent to avoid macOS tool-window z-order issues
+        name, ok = QInputDialog.getText(None, "Create Team", "Team name:")
         if ok and name.strip():
             self.create_team_requested.emit(name.strip())
 
@@ -705,8 +924,8 @@ class FloatingPanel(QWidget):
         if not has_teams:
             self._is_onboarding = True
             self._disconn_bar.setVisible(False)
-            # Lock the height for the full onboarding form
-            self.setFixedHeight(450)
+            # Lock the height for the full onboarding form (taller for lobby list)
+            self.setFixedHeight(500)
             return
 
         # Leaving onboarding — clear height lock
@@ -735,9 +954,20 @@ class FloatingPanel(QWidget):
                                is_admin=False, add_callback=None, remove_callback=None):
         """Show team info dialog. All members see code + members, admins can add/remove."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
-        dlg = QDialog(self)
+        dlg = QDialog()  # No parent — avoids macOS tool-window z-order issues
+        dlg.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle(team_name)
         dlg.setFixedWidth(320)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background: {DARK['BG']}; color: {DARK['TEXT']}; }}
+            QLabel {{ color: {DARK['TEXT']}; }}
+            QListWidget {{ background: {DARK['BG_RAISED']}; color: {DARK['TEXT']}; border: 1px solid {DARK['BORDER']}; border-radius: 6px; }}
+            QListWidget::item {{ padding: 4px 8px; }}
+            QListWidget::item:selected {{ background: {DARK['BG_HOVER']}; }}
+            QLineEdit {{ background: {DARK['BG_RAISED']}; color: {DARK['TEXT']}; border: 1px solid {DARK['BORDER']}; border-radius: 4px; padding: 4px 8px; }}
+            QPushButton {{ background: {DARK['BG_RAISED']}; color: {DARK['TEXT']}; border: 1px solid {DARK['BORDER']}; border-radius: 4px; padding: 6px 12px; }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
         layout = QVBoxLayout(dlg)
 
         # Invite code display
@@ -1694,8 +1924,8 @@ class FloatingPanel(QWidget):
         self._call_banner.setVisible(False)
         self._message_banner.setVisible(False)
         self._settings_view.setVisible(True)
-        # Expand panel to fit settings content (header + settings items)
-        self.setMinimumHeight(380)
+        # Expand panel to fit settings content (header + all settings items)
+        self.setMinimumHeight(500)
         self._resize_panel()
 
     def _close_settings(self):

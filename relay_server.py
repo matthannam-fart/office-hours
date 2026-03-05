@@ -281,6 +281,60 @@ def handle_presence_client(client_sock, client_addr):
                         except Exception:
                             pass
 
+            elif action == "JOIN_REQUEST":
+                # Lobby: requester wants to join a team — route to admin
+                admin_id = msg.get("admin_id")
+                requester_name = msg.get("requester_name", "Someone")
+                request_id = msg.get("request_id", "")
+                team_id = msg.get("team_id", "")
+
+                with presence_lock:
+                    admin = presence.get(admin_id)
+
+                if admin:
+                    try:
+                        send_json(admin["sock"], {
+                            "type": "JOIN_REQUEST",
+                            "request_id": request_id,
+                            "team_id": team_id,
+                            "requester_id": user_id,
+                            "requester_name": requester_name,
+                        })
+                        print(f"[Join] Routed request {request_id} from {user_id} to admin {admin_id}")
+                    except Exception as e:
+                        print(f"[Join] Could not notify admin: {e}")
+                        send_json(client_sock, {
+                            "type": "JOIN_REQUEST_FAILED",
+                            "reason": "Could not reach team admin",
+                        })
+                else:
+                    send_json(client_sock, {
+                        "type": "JOIN_REQUEST_FAILED",
+                        "reason": "Team admin is not online",
+                    })
+
+            elif action == "JOIN_RESPONSE":
+                # Admin responds to a join request — route back to requester
+                request_id = msg.get("request_id", "")
+                approved = msg.get("approved", False)
+                requester_id = msg.get("requester_id", "")
+
+                with presence_lock:
+                    requester = presence.get(requester_id)
+
+                if requester:
+                    try:
+                        send_json(requester["sock"], {
+                            "type": "JOIN_RESPONSE",
+                            "request_id": request_id,
+                            "approved": approved,
+                        })
+                        print(f"[Join] Sent {'approved' if approved else 'declined'} for {request_id} to {requester_id}")
+                    except Exception:
+                        print(f"[Join] Could not notify requester {requester_id}")
+                else:
+                    print(f"[Join] Requester {requester_id} not online for response")
+
     except Exception as e:
         print(f"[Presence] Error with {client_addr}: {e}")
     finally:

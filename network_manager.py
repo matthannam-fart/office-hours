@@ -765,6 +765,17 @@ class NetworkManager:
         except Exception as e:
             self._log(f"Reject connection failed: {e}")
 
+    def send_presence_message(self, msg_dict):
+        """Send an arbitrary JSON message on the presence socket."""
+        if not self.presence_connected or not self.presence_socket:
+            self._log("Cannot send presence message — not connected")
+            return
+        try:
+            data = json.dumps(msg_dict).encode('utf-8')
+            self._send_frame_on(self.presence_socket, data)
+        except Exception as e:
+            self._log(f"Presence send failed: {e}")
+
     def cancel_connection(self, target_user_id=None):
         """Cancel an outgoing connection request"""
         if not self.presence_connected or not self.presence_socket:
@@ -807,6 +818,15 @@ class NetworkManager:
                         self.presence_callback(msg)
 
                 elif msg_type == "CONNECTION_REJECTED":
+                    if self.presence_callback:
+                        self.presence_callback(msg)
+
+                elif msg_type == "CONNECTION_CANCELLED":
+                    if self.presence_callback:
+                        self.presence_callback(msg)
+
+                elif msg_type in ("JOIN_REQUEST", "JOIN_RESPONSE", "JOIN_REQUEST_FAILED"):
+                    # Lobby join request/response — forward to main.py
                     if self.presence_callback:
                         self.presence_callback(msg)
 
