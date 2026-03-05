@@ -177,6 +177,11 @@ class IntercomApp(QObject):
         self._join_request_failed_signal.connect(self._handle_join_request_failed)
         self._show_manage_dialog_signal.connect(self._show_manage_team_dialog)
         self._available_teams_signal.connect(self._set_available_teams)
+
+        # Lobby refresh timer — polls available teams every 10s while lobby is showing
+        self._lobby_refresh_timer = QTimer(self)
+        self._lobby_refresh_timer.setInterval(10_000)  # 10 seconds
+        self._lobby_refresh_timer.timeout.connect(self._refresh_lobby_teams)
         self._switch_to_team_signal.connect(self._switch_to_team_view)
         self._join_pending_signal.connect(lambda name: self.panel.show_join_pending(name))
 
@@ -1049,6 +1054,7 @@ class IntercomApp(QObject):
         """Called on main thread when Supabase teams are loaded.
         Always shows lobby on launch so user picks their team."""
         self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
+        self._lobby_refresh_timer.start()  # Start polling for new teams
 
     @Slot(list)
     def _set_available_teams(self, data):
@@ -1059,6 +1065,21 @@ class IntercomApp(QObject):
             self.panel.set_available_teams(available, my_teams=my_teams)
         else:
             self.panel.set_available_teams(data)
+
+    def _refresh_lobby_teams(self):
+        """Poll Supabase for updated team list while lobby is showing."""
+        import threading
+        def _do_refresh():
+            try:
+                all_teams = supabase_client.get_all_teams() or []
+                my_teams = supabase_client.get_my_teams(self.user_id) or []
+                self.my_teams = my_teams
+                my_ids = {t["id"] for t in my_teams}
+                available = [t for t in all_teams if t["id"] not in my_ids]
+                self._available_teams_signal.emit([available, my_teams])
+            except Exception:
+                pass  # Silently skip — will retry next interval
+        threading.Thread(target=_do_refresh, daemon=True).start()
 
     @Slot(str)
     def _on_team_changed(self, team_id):
@@ -1116,6 +1137,7 @@ class IntercomApp(QObject):
     def _switch_to_team_view(self):
         """Thread-safe transition from lobby to team view.
         Called via signal from background threads after create/join/approve."""
+        self._lobby_refresh_timer.stop()  # Stop polling — user picked a team
         self.panel.set_teams(self.my_teams, self.active_team_id)
 
     @Slot(str)
