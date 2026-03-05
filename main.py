@@ -54,6 +54,7 @@ class IntercomApp(QObject):
     _join_response_signal = Signal(str, bool)          # request_id, approved
     _join_request_failed_signal = Signal(str)           # reason
     _show_manage_dialog_signal = Signal(list)             # members list — thread-safe bounce
+    _available_teams_signal = Signal(list)                  # lobby teams — thread-safe bounce
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -173,6 +174,7 @@ class IntercomApp(QObject):
         self._join_response_signal.connect(self._handle_join_response)
         self._join_request_failed_signal.connect(self._handle_join_request_failed)
         self._show_manage_dialog_signal.connect(self._show_manage_team_dialog)
+        self._available_teams_signal.connect(self._set_available_teams)
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -540,10 +542,10 @@ class IntercomApp(QObject):
             if not self.my_teams:
                 try:
                     all_teams = supabase_client.get_all_teams()
-                    # Filter out any teams user is already in (shouldn't be any, but be safe)
                     my_ids = {t["id"] for t in self.my_teams}
                     available = [t for t in (all_teams or []) if t["id"] not in my_ids]
-                    QTimer.singleShot(0, lambda: self.panel.set_available_teams(available))
+                    print(f"[DEBUG] Lobby: {len(available)} teams available")
+                    self._available_teams_signal.emit(available)
                 except Exception as e:
                     self.log_signal.emit(f"Could not load available teams: {e}")
         except Exception as e:
@@ -655,18 +657,21 @@ class IntercomApp(QObject):
         """Update the panel user list from presence data, filtered by active team."""
         self.online_users = {}
         panel_users = []
+        print(f"[DEBUG] Presence update: {len(users)} users, my team={self.active_team_id!r}")
 
         for user in users:
             uid = user.get("user_id", "")
             name = user.get("name", "Unknown")
             mode = user.get("mode", "GREEN")
             team_id = user.get("team_id", "")
+            print(f"[DEBUG]   user={name!r} team={team_id!r} mode={mode}")
             self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": team_id}
             # Don't show the peer we're currently in a call with — they're in the call banner
             if uid == self._connected_peer_id:
                 continue
             # Filter by active team — only show users in the same team
             if self.active_team_id and team_id != self.active_team_id:
+                print(f"[DEBUG]   -> FILTERED OUT (team mismatch)")
                 continue
             panel_users.append({
                 'id': uid,
@@ -1056,6 +1061,12 @@ class IntercomApp(QObject):
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded."""
         self.panel.set_teams(self.my_teams, self.active_team_id)
+
+    @Slot(list)
+    def _set_available_teams(self, teams):
+        """Called on main thread to populate the lobby with available teams."""
+        print(f"[DEBUG] _set_available_teams: {len(teams)} teams")
+        self.panel.set_available_teams(teams)
 
     @Slot(str)
     def _on_team_changed(self, team_id):
