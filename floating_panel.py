@@ -1669,6 +1669,7 @@ class FloatingPanel(QWidget):
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
         self._user_section.setVisible(False)
+        self._conn_bar.setVisible(False)  # Call banner replaces connection bar
         # Update PTT to show who you're talking to
         self._call_peer_name = caller_name
         if not self._is_open_line:
