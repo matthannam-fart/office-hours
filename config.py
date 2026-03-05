@@ -12,7 +12,7 @@ CHUNK_SIZE = 480      # ~30 ms per frame at 16 kHz (good latency/overhead balanc
 DTYPE = 'int16'       # Audio data type
 
 # Remote / Relay Configuration
-RELAY_HOST = os.environ.get('TALKBACK_RELAY_HOST', 'ohinter.com')
+RELAY_HOST = os.environ.get('TALKBACK_RELAY_HOST', '165.22.175.71')
 RELAY_PORT = int(os.environ.get('TALKBACK_RELAY_PORT', 50002))
 
 # TLS Configuration
