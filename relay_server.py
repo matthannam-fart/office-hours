@@ -58,7 +58,7 @@ def cleanup_rate_limits():
 
 # ── Presence Registry ────────────────────────────────────────────
 
-presence = {}          # user_id -> {"name": str, "mode": str, "sock": socket, "addr": tuple}
+presence = {}          # user_id -> {"name": str, "mode": str, "team_id": str, "sock": socket, "addr": tuple}
 presence_lock = threading.Lock()
 
 def broadcast_presence():
@@ -71,7 +71,8 @@ def broadcast_presence():
                 "user_id": uid,
                 "name": info["name"],
                 "mode": info["mode"],
-                "room": info.get("room", "")
+                "room": info.get("room", ""),
+                "team_id": info.get("team_id", ""),
             })
 
         msg = json.dumps({"type": "PRESENCE_UPDATE", "users": user_list}).encode('utf-8')
@@ -143,11 +144,13 @@ def handle_presence_client(client_sock, client_addr):
                 user_id = msg.get("user_id", "unknown")
                 name = msg.get("name", "Unknown")
                 mode = msg.get("mode", "GREEN")
+                team_id = msg.get("team_id", "")
 
                 with presence_lock:
                     presence[user_id] = {
                         "name": name,
                         "mode": mode,
+                        "team_id": team_id,
                         "sock": client_sock,
                         "addr": client_addr
                     }
@@ -159,11 +162,14 @@ def handle_presence_client(client_sock, client_addr):
             elif action == "MODE_UPDATE":
                 mode = msg.get("mode", "GREEN")
                 room_code = msg.get("room", "")
+                team_id = msg.get("team_id")  # None means no change
                 with presence_lock:
                     if user_id and user_id in presence:
                         presence[user_id]["mode"] = mode
                         presence[user_id]["room"] = room_code
-                print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else ""))
+                        if team_id is not None:
+                            presence[user_id]["team_id"] = team_id
+                print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else "") + (f" team={team_id}" if team_id else ""))
                 broadcast_presence()
 
             elif action == "CONNECT_TO":
@@ -552,11 +558,13 @@ def handle_client(client_sock, client_addr, udp_sock):
             user_id = msg.get("user_id", "unknown")
             name = msg.get("name", "Unknown")
             mode = msg.get("mode", "GREEN")
+            team_id = msg.get("team_id", "")
 
             with presence_lock:
                 presence[user_id] = {
                     "name": name,
                     "mode": mode,
+                    "team_id": team_id,
                     "sock": client_sock,
                     "addr": client_addr
                 }

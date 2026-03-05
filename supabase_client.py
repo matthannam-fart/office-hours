@@ -1,0 +1,190 @@
+"""
+supabase_client.py — Lightweight Supabase REST client for Office Hours teams.
+
+Uses only urllib (no pip dependencies). Wraps PostgREST API for:
+  - User profiles (upsert on launch)
+  - Teams (CRUD)
+  - Team membership (admin-managed)
+"""
+
+import json
+import urllib.request
+import urllib.error
+import urllib.parse
+from config import SUPABASE_URL, SUPABASE_ANON_KEY, log
+
+
+def _headers(extra=None):
+    """Standard Supabase REST headers."""
+    h = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    if extra:
+        h.update(extra)
+    return h
+
+
+def _request(method, path, body=None, headers_extra=None, params=None):
+    """Make an HTTP request to the Supabase PostgREST API."""
+    url = f"{SUPABASE_URL}/rest/v1/{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
+
+    data = json.dumps(body).encode("utf-8") if body else None
+    hdrs = _headers(headers_extra)
+
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else []
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        log.warning(f"Supabase {method} {path} → {e.code}: {error_body}")
+        return None
+    except Exception as e:
+        log.warning(f"Supabase request failed: {e}")
+        return None
+
+
+# ── Profiles ─────────────────────────────────────────────────────
+
+def ensure_profile(user_id: str, display_name: str):
+    """Upsert the user's profile on app launch."""
+    result = _request(
+        "POST", "profiles",
+        body={"id": user_id, "display_name": display_name},
+        headers_extra={
+            "Prefer": "return=representation,resolution=merge-duplicates",
+        },
+    )
+    if result:
+        log.info(f"Profile synced for {display_name}")
+    return result
+
+
+def lookup_users(name_query: str):
+    """Search profiles by display_name (case-insensitive partial match)."""
+    return _request(
+        "GET", "profiles",
+        params={"display_name": f"ilike.*{name_query}*", "select": "id,display_name"},
+    ) or []
+
+
+# ── Teams ────────────────────────────────────────────────────────
+
+def get_my_teams(user_id: str):
+    """Fetch all teams the user belongs to, with their role."""
+    # Uses a PostgREST embedded join: team_members → teams
+    result = _request(
+        "GET", "team_members",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "role,teams(id,name)",
+        },
+    )
+    if not result:
+        return []
+    teams = []
+    for row in result:
+        team_info = row.get("teams")
+        if team_info:
+            teams.append({
+                "id": team_info["id"],
+                "name": team_info["name"],
+                "role": row.get("role", "member"),
+            })
+    return teams
+
+
+def get_team_members(team_id: str):
+    """Get all members of a team with their profiles."""
+    result = _request(
+        "GET", "team_members",
+        params={
+            "team_id": f"eq.{team_id}",
+            "select": "role,user_id,profiles(id,display_name)",
+        },
+    )
+    if not result:
+        return []
+    members = []
+    for row in result:
+        profile = row.get("profiles")
+        if profile:
+            members.append({
+                "user_id": profile["id"],
+                "display_name": profile["display_name"],
+                "role": row.get("role", "member"),
+            })
+    return members
+
+
+def create_team(name: str, creator_id: str):
+    """Create a new team. The creator becomes the admin."""
+    # 1. Insert the team
+    team = _request(
+        "POST", "teams",
+        body={"name": name, "created_by": creator_id},
+    )
+    if not team or not isinstance(team, list) or len(team) == 0:
+        return None
+    team_record = team[0]
+    team_id = team_record["id"]
+
+    # 2. Add the creator as admin member
+    _request(
+        "POST", "team_members",
+        body={"team_id": team_id, "user_id": creator_id, "role": "admin"},
+    )
+    log.info(f"Created team '{name}' (id={team_id})")
+    return team_record
+
+
+def add_member(team_id: str, user_id: str):
+    """Add a user to a team as a regular member."""
+    result = _request(
+        "POST", "team_members",
+        body={"team_id": team_id, "user_id": user_id, "role": "member"},
+        headers_extra={
+            "Prefer": "return=representation,resolution=merge-duplicates",
+        },
+    )
+    if result:
+        log.info(f"Added {user_id} to team {team_id}")
+    return result
+
+
+def remove_member(team_id: str, user_id: str):
+    """Remove a user from a team."""
+    result = _request(
+        "DELETE", "team_members",
+        params={
+            "team_id": f"eq.{team_id}",
+            "user_id": f"eq.{user_id}",
+        },
+    )
+    log.info(f"Removed {user_id} from team {team_id}")
+    return result
+
+
+def leave_team(team_id: str, user_id: str):
+    """User leaves a team (same as remove but self-initiated)."""
+    return remove_member(team_id, user_id)
+
+
+def delete_team(team_id: str):
+    """Delete a team and all memberships."""
+    # Delete memberships first (cascade may handle this, but be explicit)
+    _request(
+        "DELETE", "team_members",
+        params={"team_id": f"eq.{team_id}"},
+    )
+    _request(
+        "DELETE", "teams",
+        params={"id": f"eq.{team_id}"},
+    )
+    log.info(f"Deleted team {team_id}")

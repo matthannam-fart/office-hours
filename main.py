@@ -17,7 +17,11 @@ from network_manager import NetworkManager
 from audio_manager import AudioManager
 from stream_deck_manager import StreamDeckHandler
 from discovery_manager import DiscoveryManager
-from user_settings import get_display_name, set_display_name, get_user_id, get_ptt_hotkey, _config_dir
+from user_settings import (get_display_name, set_display_name, get_user_id,
+                          get_ptt_hotkey, _config_dir,
+                          get_active_team, set_active_team,
+                          get_active_team_name, set_active_team_name)
+import supabase_client
 from hotkey_manager import HotkeyManager
 from floating_panel import FloatingPanel, create_oh_icon
 from ui_constants import COLORS
@@ -45,6 +49,7 @@ class IntercomApp(QObject):
     hotkey_release_signal = Signal()                 # global PTT released
     mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
     speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
+    _teams_loaded_signal = Signal()                   # Supabase teams loaded (internal)
 
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
@@ -77,6 +82,11 @@ class IntercomApp(QObject):
         # User identity
         self.display_name = get_display_name()
         self.user_id = get_user_id()
+
+        # Team state
+        self.active_team_id = get_active_team() or ""
+        self.active_team_name = get_active_team_name() or ""
+        self.my_teams = []  # [{id, name, role}, ...] loaded from Supabase
 
         # Managers
         self.network = NetworkManager(self.handle_network_message, log_callback=self.log_signal.emit)
@@ -154,6 +164,7 @@ class IntercomApp(QObject):
         self.hotkey_release_signal.connect(self.on_talk_release)
         self.mic_level_signal.connect(self.panel.set_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
+        self._teams_loaded_signal.connect(self._on_teams_loaded)
 
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
@@ -181,6 +192,9 @@ class IntercomApp(QObject):
         self.panel.incognito_toggled.connect(self._on_incognito_toggle)
         self.panel.dark_mode_toggled.connect(self._on_dark_mode_toggle)
         self.panel.name_change_requested.connect(self._on_name_changed)
+        self.panel.team_changed.connect(self._on_team_changed)
+        self.panel.create_team_requested.connect(self._on_create_team)
+        self.panel.manage_team_requested.connect(self._on_manage_team)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -451,9 +465,37 @@ class IntercomApp(QObject):
 
     def _auto_connect_presence(self):
         time.sleep(1)
+
+        # Sync profile and load teams from Supabase
+        try:
+            supabase_client.ensure_profile(self.user_id, self.display_name)
+            teams = supabase_client.get_my_teams(self.user_id)
+            if teams:
+                self.my_teams = teams
+                # If no active team set, pick the first one
+                if not self.active_team_id:
+                    self.active_team_id = teams[0]["id"]
+                    self.active_team_name = teams[0]["name"]
+                    set_active_team(self.active_team_id)
+                    set_active_team_name(self.active_team_name)
+                else:
+                    # Verify active team is still valid
+                    valid_ids = {t["id"] for t in teams}
+                    if self.active_team_id not in valid_ids:
+                        self.active_team_id = teams[0]["id"]
+                        self.active_team_name = teams[0]["name"]
+                        set_active_team(self.active_team_id)
+                        set_active_team_name(self.active_team_name)
+                # Update panel team selector
+                self._teams_loaded_signal.emit()
+            self.log_signal.emit(f"Supabase: {len(teams)} team(s) loaded")
+        except Exception as e:
+            self.log_signal.emit(f"Supabase sync: {e}")
+
         try:
             success = self.network.connect_presence(
-                RELAY_HOST, RELAY_PORT, self.display_name, self.user_id, self.mode
+                RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
+                self.mode, self.active_team_id,
             )
             if success:
                 self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
@@ -531,7 +573,7 @@ class IntercomApp(QObject):
 
     @Slot(list)
     def _update_online_users(self, users):
-        """Update the panel user list from presence data."""
+        """Update the panel user list from presence data, filtered by active team."""
         self.online_users = {}
         panel_users = []
 
@@ -539,9 +581,13 @@ class IntercomApp(QObject):
             uid = user.get("user_id", "")
             name = user.get("name", "Unknown")
             mode = user.get("mode", "GREEN")
-            self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", "")}
+            team_id = user.get("team_id", "")
+            self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": team_id}
             # Don't show the peer we're currently in a call with — they're in the call banner
             if uid == self._connected_peer_id:
+                continue
+            # Filter by active team — only show users in the same team
+            if self.active_team_id and team_id != self.active_team_id:
                 continue
             panel_users.append({
                 'id': uid,
@@ -896,6 +942,127 @@ class IntercomApp(QObject):
             self.discovery.start_browsing()
         except Exception as e:
             self.log(f"Could not re-register service: {e}")
+
+    # ── Team Management ─────────────────────────────────────────
+
+    @Slot()
+    def _on_teams_loaded(self):
+        """Called on main thread when Supabase teams are loaded."""
+        self.panel.set_teams(self.my_teams, self.active_team_id)
+
+    @Slot(str)
+    def _on_team_changed(self, team_id):
+        """User selected a different team from the dropdown."""
+        if team_id == self.active_team_id:
+            return
+        self.active_team_id = team_id
+        # Find team name
+        for t in self.my_teams:
+            if t["id"] == team_id:
+                self.active_team_name = t["name"]
+                break
+        set_active_team(team_id)
+        set_active_team_name(self.active_team_name)
+        self.log(f"Switched to team: {self.active_team_name}")
+        # Notify relay so presence broadcast includes new team_id
+        self.network.update_presence_team(team_id)
+        # Re-filter the user list with existing presence data
+        self._refilter_online_users()
+
+    def _refilter_online_users(self):
+        """Re-filter and display online users based on current team."""
+        panel_users = []
+        for uid, info in self.online_users.items():
+            if uid == self._connected_peer_id:
+                continue
+            if self.active_team_id and info.get("team_id", "") != self.active_team_id:
+                continue
+            panel_users.append({
+                'id': uid,
+                'name': info["name"],
+                'mode': info["mode"],
+                'has_message': False,
+            })
+        self.panel.set_users(panel_users)
+
+    @Slot(str)
+    def _on_create_team(self, team_name):
+        """Create a new team (runs on background thread)."""
+        def _do_create():
+            result = supabase_client.create_team(team_name, self.user_id)
+            if result:
+                self.log_signal.emit(f"Created team: {team_name}")
+                # Reload teams
+                teams = supabase_client.get_my_teams(self.user_id)
+                if teams:
+                    self.my_teams = teams
+                    self.active_team_id = result["id"]
+                    self.active_team_name = team_name
+                    set_active_team(self.active_team_id)
+                    set_active_team_name(self.active_team_name)
+                    self.network.update_presence_team(self.active_team_id)
+                    self._teams_loaded_signal.emit()
+            else:
+                self.log_signal.emit(f"Failed to create team: {team_name}")
+        threading.Thread(target=_do_create, daemon=True).start()
+
+    @Slot()
+    def _on_manage_team(self):
+        """Open team management dialog (admin only)."""
+        if not self.active_team_id:
+            return
+        # Check if current user is admin of active team
+        role = "member"
+        for t in self.my_teams:
+            if t["id"] == self.active_team_id:
+                role = t.get("role", "member")
+                break
+        if role != "admin":
+            self.log("Only team admins can manage members")
+            return
+        # Fetch current members in background, then show dialog
+        def _fetch_and_show():
+            members = supabase_client.get_team_members(self.active_team_id)
+            # Emit to main thread
+            from PySide6.QtCore import QMetaObject, Q_ARG
+            QMetaObject.invokeMethod(
+                self, "_show_manage_team_dialog",
+                Qt.QueuedConnection,
+                Q_ARG(list, members),
+            )
+        threading.Thread(target=_fetch_and_show, daemon=True).start()
+
+    @Slot(list)
+    def _show_manage_team_dialog(self, members):
+        """Show team management dialog on the main thread."""
+        self.panel.show_manage_team_dialog(
+            self.active_team_name, self.active_team_id, members,
+            add_callback=self._add_team_member,
+            remove_callback=self._remove_team_member,
+        )
+
+    def _add_team_member(self, team_id, user_name):
+        """Add a member to a team by display name (background thread)."""
+        def _do_add():
+            users = supabase_client.lookup_users(user_name)
+            if not users:
+                self.log_signal.emit(f"No user found matching '{user_name}'")
+                return
+            # Use first match
+            target = users[0]
+            result = supabase_client.add_member(team_id, target["id"])
+            if result:
+                self.log_signal.emit(f"Added {target['display_name']} to team")
+            else:
+                self.log_signal.emit(f"Failed to add {user_name} to team")
+        threading.Thread(target=_do_add, daemon=True).start()
+
+    def _remove_team_member(self, team_id, user_id):
+        """Remove a member from a team (background thread)."""
+        def _do_remove():
+            supabase_client.remove_member(team_id, user_id)
+            self.log_signal.emit("Member removed from team")
+        threading.Thread(target=_do_remove, daemon=True).start()
 
     def _quit(self):
         self._cleanup_messages()

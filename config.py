@@ -22,6 +22,10 @@ RELAY_TLS = os.environ.get('TALKBACK_RELAY_TLS', '0').lower() in ('1', 'true', '
 # Path to custom CA cert (for self-signed relay). Empty = use system trust store (Let's Encrypt)
 RELAY_CA_CERT = os.environ.get('TALKBACK_RELAY_CA_CERT', '')
 
+# Supabase Configuration (teams / user management)
+SUPABASE_URL = os.environ.get('OFFICEHOURS_SUPABASE_URL', 'https://kfxiawqlboqnwzkxbyid.supabase.co')
+SUPABASE_ANON_KEY = os.environ.get('OFFICEHOURS_SUPABASE_KEY', 'sb_publishable_5zTaoo3rYTDpXv0gHN0c8g_PEkHyXIO')
+
 # Security Configuration
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB max voicemail file size
 MAX_FRAME_SIZE = 10 * 1024 * 1024  # 10MB max TCP frame size

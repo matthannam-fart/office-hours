@@ -620,13 +620,14 @@ class NetworkManager:
 
     # ── Presence Connection ──────────────────────────────────────
 
-    def connect_presence(self, relay_host, relay_port, display_name, user_id, mode="GREEN"):
+    def connect_presence(self, relay_host, relay_port, display_name, user_id, mode="GREEN", team_id=""):
         """Connect to the relay server's presence channel (with TLS if enabled)"""
         self.relay_host = relay_host
         self.relay_port = relay_port
         self.display_name = display_name
         self.user_id = user_id
         self._presence_mode = mode
+        self._presence_team_id = team_id
 
         try:
             raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -642,7 +643,8 @@ class NetworkManager:
                 "action": "REGISTER",
                 "name": display_name,
                 "user_id": user_id,
-                "mode": mode
+                "mode": mode,
+                "team_id": team_id,
             }).encode('utf-8')
             self._send_frame_on(self.presence_socket, reg_msg)
 
@@ -670,19 +672,28 @@ class NetworkManager:
                     pass
             return False
 
-    def update_presence_mode(self, mode, room_code=""):
-        """Notify the presence server of a mode change"""
+    def update_presence_mode(self, mode, room_code="", team_id=None):
+        """Notify the presence server of a mode/team change"""
         self._presence_mode = mode  # Track for reconnection
+        if team_id is not None:
+            self._presence_team_id = team_id
         if not self.presence_connected or not self.presence_socket:
             return
         try:
             payload = {"action": "MODE_UPDATE", "mode": mode}
             if room_code:
                 payload["room"] = room_code
+            if team_id is not None:
+                payload["team_id"] = team_id
             msg = json.dumps(payload).encode('utf-8')
             self._send_frame_on(self.presence_socket, msg)
         except Exception as e:
             self._log(f"Presence mode update failed: {e}")
+
+    def update_presence_team(self, team_id):
+        """Switch the user's active team without changing mode."""
+        self._presence_team_id = team_id
+        self.update_presence_mode(self._presence_mode, team_id=team_id)
 
     def connect_to_user(self, target_user_id):
         """Request a connection to a specific online user via presence"""
@@ -816,7 +827,8 @@ class NetworkManager:
                 success = self.connect_presence(
                     self.relay_host, self.relay_port,
                     self.display_name, self.user_id,
-                    self._presence_mode
+                    self._presence_mode,
+                    getattr(self, '_presence_team_id', ''),
                 )
                 if success:
                     self._log("Presence reconnected")

@@ -73,6 +73,9 @@ class FloatingPanel(QWidget):
     audio_input_changed = Signal(object)   # device index or None
     audio_output_changed = Signal(object)  # device index or None
     name_change_requested = Signal(str)    # new display name
+    team_changed = Signal(str)             # team_id
+    create_team_requested = Signal(str)    # team_name
+    manage_team_requested = Signal()       # open team management
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,6 +193,11 @@ class FloatingPanel(QWidget):
         self._disconn_bar = self._build_disconn_bar()
         self._disconn_bar.setVisible(False)
         root.addWidget(self._disconn_bar)
+
+        # ── Team Selector ────────────────────────────────────
+        self._team_bar = self._build_team_bar()
+        self._team_bar.setVisible(False)  # Hidden until teams are loaded
+        root.addWidget(self._team_bar)
 
         # ── User List ─────────────────────────────────────────
         self._user_section = self._build_user_section()
@@ -396,6 +404,162 @@ class FloatingPanel(QWidget):
         h.addWidget(self.menu_btn)
 
         return bar
+
+    # ── Team Selector Bar ────────────────────────────────────────
+    def _build_team_bar(self):
+        bar = QFrame()
+        bar.setStyleSheet("border: none;")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(14, 6, 14, 2)
+        h.setSpacing(6)
+
+        lbl = QLabel("TEAM")
+        lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        h.addWidget(lbl)
+
+        self._team_combo = QComboBox()
+        self._team_combo.setStyleSheet("""
+            QComboBox {
+                background: #f0eeeb; border: 1px solid #ddd; border-radius: 6px;
+                padding: 3px 8px; font-size: 12px; color: #333; min-width: 120px;
+            }
+            QComboBox::drop-down {
+                border: none; width: 20px;
+            }
+            QComboBox QAbstractItemView {
+                background: white; border: 1px solid #ddd; border-radius: 4px;
+                selection-background-color: #e8e6e3;
+            }
+        """)
+        self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
+        h.addWidget(self._team_combo, 1)
+
+        # Manage button (gear icon) — only shown for admins
+        self._team_manage_btn = QPushButton("⚙")
+        self._team_manage_btn.setFixedSize(24, 24)
+        self._team_manage_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: none; font-size: 14px; color: #888;
+            }
+            QPushButton:hover { color: #333; }
+        """)
+        self._team_manage_btn.setToolTip("Manage Team")
+        self._team_manage_btn.clicked.connect(self.manage_team_requested.emit)
+        self._team_manage_btn.setVisible(False)
+        h.addWidget(self._team_manage_btn)
+
+        # + button to create a new team
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(24, 24)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; border: 1px solid #ccc; border-radius: 12px;
+                font-size: 16px; font-weight: bold; color: #888;
+            }
+            QPushButton:hover { background: #e8e6e3; color: #333; }
+        """)
+        add_btn.setToolTip("Create Team")
+        add_btn.clicked.connect(self._on_create_team_click)
+        h.addWidget(add_btn)
+
+        return bar
+
+    def _on_team_combo_changed(self, index):
+        if index < 0:
+            return
+        team_id = self._team_combo.itemData(index)
+        if team_id:
+            self.team_changed.emit(team_id)
+            # Show manage button only if admin
+            role = self._team_combo.itemData(index, Qt.UserRole + 1)
+            self._team_manage_btn.setVisible(role == "admin")
+
+    def _on_create_team_click(self):
+        """Prompt for a team name and emit create signal."""
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Create Team", "Team name:")
+        if ok and name.strip():
+            self.create_team_requested.emit(name.strip())
+
+    def set_teams(self, teams, active_team_id=""):
+        """Update the team dropdown with available teams.
+        teams: [{id, name, role}, ...]
+        """
+        self._team_combo.blockSignals(True)
+        self._team_combo.clear()
+        active_index = 0
+        for i, team in enumerate(teams):
+            self._team_combo.addItem(team["name"], team["id"])
+            # Store the role as UserRole + 1
+            self._team_combo.setItemData(i, team.get("role", "member"), Qt.UserRole + 1)
+            if team["id"] == active_team_id:
+                active_index = i
+        self._team_combo.setCurrentIndex(active_index)
+        self._team_combo.blockSignals(False)
+        self._team_bar.setVisible(len(teams) > 0)
+        # Show manage button if admin of current team
+        if teams and active_index < len(teams):
+            self._team_manage_btn.setVisible(teams[active_index].get("role") == "admin")
+        self.adjustSize()
+
+    def show_manage_team_dialog(self, team_name, team_id, members, add_callback=None, remove_callback=None):
+        """Show a dialog to manage team members."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Manage: {team_name}")
+        dlg.setFixedWidth(300)
+        layout = QVBoxLayout(dlg)
+
+        # Members list
+        layout.addWidget(QLabel("Members:"))
+        member_list = QListWidget()
+        for m in members:
+            item = QListWidgetItem(f"{m['display_name']} ({m['role']})")
+            item.setData(Qt.UserRole, m["user_id"])
+            item.setData(Qt.UserRole + 1, m["role"])
+            member_list.addItem(item)
+        layout.addWidget(member_list)
+
+        # Remove button
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.setStyleSheet("background: #e53935; color: white; border: none; border-radius: 4px; padding: 6px;")
+        def _on_remove():
+            item = member_list.currentItem()
+            if item:
+                uid = item.data(Qt.UserRole)
+                role = item.data(Qt.UserRole + 1)
+                if role == "admin":
+                    return  # Can't remove admin
+                if remove_callback:
+                    remove_callback(team_id, uid)
+                member_list.takeItem(member_list.row(item))
+        remove_btn.clicked.connect(_on_remove)
+        layout.addWidget(remove_btn)
+
+        # Add member section
+        layout.addWidget(QLabel("Add member by name:"))
+        add_row = QHBoxLayout()
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Display name...")
+        add_row.addWidget(name_input, 1)
+        add_btn = QPushButton("Add")
+        add_btn.setStyleSheet("background: #4caf50; color: white; border: none; border-radius: 4px; padding: 6px 12px;")
+        def _on_add():
+            name = name_input.text().strip()
+            if name and add_callback:
+                add_callback(team_id, name)
+                member_list.addItem(f"{name} (member)")
+                name_input.clear()
+        add_btn.clicked.connect(_on_add)
+        add_row.addWidget(add_btn)
+        layout.addLayout(add_row)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
 
     # ── User Section ──────────────────────────────────────────────
     def _build_user_section(self):

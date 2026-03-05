@@ -92,6 +92,28 @@ def set_ptt_hotkey(key_name):
     settings["ptt_hotkey"] = key_name
     save_settings(settings)
 
+# ── Active Team ──────────────────────────────────────────────
+
+def get_active_team():
+    """Get the active team ID, or None if no team selected."""
+    return load_settings().get("active_team_id")
+
+def set_active_team(team_id):
+    """Set the active team ID."""
+    settings = load_settings()
+    settings["active_team_id"] = team_id
+    save_settings(settings)
+
+def get_active_team_name():
+    """Get the active team name (cached locally for display)."""
+    return load_settings().get("active_team_name")
+
+def set_active_team_name(name):
+    """Cache the active team name locally."""
+    settings = load_settings()
+    settings["active_team_name"] = name
+    save_settings(settings)
+
 # ── Trusted Peers (TOFU) ─────────────────────────────────────
 
 def get_trusted_peers():
