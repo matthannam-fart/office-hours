@@ -76,6 +76,7 @@ class FloatingPanel(QWidget):
     team_changed = Signal(str)             # team_id
     create_team_requested = Signal(str)    # team_name
     manage_team_requested = Signal()       # open team management
+    join_code_requested = Signal(str)      # invite_code — user wants to join a team
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -196,8 +197,13 @@ class FloatingPanel(QWidget):
 
         # ── Team Selector ────────────────────────────────────
         self._team_bar = self._build_team_bar()
-        self._team_bar.setVisible(True)  # Always visible so user can create first team
+        self._team_bar.setVisible(False)  # Hidden until teams loaded
         root.addWidget(self._team_bar)
+
+        # ── Onboarding (shown when no teams) ─────────────────
+        self._onboarding = self._build_onboarding()
+        self._onboarding.setVisible(False)
+        root.addWidget(self._onboarding)
 
         # ── User List ─────────────────────────────────────────
         self._user_section = self._build_user_section()
@@ -464,6 +470,158 @@ class FloatingPanel(QWidget):
 
         return bar
 
+    # ── Onboarding (no teams yet) ────────────────────────────
+    def _build_onboarding(self):
+        """First-launch screen: set your name + enter invite code or create a team."""
+        frame = QFrame()
+        frame.setStyleSheet("border: none;")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        # Title
+        title = QLabel("Welcome to Office Hours")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #333;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Set your name, then join a team or start a new one.")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("font-size: 11px; color: #888;")
+        layout.addWidget(subtitle)
+
+        # ── Name input ──
+        name_lbl = QLabel("YOUR NAME")
+        name_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        layout.addWidget(name_lbl)
+
+        self._onboarding_name_input = QLineEdit()
+        self._onboarding_name_input.setPlaceholderText("Display name")
+        self._onboarding_name_input.setStyleSheet("""
+            QLineEdit {
+                background: white; border: 1px solid #ccc; border-radius: 8px;
+                padding: 8px 12px; font-size: 13px; color: #333;
+            }
+            QLineEdit:focus { border-color: #4caf50; }
+        """)
+        self._onboarding_name_input.setMaxLength(30)
+        layout.addWidget(self._onboarding_name_input)
+
+        # Spacer
+        layout.addSpacing(4)
+
+        # ── Invite code section ──
+        code_lbl = QLabel("INVITE CODE")
+        code_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #aaa; letter-spacing: 1px;")
+        layout.addWidget(code_lbl)
+
+        self._invite_input = QLineEdit()
+        self._invite_input.setPlaceholderText("e.g. OH-7X3K5")
+        self._invite_input.setAlignment(Qt.AlignCenter)
+        self._invite_input.setStyleSheet("""
+            QLineEdit {
+                background: white; border: 1px solid #ccc; border-radius: 8px;
+                padding: 10px 14px; font-size: 15px; font-weight: 600;
+                letter-spacing: 2px; color: #333;
+            }
+            QLineEdit:focus { border-color: #4caf50; }
+        """)
+        self._invite_input.setMaxLength(10)
+        layout.addWidget(self._invite_input)
+
+        # Join button
+        join_btn = QPushButton("Join Team")
+        join_btn.setStyleSheet("""
+            QPushButton {
+                background: #4caf50; color: white; border: none; border-radius: 8px;
+                padding: 10px; font-size: 13px; font-weight: 600;
+            }
+            QPushButton:hover { background: #43a047; }
+            QPushButton:disabled { background: #ccc; }
+        """)
+        join_btn.clicked.connect(self._on_join_code_click)
+        self._join_btn = join_btn
+        layout.addWidget(join_btn)
+
+        # Divider
+        divider_row = QHBoxLayout()
+        line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet("color: #ddd;")
+        line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet("color: #ddd;")
+        or_lbl = QLabel("or")
+        or_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+        or_lbl.setAlignment(Qt.AlignCenter)
+        divider_row.addWidget(line_l, 1)
+        divider_row.addWidget(or_lbl)
+        divider_row.addWidget(line_r, 1)
+        layout.addLayout(divider_row)
+
+        # Create team button
+        create_btn = QPushButton("Create a New Team")
+        create_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #4caf50; border: 1px solid #4caf50;
+                border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600;
+            }
+            QPushButton:hover { background: rgba(76, 175, 80, 0.08); }
+        """)
+        create_btn.clicked.connect(self._on_create_team_click)
+        layout.addWidget(create_btn)
+
+        # Status label for errors
+        self._onboarding_status = QLabel("")
+        self._onboarding_status.setAlignment(Qt.AlignCenter)
+        self._onboarding_status.setWordWrap(True)
+        self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+        self._onboarding_status.setVisible(False)
+        layout.addWidget(self._onboarding_status)
+
+        return frame
+
+    def _get_onboarding_name(self):
+        """Get the name from the onboarding input, or None if empty."""
+        name = self._onboarding_name_input.text().strip()
+        if not name:
+            self._onboarding_status.setText("Please enter your name first.")
+            self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+            self._onboarding_status.setVisible(True)
+            return None
+        return name
+
+    def get_onboarding_name(self):
+        """Public getter for the name entered on the onboarding screen."""
+        return self._onboarding_name_input.text().strip()
+
+    def set_onboarding_name(self, name):
+        """Pre-fill the onboarding name field (e.g. if user already has a saved name)."""
+        self._onboarding_name_input.setText(name)
+
+    def _on_join_code_click(self):
+        """User submitted an invite code."""
+        if not self._get_onboarding_name():
+            return
+        code = self._invite_input.text().strip().upper()
+        if not code:
+            self._onboarding_status.setText("Please enter an invite code.")
+            self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+            self._onboarding_status.setVisible(True)
+            return
+        # Emit the name change first
+        self.name_change_requested.emit(self._onboarding_name_input.text().strip())
+        self._onboarding_status.setText("Joining...")
+        self._onboarding_status.setStyleSheet("font-size: 11px; color: #888;")
+        self._onboarding_status.setVisible(True)
+        self._join_btn.setEnabled(False)
+        self.join_code_requested.emit(code)
+
+    @Slot(str)
+    def set_onboarding_error(self, message):
+        """Show an error on the onboarding screen."""
+        self._onboarding_status.setText(message)
+        self._onboarding_status.setStyleSheet("font-size: 11px; color: #e53935;")
+        self._onboarding_status.setVisible(True)
+        self._join_btn.setEnabled(True)
+
     def _on_team_combo_changed(self, index):
         if index < 0:
             return
@@ -476,6 +634,12 @@ class FloatingPanel(QWidget):
 
     def _on_create_team_click(self):
         """Prompt for a team name and emit create signal."""
+        # If onboarding is visible, validate the display name first
+        if self._onboarding.isVisible():
+            if not self._get_onboarding_name():
+                return
+            # Emit name change
+            self.name_change_requested.emit(self._onboarding_name_input.text().strip())
         from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, "Create Team", "Team name:")
         if ok and name.strip():
@@ -483,32 +647,63 @@ class FloatingPanel(QWidget):
 
     def set_teams(self, teams, active_team_id=""):
         """Update the team dropdown with available teams.
-        teams: [{id, name, role}, ...]
+        teams: [{id, name, invite_code, role}, ...]
+        If no teams, show onboarding instead.
         """
+        has_teams = bool(teams)
+
+        # Toggle onboarding vs normal UI
+        self._onboarding.setVisible(not has_teams)
+        self._team_bar.setVisible(has_teams)
+        self._user_section.setVisible(has_teams)
+        self._ptt_bar.setVisible(has_teams)
+
+        if not has_teams:
+            self.adjustSize()
+            return
+
         self._team_combo.blockSignals(True)
         self._team_combo.clear()
         active_index = 0
         for i, team in enumerate(teams):
             self._team_combo.addItem(team["name"], team["id"])
-            # Store the role as UserRole + 1
+            # Store the role as UserRole + 1, invite_code as UserRole + 2
             self._team_combo.setItemData(i, team.get("role", "member"), Qt.UserRole + 1)
+            self._team_combo.setItemData(i, team.get("invite_code", ""), Qt.UserRole + 2)
             if team["id"] == active_team_id:
                 active_index = i
         self._team_combo.setCurrentIndex(active_index)
         self._team_combo.blockSignals(False)
-        self._team_bar.setVisible(True)  # Always show — "+" button needed even with 0 teams
         # Show manage button if admin of current team
-        if teams and active_index < len(teams):
+        if active_index < len(teams):
             self._team_manage_btn.setVisible(teams[active_index].get("role") == "admin")
         self.adjustSize()
 
-    def show_manage_team_dialog(self, team_name, team_id, members, add_callback=None, remove_callback=None):
+    def show_manage_team_dialog(self, team_name, team_id, members, invite_code="", add_callback=None, remove_callback=None):
         """Show a dialog to manage team members."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Manage: {team_name}")
-        dlg.setFixedWidth(300)
+        dlg.setFixedWidth(320)
         layout = QVBoxLayout(dlg)
+
+        # Invite code display
+        if invite_code:
+            code_frame = QFrame()
+            code_frame.setStyleSheet("background: #f0f7f0; border: 1px solid #c8e6c9; border-radius: 8px;")
+            code_layout = QVBoxLayout(code_frame)
+            code_layout.setContentsMargins(12, 10, 12, 10)
+            code_lbl = QLabel("Invite Code")
+            code_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #888; letter-spacing: 1px; border: none;")
+            code_layout.addWidget(code_lbl, alignment=Qt.AlignCenter)
+            code_val = QLabel(invite_code)
+            code_val.setStyleSheet("font-size: 18px; font-weight: 700; color: #2e7d32; letter-spacing: 3px; border: none;")
+            code_val.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            code_layout.addWidget(code_val, alignment=Qt.AlignCenter)
+            hint = QLabel("Share this code so others can join")
+            hint.setStyleSheet("font-size: 10px; color: #999; border: none;")
+            code_layout.addWidget(hint, alignment=Qt.AlignCenter)
+            layout.addWidget(code_frame)
 
         # Members list
         layout.addWidget(QLabel("Members:"))

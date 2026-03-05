@@ -135,9 +135,9 @@ class IntercomApp(QObject):
         self.panel.set_mode(self.mode)
         self.panel.set_connection(False)
 
-        # Prompt for name on first launch
-        if not self.display_name:
-            self._prompt_for_name()
+        # Pre-fill onboarding name if we have one saved
+        if self.display_name:
+            self.panel.set_onboarding_name(self.display_name)
 
         self.panel.set_display_name(self.display_name or "Office Hours")
 
@@ -170,8 +170,12 @@ class IntercomApp(QObject):
         self.log("System Ready. Scanning for peers...")
 
         # Auto-connect to presence if relay host is configured
-        if RELAY_HOST and self.display_name:
-            threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+        if RELAY_HOST:
+            if self.display_name:
+                threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+            else:
+                # No name yet — show onboarding immediately, connect after setup
+                self._teams_loaded_signal.emit()
 
     # ── Panel Signal Wiring ───────────────────────────────────────
     def _connect_panel_signals(self):
@@ -195,6 +199,7 @@ class IntercomApp(QObject):
         self.panel.team_changed.connect(self._on_team_changed)
         self.panel.create_team_requested.connect(self._on_create_team)
         self.panel.manage_team_requested.connect(self._on_manage_team)
+        self.panel.join_code_requested.connect(self._on_join_code)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -985,10 +990,26 @@ class IntercomApp(QObject):
             })
         self.panel.set_users(panel_users)
 
+    def _ensure_presence_connected(self):
+        """Ensure Supabase profile exists and presence server is connected.
+        Call from background threads after onboarding sets a name."""
+        supabase_client.ensure_profile(self.user_id, self.display_name)
+        if not self.network._presence_sock:
+            try:
+                success = self.network.connect_presence(
+                    RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
+                    self.mode, self.active_team_id,
+                )
+                if success:
+                    self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
+            except Exception as e:
+                self.log_signal.emit(f"Presence connect failed: {e}")
+
     @Slot(str)
     def _on_create_team(self, team_name):
         """Create a new team (runs on background thread)."""
         def _do_create():
+            self._ensure_presence_connected()
             result = supabase_client.create_team(team_name, self.user_id)
             if result:
                 self.log_signal.emit(f"Created team: {team_name}")
@@ -1005,6 +1026,35 @@ class IntercomApp(QObject):
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()
+
+    @Slot(str)
+    def _on_join_code(self, invite_code):
+        """User entered an invite code to join a team."""
+        def _do_join():
+            self._ensure_presence_connected()
+            result = supabase_client.join_team_by_code(invite_code, self.user_id)
+            if result:
+                self.log_signal.emit(f"Joined team: {result['name']}")
+                # Reload teams
+                teams = supabase_client.get_my_teams(self.user_id)
+                if teams:
+                    self.my_teams = teams
+                    self.active_team_id = result["id"]
+                    self.active_team_name = result["name"]
+                    set_active_team(self.active_team_id)
+                    set_active_team_name(self.active_team_name)
+                    self.network.update_presence_team(self.active_team_id)
+                    self._teams_loaded_signal.emit()
+            else:
+                self.log_signal.emit(f"Invalid invite code: {invite_code}")
+                # Show error on onboarding screen (must happen on main thread)
+                from PySide6.QtCore import QMetaObject, Q_ARG
+                QMetaObject.invokeMethod(
+                    self.panel, "set_onboarding_error",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, "Invalid invite code. Please check and try again."),
+                )
+        threading.Thread(target=_do_join, daemon=True).start()
 
     @Slot()
     def _on_manage_team(self):
@@ -1035,8 +1085,15 @@ class IntercomApp(QObject):
     @Slot(list)
     def _show_manage_team_dialog(self, members):
         """Show team management dialog on the main thread."""
+        # Get invite code for current team
+        invite_code = ""
+        for t in self.my_teams:
+            if t["id"] == self.active_team_id:
+                invite_code = t.get("invite_code", "")
+                break
         self.panel.show_manage_team_dialog(
             self.active_team_name, self.active_team_id, members,
+            invite_code=invite_code,
             add_callback=self._add_team_member,
             remove_callback=self._remove_team_member,
         )
