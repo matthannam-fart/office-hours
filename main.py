@@ -593,12 +593,19 @@ class IntercomApp(QObject):
 
         elif msg_type == "JOIN_REQUEST":
             # Admin received a join request from lobby
-            self._join_request_signal.emit(
-                msg.get("request_id", ""),
-                msg.get("team_id", ""),
-                msg.get("requester_name", "Someone"),
-                msg.get("requester_id", ""),
-            )
+            request_id = msg.get("request_id", "")
+            requester_id = msg.get("requester_id", "")
+            team_id = msg.get("team_id", "")
+            requester_name = msg.get("requester_name", "Someone")
+
+            # Fallback: if relay didn't send requester_id, look it up from Supabase
+            if not requester_id and request_id:
+                jr = supabase_client.get_join_request(request_id)
+                if jr:
+                    requester_id = jr.get("requester_id", "")
+                    team_id = team_id or jr.get("team_id", "")
+
+            self._join_request_signal.emit(request_id, team_id, requester_name, requester_id)
 
         elif msg_type == "JOIN_RESPONSE":
             # Requester received a response from admin

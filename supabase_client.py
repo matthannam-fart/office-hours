@@ -264,6 +264,20 @@ def decline_join_request(request_id: str, admin_id: str):
     )
 
 
+def get_join_request(request_id: str):
+    """Look up a join request by ID. Used as fallback when relay doesn't send requester_id."""
+    result = _request(
+        "GET", "join_requests",
+        params={
+            "id": f"eq.{request_id}",
+            "select": "id,team_id,requester_id,status",
+        },
+    )
+    if result and isinstance(result, list) and len(result) > 0:
+        return result[0]
+    return None
+
+
 def delete_team(team_id: str):
     """Delete a team and all memberships."""
     # Delete memberships first (cascade may handle this, but be explicit)
