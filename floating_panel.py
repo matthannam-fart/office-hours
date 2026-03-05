@@ -196,7 +196,7 @@ class FloatingPanel(QWidget):
 
         # ── Team Selector ────────────────────────────────────
         self._team_bar = self._build_team_bar()
-        self._team_bar.setVisible(False)  # Hidden until teams are loaded
+        self._team_bar.setVisible(True)  # Always visible so user can create first team
         root.addWidget(self._team_bar)
 
         # ── User List ─────────────────────────────────────────
@@ -496,7 +496,7 @@ class FloatingPanel(QWidget):
                 active_index = i
         self._team_combo.setCurrentIndex(active_index)
         self._team_combo.blockSignals(False)
-        self._team_bar.setVisible(len(teams) > 0)
+        self._team_bar.setVisible(True)  # Always show — "+" button needed even with 0 teams
         # Show manage button if admin of current team
         if teams and active_index < len(teams):
             self._team_manage_btn.setVisible(teams[active_index].get("role") == "admin")

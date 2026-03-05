@@ -470,8 +470,8 @@ class IntercomApp(QObject):
         try:
             supabase_client.ensure_profile(self.user_id, self.display_name)
             teams = supabase_client.get_my_teams(self.user_id)
+            self.my_teams = teams or []
             if teams:
-                self.my_teams = teams
                 # If no active team set, pick the first one
                 if not self.active_team_id:
                     self.active_team_id = teams[0]["id"]
@@ -486,9 +486,9 @@ class IntercomApp(QObject):
                         self.active_team_name = teams[0]["name"]
                         set_active_team(self.active_team_id)
                         set_active_team_name(self.active_team_name)
-                # Update panel team selector
-                self._teams_loaded_signal.emit()
-            self.log_signal.emit(f"Supabase: {len(teams)} team(s) loaded")
+            # Always update panel team selector (even with 0 teams, shows "+" button)
+            self._teams_loaded_signal.emit()
+            self.log_signal.emit(f"Supabase: {len(self.my_teams)} team(s) loaded")
         except Exception as e:
             self.log_signal.emit(f"Supabase sync: {e}")
 
