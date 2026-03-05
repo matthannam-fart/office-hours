@@ -71,6 +71,7 @@ class IntercomApp(QObject):
         self.pending_from_id = None
         self.active_room_code = None   # Internal relay session ID for active call
         self._pre_call_mode = None     # Mode before entering a call (restored on disconnect)
+        self._connected_peer_id = None # User ID of peer we're in a call with
 
 
         # User identity
@@ -402,6 +403,7 @@ class IntercomApp(QObject):
         self.audio.stop_streaming()  # Stop any active stream (PTT or open line)
         self._clear_busy()
         self.peer_talking = False
+        self._connected_peer_id = None  # Clear so they reappear in user list
         self.network.disconnect()
         self.panel.set_connection(False)
         self.panel.hide_call()
@@ -499,16 +501,18 @@ class IntercomApp(QObject):
         if success:
             self.active_room_code = room_code  # Internal tracking only
 
-            # Determine peer name for UI
+            # Determine peer name and ID for UI
             if role == "creator":
                 target_name = "Peer"
-                if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
-                    target_name = self.online_users[self._calling_user_id].get("name", "Peer")
+                self._connected_peer_id = getattr(self, '_calling_user_id', None)
+                if self._connected_peer_id and self._connected_peer_id in self.online_users:
+                    target_name = self.online_users[self._connected_peer_id].get("name", "Peer")
                 self.call_connected_signal.emit(target_name)
             elif role == "joiner":
                 caller_name = "Peer"
-                if hasattr(self, 'pending_from_id') and self.pending_from_id in self.online_users:
-                    caller_name = self.online_users[self.pending_from_id].get("name", "Peer")
+                self._connected_peer_id = self.pending_from_id
+                if self._connected_peer_id and self._connected_peer_id in self.online_users:
+                    caller_name = self.online_users[self._connected_peer_id].get("name", "Peer")
                 self.call_connected_signal.emit(caller_name)
 
             self._start_open_line_if_ready()
@@ -536,6 +540,9 @@ class IntercomApp(QObject):
             name = user.get("name", "Unknown")
             mode = user.get("mode", "GREEN")
             self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", "")}
+            # Don't show the peer we're currently in a call with — they're in the call banner
+            if uid == self._connected_peer_id:
+                continue
             panel_users.append({
                 'id': uid,
                 'name': name,
@@ -772,6 +779,7 @@ class IntercomApp(QObject):
             self.audio.stop_streaming()
             self._clear_busy()
             self.peer_talking = False
+            self._connected_peer_id = None
             self.network.disconnect()
             self.panel.set_connection(False)
             self.panel.hide_call()
