@@ -8,7 +8,7 @@ import threading
 
 # Default PTT key — F24 is unused on most keyboards, safe default.
 # Users can rebind to any key via settings.
-DEFAULT_PTT_KEY = 'f13'
+DEFAULT_PTT_KEY = '`'
 
 # Map of friendly names → pynput key references
 _SPECIAL_KEYS = {}

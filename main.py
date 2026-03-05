@@ -201,6 +201,7 @@ class IntercomApp(QObject):
         self.panel.create_team_requested.connect(self._on_create_team)
         self.panel.manage_team_requested.connect(self._on_manage_team)
         self.panel.join_code_requested.connect(self._on_join_code)
+        self.panel.leave_team_requested.connect(self._on_leave_team)
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
@@ -1140,16 +1141,10 @@ class IntercomApp(QObject):
         # Fetch current members in background, then show dialog
         def _fetch_and_show():
             members = supabase_client.get_team_members(self.active_team_id)
-            # Emit to main thread
-            from PySide6.QtCore import QMetaObject, Q_ARG
-            QMetaObject.invokeMethod(
-                self, "_show_manage_team_dialog",
-                Qt.QueuedConnection,
-                Q_ARG(list, members),
-            )
+            # Bounce to main thread via QTimer (avoids Q_ARG type issues)
+            QTimer.singleShot(0, lambda: self._show_manage_team_dialog(members))
         threading.Thread(target=_fetch_and_show, daemon=True).start()
 
-    @Slot(list)
     def _show_manage_team_dialog(self, members):
         """Show team management dialog on the main thread."""
         # Get invite code for current team
@@ -1187,6 +1182,35 @@ class IntercomApp(QObject):
             supabase_client.remove_member(team_id, user_id)
             self.log_signal.emit("Member removed from team")
         threading.Thread(target=_do_remove, daemon=True).start()
+
+    def _on_leave_team(self):
+        """User wants to leave the current team."""
+        if not self.active_team_id:
+            return
+        team_id = self.active_team_id
+        team_name = self.active_team_name
+
+        def _do_leave():
+            supabase_client.leave_team(team_id, self.user_id)
+            self.log_signal.emit(f"Left team: {team_name}")
+            # Remove from local list
+            self.my_teams = [t for t in self.my_teams if t["id"] != team_id]
+            if self.my_teams:
+                # Switch to the first remaining team
+                self.active_team_id = self.my_teams[0]["id"]
+                self.active_team_name = self.my_teams[0]["name"]
+                set_active_team(self.active_team_id)
+                set_active_team_name(self.active_team_name)
+                self.network.update_presence_team(self.active_team_id)
+            else:
+                # No teams left — clear state
+                self.active_team_id = ""
+                self.active_team_name = ""
+                set_active_team("")
+                set_active_team_name("")
+            # Update UI on main thread
+            QTimer.singleShot(0, lambda: self.panel.set_teams(self.my_teams, self.active_team_id))
+        threading.Thread(target=_do_leave, daemon=True).start()
 
     def _quit(self):
         self._cleanup_messages()

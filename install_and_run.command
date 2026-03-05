@@ -178,7 +178,35 @@ if [ -d "venv" ]; then
     xattr -rd com.apple.quarantine venv/ 2>/dev/null || true
 fi
 
-# ── Step 6: Launch ──
+# ── Step 6: Check Accessibility permissions (needed for global PTT hotkey) ──
+# We use a small AppleScript trick to test if we have Accessibility access.
+# If not, we open the right System Settings pane and let the user know.
+if ! ./venv/bin/python -c "
+import subprocess, sys
+result = subprocess.run(
+    ['osascript', '-e', 'tell application \"System Events\" to keystroke \"\"'],
+    capture_output=True, timeout=5
+)
+sys.exit(0 if result.returncode == 0 else 1)
+" 2>/dev/null; then
+    echo ""
+    echo "──────────────────────────────────────────"
+    echo "  Push-to-Talk needs Accessibility access"
+    echo "──────────────────────────────────────────"
+    echo ""
+    echo "  The global PTT hotkey (backtick key) needs"
+    echo "  Accessibility permissions to work system-wide."
+    echo ""
+    echo "  Opening System Settings → Accessibility..."
+    echo "  Add 'Terminal' (or your terminal app) to the list."
+    echo ""
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    echo "  Once added, Office Hours will launch with PTT enabled."
+    echo ""
+    read -p "  Press Enter to continue launching..."
+fi
+
+# ── Step 7: Launch ──
 echo ""
 echo "Starting Office Hours..."
 echo "============================================"

@@ -1,104 +1,88 @@
-# Office Hours — LAN & Remote Intercom
+# Office Hours — Team Intercom
 
-A walkie-talkie style intercom app for two users — works on the same LAN or across the internet.
+A push-to-talk intercom for teams. Sits in your menu bar, lets you talk to your team instantly — like a walkie-talkie for your desktop.
 
-## Quick Start
+## Install
 
 ### macOS
-Double-click `install_and_run.command`  
-*(If blocked by Gatekeeper: Right-click → Open → Open)*
+
+1. Download from [ohinter.com](https://ohinter.com) (passphrase required)
+2. Unzip and open the folder
+3. Double-click **`install_and_run.command`**
+
+The first time macOS will block it. To fix:
+
+1. Double-click `install_and_run.command` — a warning appears, click **Done**
+2. Open **System Settings → Privacy & Security**
+3. Scroll down, find "install_and_run.command was blocked" → click **Open Anyway**
+4. Enter your password if prompted
+
+That's it. The script handles everything else: Python, dependencies, audio drivers, and permissions. After the first run, just double-click to launch.
+
+### Push-to-Talk Hotkey
+
+The global PTT hotkey (backtick key) needs Accessibility permissions. The installer will detect this and open the right settings pane automatically. Add **Terminal** (or whichever terminal app you use) to the Accessibility list.
 
 ### Windows
-Double-click `install_and_run.bat`  
-*(Requires Python 3.9+ with "Add to PATH" checked during install)*
 
-### Manual
+Double-click `install_and_run.bat` (requires Python 3.10+ with "Add to PATH" checked during install).
+
+### Manual Setup
+
 ```bash
 python3 -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
+source venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
 
+## Getting Started
+
+When you first launch, you'll see the onboarding screen:
+
+1. **Enter your name** — this is how your team sees you
+2. **Join a team** with an invite code (e.g. `OH-7X3K5`), or **create a new team**
+
+Once you're on a team, the app connects to the presence server and shows who's online.
+
 ## How It Works
 
-Both users run the app on their own machine. Connect via:
-- **LAN tab** — Auto-discovers peers on the same network, or enter an IP manually
-- **Remote tab** — Connect through a relay server using a room code (works across the internet)
+### Status Modes
 
-### Three Modes
+Click the mode button in the header to cycle through:
 
-| Your Mode | What Happens When Someone Talks To You |
-|-----------|----------------------------------------|
-| 🟢 **GREEN** | You hear them live (walkie-talkie) |
-| 🟡 **YELLOW** | Their message is recorded for you (answering machine) |
-| 🔴 **RED** | They're told you're unavailable (do not disturb) |
+| Mode | What Happens When Someone Contacts You |
+|------|----------------------------------------|
+| **Green** (Available) | Auto-connects — instant intercom, no ringing |
+| **Yellow** (Busy) | They send a page — you accept or decline |
+| **Red** (DND) | They can leave a voice message |
 
-### Controls
+### Talking
 
-| Button | Action |
-|--------|--------|
-| **HOLD TO TALK** | Press and hold to transmit |
-| **ANSWER PAGE** | Play back a recorded message |
-| **CYCLE MODE** | Switch between Green → Yellow → Red |
-| **DISCONNECT** | End the current session |
+| Action | How |
+|--------|-----|
+| **Hold to Talk** | Hold the PTT button in the panel, or hold the **backtick** key (`` ` ``) anywhere on your system |
+| **Page All** | Hold the Page All button to record a message sent to everyone on the team |
+| **Hotline** | Toggle in the header — always-on hot mic, no button holding needed |
 
-## Remote Connection
+### Teams
 
-For users on different networks (home ↔ office, two cities, etc.).
+Teams are private groups. Create a team, get an invite code, share it with your people. To find your invite code: open settings (···) → **Copy Invite Code**.
 
-### 1. Deploy the Relay Server
+Anyone with the code can join. Admins can manage members via the ⚙ button next to the team dropdown.
 
-Run `relay_server.py` on any machine with a public IP:
-
-```bash
-# On your server / VPS
-python relay_server.py --port 50002
-```
-
-The relay server has **zero dependencies** — just Python 3.
-
-### 2. Connect
-
-**User A (creates the room):**
-1. Open the **🌐 Remote** tab
-2. Enter the relay server address (e.g., `relay.example.com`)
-3. Click **Create Room** — a room code appears (e.g., `OH-7X3K`)
-4. Share the room code with User B
-
-**User B (joins the room):**
-1. Open the **🌐 Remote** tab
-2. Enter the same relay server address
-3. Type in the room code
-4. Click **Join Room**
-
-Both users are now connected and can talk just like on a LAN.
-
-### Relay Server Options
-
-```
-python relay_server.py --help
-  --port PORT   TCP/UDP port (default: 50002)
-  --host HOST   Bind address (default: 0.0.0.0)
-```
-
-You can also pre-configure the relay address via environment variables:
-```bash
-export TALKBACK_RELAY_HOST=relay.example.com
-export TALKBACK_RELAY_PORT=50002
-```
-
-## Stream Deck (Optional)
-
-If an Elgato Stream Deck is connected, keys 0-2 mirror the on-screen controls with color-coded feedback.
+To leave a team: settings (···) → **Leave Team**.
 
 ## Network
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 50000 | TCP | Control messages & file transfer (LAN mode) |
-| 50001 | UDP | Live audio streaming (LAN mode) |
-| 50002 | TCP+UDP | Relay server (remote mode) |
+| 50000 | TCP | Control messages & file transfer (LAN) |
+| 50001 | UDP | Live audio streaming (LAN) |
+| 50002 | TCP+UDP | Presence & relay server (remote) |
 
-- **LAN mode**: Auto-discovery via Zeroconf/Bonjour
-- **Remote mode**: Both clients make outbound connections — no port forwarding needed on client side
+LAN discovery uses Zeroconf/Bonjour. Remote connections go through the relay server — no port forwarding needed on the client side.
+
+## Stream Deck (Optional)
+
+If an Elgato Stream Deck is connected, hardware keys mirror the on-screen controls with color-coded feedback.

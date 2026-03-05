@@ -86,6 +86,7 @@ class FloatingPanel(QWidget):
     create_team_requested = Signal(str)    # team_name
     manage_team_requested = Signal()       # open team management
     join_code_requested = Signal(str)      # invite_code — user wants to join a team
+    leave_team_requested = Signal()        # user wants to leave current team
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1244,10 +1245,14 @@ class FloatingPanel(QWidget):
         """Toggle hotline state."""
         self._is_open_line = is_on
         self.open_toggle.set_on(is_on)
+        in_call = getattr(self, '_call_peer_name', None)
         if is_on:
             self.ptt_btn.setText("●  Hotline")
             self.ptt_mode_label.setText("Hotline — always-on hot mic.")
             self.ptt_mode_label.setVisible(True)
+        elif in_call:
+            self.ptt_btn.setText(f"●  Talking to {in_call}")
+            self.ptt_mode_label.setVisible(False)
         else:
             self.ptt_btn.setText("●  Hold to Talk")
             self.ptt_mode_label.setVisible(False)
@@ -1605,6 +1610,27 @@ class FloatingPanel(QWidget):
         div3.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
         layout.addWidget(div3)
 
+        # ── Copy Invite Code ──
+        copy_code_btn = QPushButton("Copy Invite Code")
+        copy_code_btn.setCursor(Qt.PointingHandCursor)
+        copy_code_btn.setStyleSheet(row_style)
+        copy_code_btn.clicked.connect(lambda: self._copy_invite_code())
+        layout.addWidget(copy_code_btn)
+
+        # ── Leave Team ──
+        leave_team_btn = QPushButton("Leave Team")
+        leave_team_btn.setCursor(Qt.PointingHandCursor)
+        leave_team_btn.setStyleSheet(f"""
+            QPushButton {{
+                text-align: left; padding: 8px 12px; font-size: 13px;
+                font-weight: 500; color: {DARK['WARN']}; background: transparent;
+                border: none; border-radius: 8px;
+            }}
+            QPushButton:hover {{ background: rgba(230,175,0,0.10); }}
+        """)
+        leave_team_btn.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
+        layout.addWidget(leave_team_btn)
+
         # ── Quit ──
         quit_btn = QPushButton("Quit OH")
         quit_btn.setCursor(Qt.PointingHandCursor)
@@ -1696,6 +1722,30 @@ class FloatingPanel(QWidget):
             self._display_name = name.strip()
             self._update_pinned_style()
             self.name_change_requested.emit(self._display_name)
+
+    def _copy_invite_code(self):
+        """Copy the current team's invite code to the clipboard."""
+        idx = self._team_combo.currentIndex()
+        if idx < 0:
+            return
+        code = self._team_combo.itemData(idx, Qt.UserRole + 2)  # invite_code stored at UserRole+2
+        if code:
+            QApplication.clipboard().setText(code)
+            # Brief visual feedback — swap button text
+            self._close_settings()
+
+    def _confirm_leave_team(self):
+        """Ask user to confirm leaving the current team."""
+        from PySide6.QtWidgets import QMessageBox
+        team_name = self._team_combo.currentText() if self._team_combo.count() > 0 else "this team"
+        reply = QMessageBox.question(
+            self, "Leave Team",
+            f"Leave \"{team_name}\"?\n\nYou'll need an invite code to rejoin.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.leave_team_requested.emit()
 
     def _toggle_incognito(self):
         self._incognito = not self._incognito
