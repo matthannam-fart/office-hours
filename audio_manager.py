@@ -133,9 +133,12 @@ class AudioManager:
         with self._stream_lock:
             if self.streaming:
                 return
+            # Wait for any previous stream thread to fully exit before starting
+            if hasattr(self, 'stream_thread') and self.stream_thread.is_alive():
+                self.stream_thread.join(timeout=2.0)
             self.streaming = True
-        self.stream_thread = threading.Thread(target=self._stream_mic, daemon=True)
-        self.stream_thread.start()
+            self.stream_thread = threading.Thread(target=self._stream_mic, daemon=True)
+            self.stream_thread.start()
 
     def stop_streaming(self):
         self.streaming = False

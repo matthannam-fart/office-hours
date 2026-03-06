@@ -524,6 +524,15 @@ class NetworkManager:
                     self._log(f"Accepted plaintext connection from {addr}")
 
                 with self._conn_lock:
+                    # Don't clobber an active relay connection with a LAN probe
+                    if self.connected and self.relay_mode:
+                        self._log(f"Ignoring LAN connection from {addr} — relay session active")
+                        try:
+                            client.close()
+                        except:
+                            pass
+                        continue
+
                     # Close any existing connection
                     if self.connected and self.tcp_socket:
                         self._log(f"Replacing stale connection with new from {addr}")
