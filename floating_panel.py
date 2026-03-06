@@ -409,88 +409,60 @@ class FloatingPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Team selector (combo)
-        team_frame = QFrame()
-        team_frame.setStyleSheet("border: none;")
-        tf = QVBoxLayout(team_frame)
-        tf.setContentsMargins(12, 8, 12, 8)
-        tf.setSpacing(8)
+        # Scrollable team list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        lbl = QLabel("CURRENT TEAM")
-        lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
-        tf.addWidget(lbl)
+        container = QWidget()
+        self._teams_list_layout = QVBoxLayout(container)
+        self._teams_list_layout.setContentsMargins(10, 6, 10, 6)
+        self._teams_list_layout.setSpacing(4)
+        self._teams_list_layout.addStretch()
 
-        self._team_combo = QComboBox()
-        self._team_combo.setStyleSheet(f"""
-            QComboBox {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 8px; padding: 6px 10px; font-size: 13px;
-                color: {DARK['TEXT']}; font-weight: 500;
-            }}
-            QComboBox:hover {{ border-color: {DARK['TEXT_FAINT']}; }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
-            QComboBox::down-arrow {{ image: none; border: none; }}
-            QComboBox QAbstractItemView {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                color: {DARK['TEXT']}; selection-background-color: {DARK['BG_HOVER']};
-            }}
-        """)
-        self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
-        tf.addWidget(self._team_combo)
+        scroll.setWidget(container)
+        v.addWidget(scroll, 1)
 
-        v.addWidget(team_frame)
-
-        # Divider
-        div = QFrame()
-        div.setFixedHeight(1)
-        div.setStyleSheet(f"background: {DARK['BORDER']};")
-        v.addWidget(div)
-
-        # Team actions
-        actions_frame = QFrame()
-        actions_frame.setStyleSheet("border: none;")
-        af = QVBoxLayout(actions_frame)
-        af.setContentsMargins(12, 8, 12, 8)
+        # ── Bottom actions ──
+        actions = QFrame()
+        actions.setStyleSheet(f"border: none; background: transparent;")
+        af = QVBoxLayout(actions)
+        af.setContentsMargins(10, 6, 10, 10)
         af.setSpacing(6)
 
-        # Invite code
+        # Hidden combo (still used for team switching logic elsewhere)
+        self._team_combo = QComboBox()
+        self._team_combo.setVisible(False)
+        self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
+        af.addWidget(self._team_combo)
+
+        # Hidden labels kept for compatibility
         self._invite_code_lbl = QLabel("")
-        self._invite_code_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
         self._invite_code_lbl.setVisible(False)
         af.addWidget(self._invite_code_lbl)
-
-        copy_code_btn = QPushButton("Copy Invite Code")
-        copy_code_btn.setCursor(Qt.PointingHandCursor)
-        copy_code_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 8px; padding: 10px; font-size: 13px;
-                font-weight: 500; color: {DARK['TEXT_DIM']};
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
-        """)
-        copy_code_btn.clicked.connect(self._copy_invite_code)
-        af.addWidget(copy_code_btn)
-
-        # Manage team button (admin only)
-        self._team_manage_btn = QPushButton("Manage Team")
-        self._team_manage_btn.setCursor(Qt.PointingHandCursor)
-        self._team_manage_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 8px; padding: 10px; font-size: 13px;
-                font-weight: 500; color: {DARK['TEXT_DIM']};
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
-        """)
-        self._team_manage_btn.clicked.connect(self.manage_team_requested.emit)
+        self._team_manage_btn = QPushButton()
         self._team_manage_btn.setVisible(False)
         af.addWidget(self._team_manage_btn)
 
-        # Leave team button
-        leave_team_btn = QPushButton("Leave Team")
-        leave_team_btn.setCursor(Qt.PointingHandCursor)
-        leave_team_btn.setStyleSheet(f"""
+        # Create Team button
+        create_btn = QPushButton("+ Create Team")
+        create_btn.setCursor(Qt.PointingHandCursor)
+        create_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 10px; font-size: 13px;
+                font-weight: 500; color: {DARK['TEXT']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        create_btn.clicked.connect(self._on_create_team_click)
+        af.addWidget(create_btn)
+
+        # Leave Team button
+        self._lobby_leave_btn = QPushButton("Leave Team")
+        self._lobby_leave_btn.setCursor(Qt.PointingHandCursor)
+        self._lobby_leave_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: 1px solid rgba(229,57,53,0.3);
                 border-radius: 8px; padding: 10px; font-size: 13px;
@@ -498,13 +470,95 @@ class FloatingPanel(QWidget):
             }}
             QPushButton:hover {{ background: rgba(229,57,53,0.08); }}
         """)
-        leave_team_btn.clicked.connect(self.leave_team_requested.emit)
-        af.addWidget(leave_team_btn)
+        self._lobby_leave_btn.clicked.connect(self.leave_team_requested.emit)
+        self._lobby_leave_btn.setVisible(False)  # shown only when a team is active
+        af.addWidget(self._lobby_leave_btn)
 
-        v.addWidget(actions_frame)
-        v.addStretch()
-
+        v.addWidget(actions)
         return page
+
+    def _refresh_teams_list(self, teams, active_team_id=""):
+        """Rebuild the visual team list on the Teams/Lobby page."""
+        # Clear existing rows (keep the stretch at the end)
+        while self._teams_list_layout.count() > 1:
+            item = self._teams_list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not teams:
+            empty = QLabel("No teams yet")
+            empty.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; padding: 20px;")
+            empty.setAlignment(Qt.AlignCenter)
+            self._teams_list_layout.insertWidget(0, empty)
+            self._lobby_leave_btn.setVisible(False)
+            return
+
+        has_active = False
+        for team in teams:
+            is_active = (team["id"] == active_team_id)
+            if is_active:
+                has_active = True
+
+            row = QFrame()
+            if is_active:
+                row.setStyleSheet(f"""
+                    QFrame {{
+                        background: rgba(0, 166, 81, 0.08);
+                        border: 1px solid rgba(0, 166, 81, 0.30);
+                        border-radius: 8px;
+                    }}
+                """)
+            else:
+                row.setStyleSheet(f"""
+                    QFrame {{
+                        background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                        border-radius: 8px;
+                    }}
+                    QFrame:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
+                """)
+
+            h = QHBoxLayout(row)
+            h.setContentsMargins(10, 8, 10, 8)
+            h.setSpacing(8)
+
+            name_lbl = QLabel(team["name"])
+            name_lbl.setStyleSheet(
+                f"font-size: 13px; font-weight: 600; border: none; color: "
+                f"{COLORS['GREEN'] if is_active else DARK['TEXT']};"
+            )
+            h.addWidget(name_lbl, 1)
+
+            if is_active:
+                check = QLabel("✓")
+                check.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['GREEN']}; border: none;")
+                h.addWidget(check)
+            else:
+                select_btn = QPushButton("Select")
+                select_btn.setCursor(Qt.PointingHandCursor)
+                select_btn.setFixedSize(54, 26)
+                select_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {COLORS['GREEN']}; color: white; border: none;
+                        border-radius: 4px; font-size: 10px; font-weight: 700;
+                    }}
+                    QPushButton:hover {{ background: #2bbd6e; }}
+                """)
+                team_id = team["id"]
+                team_name = team["name"]
+                select_btn.clicked.connect(
+                    lambda checked=False, tid=team_id, tn=team_name:
+                        self._on_team_page_select(tid, tn)
+                )
+                h.addWidget(select_btn)
+
+            self._teams_list_layout.insertWidget(self._teams_list_layout.count() - 1, row)
+
+        self._lobby_leave_btn.setVisible(has_active)
+
+    def _on_team_page_select(self, team_id, team_name):
+        """User clicked Select on a team in the lobby page."""
+        self.team_selected_from_lobby.emit(team_id, team_name)
 
     # ── Status Bar (bottom of content) ────────────────────────────
     def _build_status_bar(self):
@@ -1282,9 +1336,9 @@ class FloatingPanel(QWidget):
                 active_index = i
         self._team_combo.setCurrentIndex(active_index)
         self._team_combo.blockSignals(False)
-        # Show manage button if admin of current team
-        if active_index < len(teams):
-            self._team_manage_btn.setVisible(True)
+
+        # Refresh the visual team list on the lobby page
+        self._refresh_teams_list(teams, active_team_id)
 
         # Single team auto-selected → go straight to Users
         # Multiple teams or manual browse → stay on Teams
