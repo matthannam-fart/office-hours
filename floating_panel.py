@@ -5,6 +5,10 @@ Matches the wireframe at menubar_wireframe.html.
 """
 import sys
 import os
+import json
+import threading
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 from ctypes import c_void_p
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -307,7 +311,7 @@ class FloatingPanel(QWidget):
 
         # "+" add button
         add_btn = QPushButton("+")
-        add_btn.setFixedSize(36, 36)
+        add_btn.setFixedSize(30, 30)
         add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.setStyleSheet(f"""
             QPushButton {{
@@ -378,6 +382,9 @@ class FloatingPanel(QWidget):
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
         # Update section title
         self._section_title.setText(key.upper())
+        # Auto-play radio when navigating to it
+        if key == "radio":
+            self.start_radio_on_nav()
         self._auto_resize()
 
     # ── Content Header (search + section title) ───────────────────
@@ -2026,25 +2033,271 @@ class FloatingPanel(QWidget):
             self.set_mode(self._current_mode)
 
     # ── Radio Page ─────────────────────────────────────────────
+    _nts_meta_ready = Signal(dict)   # emitted from bg thread with metadata
+
     def _build_radio_page(self):
-        """Placeholder radio page — future: ambient music / broadcast channels."""
+        """NTS Radio player with live metadata display."""
         page = QFrame()
         page.setStyleSheet("border: none;")
         v = QVBoxLayout(page)
-        v.setContentsMargins(16, 20, 16, 16)
-        v.setSpacing(12)
+        v.setContentsMargins(12, 12, 12, 8)
+        v.setSpacing(8)
 
-        title = QLabel("Radio")
-        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
-        v.addWidget(title)
+        # ── Now Playing header ──
+        now_lbl = QLabel("NOW PLAYING")
+        now_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px; border: none;")
+        v.addWidget(now_lbl)
 
-        desc = QLabel("Ambient channels and broadcast streams.\nComing soon.")
-        desc.setWordWrap(True)
-        desc.setStyleSheet(f"font-size: 13px; color: {DARK['TEXT_DIM']}; border: none;")
-        v.addWidget(desc)
+        # ── Show title ──
+        self._radio_title = QLabel("NTS Radio")
+        self._radio_title.setWordWrap(True)
+        self._radio_title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
+        v.addWidget(self._radio_title)
+
+        # ── Show subtitle (location / genres) ──
+        self._radio_subtitle = QLabel("")
+        self._radio_subtitle.setWordWrap(True)
+        self._radio_subtitle.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
+        self._radio_subtitle.setVisible(False)
+        v.addWidget(self._radio_subtitle)
+
+        # ── Channel selector (1 / 2) ──
+        ch_row = QHBoxLayout()
+        ch_row.setSpacing(6)
+        self._radio_ch1_btn = QPushButton("1")
+        self._radio_ch2_btn = QPushButton("2")
+        for btn in (self._radio_ch1_btn, self._radio_ch2_btn):
+            btn.setFixedSize(32, 24)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 11px; font-weight: 700; color: {DARK['TEXT_DIM']};
+                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+        self._radio_ch1_btn.clicked.connect(lambda: self._switch_radio_channel(0))
+        self._radio_ch2_btn.clicked.connect(lambda: self._switch_radio_channel(1))
+        ch_row.addWidget(self._radio_ch1_btn)
+        ch_row.addWidget(self._radio_ch2_btn)
+        ch_row.addStretch()
+
+        # ── Play / Stop button ──
+        self._radio_play_btn = QPushButton("▶")
+        self._radio_play_btn.setFixedSize(32, 24)
+        self._radio_play_btn.setCursor(Qt.PointingHandCursor)
+        self._radio_play_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 12px; color: {DARK['ACCENT']};
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._radio_play_btn.clicked.connect(self._toggle_radio)
+        ch_row.addWidget(self._radio_play_btn)
+        v.addLayout(ch_row)
+
+        # ── Volume slider ──
+        vol_row = QHBoxLayout()
+        vol_row.setSpacing(8)
+        vol_icon = QLabel("🔈")
+        vol_icon.setStyleSheet("font-size: 12px; border: none;")
+        vol_row.addWidget(vol_icon)
+        self._radio_volume = QSlider(Qt.Horizontal)
+        self._radio_volume.setRange(0, 100)
+        self._radio_volume.setValue(20)  # start low
+        self._radio_volume.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                background: {DARK['BG_RAISED']}; height: 4px; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {DARK['ACCENT']}; width: 12px; height: 12px;
+                margin: -4px 0; border-radius: 6px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {DARK['ACCENT_DIM']}; border-radius: 2px;
+            }}
+        """)
+        self._radio_volume.valueChanged.connect(self._on_radio_volume)
+        vol_row.addWidget(self._radio_volume, 1)
+        v.addLayout(vol_row)
+
+        v.addSpacing(4)
+
+        # ── Divider ──
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet(f"background: {DARK['BORDER_LT']}; border: none;")
+        v.addWidget(div)
+
+        v.addSpacing(2)
+
+        # ── Up Next ──
+        next_hdr = QLabel("UP NEXT")
+        next_hdr.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px; border: none;")
+        v.addWidget(next_hdr)
+
+        self._radio_next = QLabel("")
+        self._radio_next.setWordWrap(True)
+        self._radio_next.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; border: none;")
+        v.addWidget(self._radio_next)
 
         v.addStretch()
+
+        # ── Internal state ──
+        self._radio_playing = False
+        self._radio_channel = 0  # 0 = Channel 1, 1 = Channel 2
+        self._radio_meta = {}    # cached API response
+        self._nts_meta_ready.connect(self._apply_radio_meta)
+
+        # Media player (created lazily on first play)
+        self._radio_player = None
+        self._radio_audio_out = None
+
+        # Metadata refresh timer
+        self._radio_meta_timer = QTimer(self)
+        self._radio_meta_timer.timeout.connect(self._fetch_nts_meta)
+        self._radio_meta_timer.setInterval(30_000)  # refresh every 30s
+
+        # Highlight channel 1 by default
+        self._update_channel_btns()
+
         return page
+
+    def _switch_radio_channel(self, ch):
+        """Switch between NTS channel 1 and 2."""
+        if ch == self._radio_channel:
+            return
+        self._radio_channel = ch
+        self._update_channel_btns()
+        self._apply_radio_meta(self._radio_meta)
+        # If playing, restart stream on new channel
+        if self._radio_playing:
+            self._start_radio_stream()
+
+    def _update_channel_btns(self):
+        """Highlight the active channel button."""
+        for i, btn in enumerate((self._radio_ch1_btn, self._radio_ch2_btn)):
+            if i == self._radio_channel:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        font-size: 11px; font-weight: 700; color: {DARK['TEXT']};
+                        background: {DARK['ACCENT_DIM']}; border: 1px solid {DARK['ACCENT']};
+                        border-radius: 6px;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        font-size: 11px; font-weight: 700; color: {DARK['TEXT_DIM']};
+                        background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                        border-radius: 6px;
+                    }}
+                    QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+                """)
+
+    def _toggle_radio(self):
+        """Play or stop the NTS stream."""
+        if self._radio_playing:
+            self._stop_radio()
+        else:
+            self._start_radio()
+
+    def _start_radio(self):
+        """Start NTS stream at low volume."""
+        self._radio_playing = True
+        self._radio_play_btn.setText("■")
+        self._start_radio_stream()
+        self._fetch_nts_meta()
+        self._radio_meta_timer.start()
+
+    def _stop_radio(self):
+        """Stop the NTS stream."""
+        self._radio_playing = False
+        self._radio_play_btn.setText("▶")
+        if self._radio_player:
+            self._radio_player.stop()
+        self._radio_meta_timer.stop()
+
+    def _start_radio_stream(self):
+        """Create or restart the media player on the current channel."""
+        if not self._radio_player:
+            self._radio_player = QMediaPlayer(self)
+            self._radio_audio_out = QAudioOutput(self)
+            self._radio_audio_out.setVolume(self._radio_volume.value() / 100.0)
+            self._radio_player.setAudioOutput(self._radio_audio_out)
+
+        self._radio_player.stop()
+        # Channel 1 and 2 have separate stream URLs
+        urls = [
+            "https://stream-relay-geo.ntslive.net/stream?client=NTSRadio",
+            "https://stream-relay-geo.ntslive.net/stream2?client=NTSRadio",
+        ]
+        self._radio_player.setSource(QUrl(urls[self._radio_channel]))
+        self._radio_player.play()
+
+    def _on_radio_volume(self, val):
+        if self._radio_audio_out:
+            self._radio_audio_out.setVolume(val / 100.0)
+
+    def _fetch_nts_meta(self):
+        """Fetch NTS live metadata in a background thread."""
+        def _fetch():
+            try:
+                req = Request("https://www.nts.live/api/v2/live",
+                              headers={"User-Agent": "OfficeHours/1.0"})
+                with urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                    self._nts_meta_ready.emit(data)
+            except Exception:
+                pass
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    @Slot(dict)
+    def _apply_radio_meta(self, data):
+        """Update the radio page with fresh NTS metadata."""
+        self._radio_meta = data
+        results = data.get("results", [])
+        if not results or self._radio_channel >= len(results):
+            return
+
+        ch = results[self._radio_channel]
+        now = ch.get("now", {})
+        nxt = ch.get("next", {})
+
+        # Show title
+        title = now.get("broadcast_title", "NTS Radio")
+        self._radio_title.setText(title)
+
+        # Subtitle: location + genres from embeds
+        details = now.get("embeds", {}).get("details", {})
+        parts = []
+        location = details.get("location_long", "")
+        if location:
+            parts.append(location)
+        genres = details.get("genres", [])
+        if genres:
+            genre_names = [g.get("value", g) if isinstance(g, dict) else str(g) for g in genres[:3]]
+            parts.append(" · ".join(genre_names))
+        if parts:
+            self._radio_subtitle.setText("  ·  ".join(parts))
+            self._radio_subtitle.setVisible(True)
+        else:
+            self._radio_subtitle.setVisible(False)
+
+        # Up next
+        next_title = nxt.get("broadcast_title", "")
+        if next_title:
+            self._radio_next.setText(next_title)
+        else:
+            self._radio_next.setText("—")
+
+    def start_radio_on_nav(self):
+        """Called when user clicks the Radio nav — auto-play if not already playing."""
+        if not self._radio_playing:
+            self._start_radio()
 
     # ── Settings View (inline) ──────────────────────────────────
     def _build_settings_view(self):

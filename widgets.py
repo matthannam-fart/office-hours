@@ -437,11 +437,11 @@ class NavButton(QWidget):
         self._key = key
         self._selected = False
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(70, 56)
+        self.setFixedSize(56, 48)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(0, 5, 0, 3)
+        layout.setSpacing(1)
         layout.setAlignment(Qt.AlignCenter)
 
         self._icon = QLabel(icon_char)
