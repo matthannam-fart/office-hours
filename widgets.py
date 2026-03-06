@@ -130,6 +130,48 @@ class LevelMeter(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  Unicode EQ Visualizer — retro stereo look
+# ═══════════════════════════════════════════════════════════════════
+import random
+
+# Block characters from shortest to tallest
+_BLOCKS = " ▁▂▃▄▅▆▇█"
+
+class UnicodeEQ(QLabel):
+    """Retro equalizer using unicode block characters.
+    Looks like ▂▅█▃▆▁▄ — bouncy bars that respond to audio level."""
+
+    def __init__(self, num_bars=8, color="#4caf50", parent=None):
+        super().__init__(parent)
+        self._num_bars = num_bars
+        self._color = color
+        self._level = 0.0
+        self._bars = [0] * num_bars  # per-bar heights (0–8)
+        self._decay = 0.6  # how fast bars fall
+        self.setStyleSheet(
+            f"font-family: monospace; font-size: 14px; color: {color}; "
+            f"letter-spacing: 1px; border: none;"
+        )
+        self.setText(_BLOCKS[0] * num_bars)
+
+    def set_level(self, level):
+        """Update with audio level (0.0–1.0)."""
+        self._level = max(0.0, min(1.0, level))
+        # Map level to a target height (0–8)
+        target = int(self._level * 8)
+        for i in range(self._num_bars):
+            if self._level > 0.02:
+                # Each bar gets the target ± some jitter for the EQ bounce effect
+                jitter = random.randint(-2, 2)
+                self._bars[i] = max(0, min(8, target + jitter))
+            else:
+                # Decay toward zero when quiet
+                self._bars[i] = max(0, self._bars[i] - random.randint(1, 2))
+        text = "".join(_BLOCKS[h] for h in self._bars)
+        self.setText(text)
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  Small Orb for user list
 # ═══════════════════════════════════════════════════════════════════
 class SmallOrb(QWidget):

@@ -27,7 +27,7 @@ from PySide6.QtCore import QUrl
 from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK
 
 # Widget classes (extracted to widgets.py)
-from widgets import GlowingOrb, LevelMeter, SmallOrb, UserRow, ToggleSwitch
+from widgets import GlowingOrb, LevelMeter, UnicodeEQ, SmallOrb, UserRow, ToggleSwitch
 
 # ── Font Loading ─────────────────────────────────────────────────
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -1352,7 +1352,7 @@ class FloatingPanel(QWidget):
 
         outer = QVBoxLayout(banner)
         outer.setContentsMargins(14, 8, 14, 8)
-        outer.setSpacing(6)
+        outer.setSpacing(4)
 
         # Top row: orb + name + end button
         top = QHBoxLayout()
@@ -1380,24 +1380,22 @@ class FloatingPanel(QWidget):
         top.addWidget(end_btn)
         outer.addLayout(top)
 
-        # Bottom row: audio level meters
+        # Bottom row: retro unicode EQ meters
         meters = QHBoxLayout()
-        meters.setSpacing(6)
+        meters.setSpacing(4)
 
-        mic_icon = QLabel("●")
-        mic_icon.setFixedWidth(12)
-        mic_icon.setStyleSheet(f"font-size: 8px; color: {DARK['ACCENT']};")
-        meters.addWidget(mic_icon)
-        self.mic_meter = LevelMeter(color=DARK['ACCENT'], width=80, height=5)
+        mic_lbl = QLabel("MIC")
+        mic_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['ACCENT']}; border: none; letter-spacing: 1px;")
+        meters.addWidget(mic_lbl)
+        self.mic_meter = UnicodeEQ(num_bars=8, color=DARK['ACCENT'])
         meters.addWidget(self.mic_meter)
 
-        meters.addSpacing(8)
+        meters.addSpacing(6)
 
-        spk_icon = QLabel("●")
-        spk_icon.setFixedWidth(12)
-        spk_icon.setStyleSheet(f"font-size: 8px; color: {DARK['INFO']};")
-        meters.addWidget(spk_icon)
-        self.speaker_meter = LevelMeter(color=DARK['INFO'], width=80, height=5)
+        spk_lbl = QLabel("RCV")
+        spk_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['INFO']}; border: none; letter-spacing: 1px;")
+        meters.addWidget(spk_lbl)
+        self.speaker_meter = UnicodeEQ(num_bars=8, color=DARK['INFO'])
         meters.addWidget(self.speaker_meter)
 
         meters.addStretch()
