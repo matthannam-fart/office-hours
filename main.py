@@ -1217,9 +1217,10 @@ class IntercomApp(QObject):
         data is [available_teams, my_teams] or just [available_teams]."""
         if isinstance(data, list) and len(data) == 2 and isinstance(data[0], list):
             available, my_teams = data[0], data[1]
-            self.panel.set_available_teams(available, my_teams=my_teams)
+            self.panel.set_available_teams(available, my_teams=my_teams,
+                                           active_team_id=self.active_team_id)
         else:
-            self.panel.set_available_teams(data)
+            self.panel.set_available_teams(data, active_team_id=self.active_team_id)
 
     def _refresh_lobby_teams(self):
         """Poll Supabase for updated team list while lobby is showing."""
@@ -1585,6 +1586,12 @@ class IntercomApp(QObject):
     def _quit(self):
         self._cleanup_messages()
         self.log("Shutting down...")
+        # Stop audio threads FIRST so PortAudio callbacks aren't
+        # running when Python tears down C extensions (cffi crash fix)
+        self.audio.stop_streaming()
+        self.audio.stop_listening()
+        # Stop radio player
+        self.panel.stop_radio()
         self.hotkey.stop()
         self.discovery.close()
         # Disconnect presence first so relay broadcasts our departure

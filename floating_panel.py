@@ -299,7 +299,7 @@ class FloatingPanel(QWidget):
         v.setSpacing(2)
 
         # Navigation buttons — Team first (entry point)
-        self._nav_teams = NavButton("teams", "📁", "TEAM")
+        self._nav_teams = NavButton("teams", "📁", "LOBBY")
         self._nav_teams.clicked.connect(self._on_nav_clicked)
         v.addWidget(self._nav_teams)
 
@@ -914,10 +914,11 @@ class FloatingPanel(QWidget):
 
         return frame
 
-    def set_available_teams(self, teams, my_teams=None):
+    def set_available_teams(self, teams, my_teams=None, active_team_id=""):
         """Populate the lobby team list on the onboarding screen.
         teams: [{id, name, created_by}, ...] — teams user can request to join
         my_teams: [{id, name, role}, ...] — teams user already belongs to (shown first with Select btn)
+        active_team_id: if set, show a checkmark on the already-selected team
         """
         # Clear existing items
         while self._lobby_layout.count() > 0:
@@ -949,22 +950,34 @@ class FloatingPanel(QWidget):
                 name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {DARK['TEXT']};")
                 h.addWidget(name_lbl, 1)
 
-                select_btn = QPushButton("Select")
-                select_btn.setCursor(Qt.PointingHandCursor)
-                select_btn.setFixedSize(54, 24)
-                select_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {COLORS['GREEN']}; color: white; border: none;
-                        border-radius: 4px; font-size: 10px; font-weight: 700;
-                    }}
-                    QPushButton:hover {{ background: #2bbd6e; }}
-                """)
                 team_id = team["id"]
                 team_name = team["name"]
-                select_btn.clicked.connect(
-                    lambda checked=False, tid=team_id, tn=team_name:
-                        self._on_lobby_select_click(tid, tn)
-                )
+                is_active = (team_id == active_team_id)
+
+                select_btn = QPushButton("✓" if is_active else "Select")
+                select_btn.setCursor(Qt.PointingHandCursor)
+                select_btn.setFixedSize(54, 24)
+                if is_active:
+                    select_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background: transparent; color: {COLORS['GREEN']};
+                            border: 1px solid {COLORS['GREEN']}; border-radius: 4px;
+                            font-size: 12px; font-weight: 700;
+                        }}
+                    """)
+                    select_btn.setEnabled(False)
+                else:
+                    select_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background: {COLORS['GREEN']}; color: white; border: none;
+                            border-radius: 4px; font-size: 10px; font-weight: 700;
+                        }}
+                        QPushButton:hover {{ background: #2bbd6e; }}
+                    """)
+                    select_btn.clicked.connect(
+                        lambda checked=False, tid=team_id, tn=team_name:
+                            self._on_lobby_select_click(tid, tn)
+                    )
                 h.addWidget(select_btn)
                 self._lobby_layout.addWidget(row)
 
@@ -2199,6 +2212,14 @@ class FloatingPanel(QWidget):
         if self._radio_player:
             self._radio_player.stop()
         self._radio_meta_timer.stop()
+
+    def stop_radio(self):
+        """Public method for shutdown — stop radio without touching UI."""
+        self._radio_playing = False
+        if hasattr(self, '_radio_player') and self._radio_player:
+            self._radio_player.stop()
+        if hasattr(self, '_radio_meta_timer'):
+            self._radio_meta_timer.stop()
 
     def _start_radio_stream(self):
         """Create or restart the media player on the current channel."""

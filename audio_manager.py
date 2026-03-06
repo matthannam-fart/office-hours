@@ -142,6 +142,8 @@ class AudioManager:
 
     def stop_streaming(self):
         self.streaming = False
+        if hasattr(self, 'stream_thread') and self.stream_thread.is_alive():
+            self.stream_thread.join(timeout=1.0)
 
     def _is_ducking(self):
         """Return True if we should attenuate the mic (speaker is active)."""
