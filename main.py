@@ -15,7 +15,10 @@ from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUN
                      MAX_FILE_SIZE, MAX_FRAME_SIZE, APP_NAME, LOG_LEVEL, log)
 from network_manager import NetworkManager
 from audio_manager import AudioManager
-from stream_deck_manager import StreamDeckHandler
+try:
+    from stream_deck_manager import StreamDeckHandler
+except ImportError:
+    StreamDeckHandler = None  # streamdeck/hidapi not available (common on Windows)
 from discovery_manager import DiscoveryManager
 from user_settings import (get_display_name, set_display_name, get_user_id,
                           get_ptt_hotkey, _config_dir,
@@ -114,6 +117,8 @@ class IntercomApp(QObject):
         self.audio.start_listening()
 
         try:
+            if StreamDeckHandler is None:
+                raise ImportError("streamdeck library not available")
             self.deck = StreamDeckHandler(self.handle_deck_input)
             self.deck.update_key_image(0, render_oh=True)
         except Exception as e:
@@ -203,6 +208,12 @@ class IntercomApp(QObject):
                 # No name yet — show onboarding immediately, connect after setup
                 self._teams_loaded_signal.emit()
 
+        # On Windows, auto-show panel at startup since the tray icon
+        # often gets hidden in the overflow area and users can't find the app
+        import sys
+        if sys.platform == 'win32':
+            QTimer.singleShot(500, self._auto_show_panel_windows)
+
     # ── Panel Signal Wiring ───────────────────────────────────────
     def _connect_panel_signals(self):
         self.panel.mode_cycle_requested.connect(self.cycle_mode)
@@ -236,6 +247,23 @@ class IntercomApp(QObject):
         self.panel.join_request_accepted.connect(self._on_approve_join)
         self.panel.join_request_declined.connect(self._on_decline_join)
         self.panel.team_selected_from_lobby.connect(self._on_team_selected_from_lobby)
+
+    # ── Windows Auto-Show ───────────────────────────────────────
+    def _auto_show_panel_windows(self):
+        """Show the panel on Windows at startup since the system tray
+        icon is often hidden in the overflow area."""
+        if self.panel.isVisible():
+            return
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.right() - self.panel.width() - 8
+        y = screen.bottom() - self.panel.height() - 8
+        self.panel.move(x, y)
+        self.panel.show()
+        self.panel.raise_()
+        self.panel.activateWindow()
+        # Auto-pin so the panel doesn't vanish on focus loss
+        if not self.panel.is_pinned():
+            self.panel._toggle_pin()
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):

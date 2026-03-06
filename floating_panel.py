@@ -124,11 +124,20 @@ class FloatingPanel(QWidget):
         self._radio_player = QMediaPlayer()
         self._radio_player.setAudioOutput(self._audio_output)
 
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool  # Don't show in dock/taskbar
-        )
+        import sys
+        if sys.platform == 'win32':
+            # On Windows, skip Qt.Tool so the window appears in the taskbar
+            # (the tray icon often gets hidden in the overflow area)
+            self.setWindowFlags(
+                Qt.FramelessWindowHint |
+                Qt.WindowStaysOnTopHint
+            )
+        else:
+            self.setWindowFlags(
+                Qt.FramelessWindowHint |
+                Qt.WindowStaysOnTopHint |
+                Qt.Tool  # Don't show in dock/taskbar (macOS has visible tray)
+            )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(PANEL_W)
 
@@ -2804,8 +2813,12 @@ def create_oh_icon(color_hex='#00a651', size=22):
         return icon
 
     # Fallback: render text
+    import sys as _sys
     from PySide6.QtGui import QFontMetrics
-    font = QFont(".AppleSystemUIFont")
+    if _sys.platform == 'win32':
+        font = QFont("Segoe UI")
+    else:
+        font = QFont(".AppleSystemUIFont")
     font.setPixelSize(size - 4)
     font.setWeight(QFont.Bold)
     font.setLetterSpacing(QFont.AbsoluteSpacing, -1.0)

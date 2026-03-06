@@ -1,4 +1,5 @@
 import socket
+import sys
 import logging
 from zeroconf import ServiceInfo, Zeroconf, ServiceBrowser, ServiceStateChange
 from config import TCP_PORT, APP_NAME
@@ -42,6 +43,9 @@ class DiscoveryManager:
             self.zeroconf.register_service(self.info)
         except Exception as e:
             print(f"Failed to register service: {e}")
+            if sys.platform == 'win32':
+                print("  Hint: Windows Firewall may be blocking mDNS (port 5353).")
+                print("  Try: Allow Python through Windows Firewall, or use invite codes.")
 
     def start_browsing(self):
         self.browser = ServiceBrowser(self.zeroconf, self.service_type, handlers=[self._on_service_state_change])

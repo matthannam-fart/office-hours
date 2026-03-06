@@ -180,7 +180,8 @@ def ensure_lan_cert():
                     format=serialization.PrivateFormat.PKCS8,
                     encryption_algorithm=serialization.NoEncryption()
                 ))
-            os.chmod(KEY_FILE, 0o600)
+            if sys.platform != 'win32':
+                os.chmod(KEY_FILE, 0o600)
 
             with open(CERT_FILE, 'wb') as f:
                 f.write(cert.public_bytes(serialization.Encoding.PEM))
@@ -188,7 +189,11 @@ def ensure_lan_cert():
             return CERT_FILE, KEY_FILE
 
         except ImportError:
-            # Fallback: use openssl command line
+            if sys.platform == 'win32':
+                # No openssl CLI on Windows typically; cryptography is required
+                print("cryptography package required on Windows for LAN TLS")
+                return None, None
+            # Fallback: use openssl command line (macOS/Linux)
             import subprocess
             subprocess.run([
                 'openssl', 'req', '-x509', '-newkey', 'ec',
