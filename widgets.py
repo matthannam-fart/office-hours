@@ -179,9 +179,11 @@ class UnicodeEQ(QWidget):
 
     def paintEvent(self, event):
         from PySide6.QtGui import QFont
+        import platform
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        font = QFont("monospace", self._font_size)
+        mono = "Menlo" if platform.system() == "Darwin" else "Consolas"
+        font = QFont(mono, self._font_size)
         font.setStyleHint(QFont.Monospace)
         p.setFont(font)
 

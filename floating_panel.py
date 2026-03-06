@@ -1351,8 +1351,8 @@ class FloatingPanel(QWidget):
         """)
 
         outer = QVBoxLayout(banner)
-        outer.setContentsMargins(14, 8, 14, 8)
-        outer.setSpacing(4)
+        outer.setContentsMargins(14, 10, 14, 10)
+        outer.setSpacing(8)
 
         # Top row: orb + name + end button
         top = QHBoxLayout()
@@ -1667,7 +1667,8 @@ class FloatingPanel(QWidget):
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
         self._user_section.setVisible(False)
-        self._conn_bar.setVisible(False)  # Call banner replaces connection bar
+        self._conn_bar.setVisible(False)   # Call banner replaces connection bar
+        self._team_bar.setVisible(False)   # Hide team bar during call — less clutter
         # Update PTT to show who you're talking to
         self._call_peer_name = caller_name
         if not self._is_open_line:
@@ -1678,6 +1679,7 @@ class FloatingPanel(QWidget):
         """Hide the in-call banner and restore normal layout."""
         self._hide_all_banners()
         self._user_section.setVisible(True)
+        self._team_bar.setVisible(True)  # Restore team bar after call
         self._call_peer_name = None
         # Reset PTT text
         if self._is_open_line:
