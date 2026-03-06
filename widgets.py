@@ -241,27 +241,25 @@ class SmallOrb(QWidget):
 #  User Row Widget
 # ═══════════════════════════════════════════════════════════════════
 class UserRow(QWidget):
-    """Single user row in the online list."""
-    call_clicked = Signal(str)  # user_id
+    """Press-and-hold intercom button for each online user."""
+    call_clicked = Signal(str)            # user_id (legacy, still used for single-click fallback)
+    intercom_pressed = Signal(str)        # user_id — finger/mouse down
+    intercom_released = Signal(str)       # user_id — finger/mouse up
+
+    # Visual states
+    STATE_IDLE = "idle"
+    STATE_CONNECTING = "connecting"
+    STATE_LIVE = "live"
 
     def __init__(self, user_id, name, mode='GREEN', has_message=False, parent=None):
         super().__init__(parent)
         self.user_id = user_id
-        self._hovered = False
+        self._mode = mode
+        self._pressed = False
+        self._state = self.STATE_IDLE
         self.setFixedHeight(46)
         self.setCursor(Qt.PointingHandCursor)
-        self.setMouseTracking(True)
-
-        # Card-style background
-        self.setStyleSheet(f"""
-            UserRow {{
-                background: {DARK['BG_RAISED']};
-                border-radius: 8px;
-            }}
-            UserRow:hover {{
-                background: {DARK['BG_HOVER']};
-            }}
-        """)
+        self._apply_style()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 8, 6)
@@ -273,7 +271,7 @@ class UserRow(QWidget):
 
         # Name
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {DARK['TEXT']}; padding-bottom: 1px;")
+        self.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
         layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # Message indicator (amber dot)
@@ -287,59 +285,82 @@ class UserRow(QWidget):
         self.msg_dot.setVisible(has_message)
         layout.addWidget(self.msg_dot)
 
-        # Call button (hidden until hover) — label depends on mode
-        btn_labels = {
-            'GREEN': 'Intercom', 'YELLOW': 'Page', 'RED': 'Message',
-            'BUSY': 'Join', 'OPEN': 'Intercom',
-        }
-        btn_text = btn_labels.get(mode, 'Call')
-        self.call_btn = QPushButton(btn_text)
-        self.call_btn.setFixedWidth(52)
-        self.call_btn.setCursor(Qt.PointingHandCursor)
-        if mode == 'YELLOW':
-            self.call_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(230, 175, 0, 0.15); color: {DARK['WARN']};
-                    border: 1px solid rgba(230, 175, 0, 0.30);
-                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
+        # Inline mini EQ (hidden until live)
+        self._eq = UnicodeEQ(num_bars=6, color=DARK['TEXT_DIM'])
+        self._eq.setVisible(False)
+        layout.addWidget(self._eq)
+
+        # Status hint (shown during connecting/live)
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {DARK['TEXT_FAINT']}; border: none;")
+        self._status_lbl.setVisible(False)
+        layout.addWidget(self._status_lbl)
+
+    def _apply_style(self):
+        """Set background based on current state."""
+        if self._state == self.STATE_LIVE:
+            self.setStyleSheet(f"""
+                UserRow {{
+                    background: rgba(229, 57, 53, 0.12);
+                    border: 1px solid rgba(229, 57, 53, 0.25);
+                    border-radius: 8px;
                 }}
-                QPushButton:hover {{ background: rgba(230, 175, 0, 0.25); }}
             """)
-        elif mode == 'RED':
-            # Message button — muted styling
-            self.call_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(255,255,255,0.06); color: {DARK['TEXT_DIM']};
+        elif self._state == self.STATE_CONNECTING:
+            self.setStyleSheet(f"""
+                UserRow {{
+                    background: rgba(255, 255, 255, 0.06);
                     border: 1px solid {DARK['BORDER']};
-                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
+                    border-radius: 8px;
                 }}
-                QPushButton:hover {{ background: rgba(255,255,255,0.10); }}
             """)
         else:
-            self.call_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(0, 166, 81, 0.12); color: {DARK['ACCENT']};
-                    border: 1px solid rgba(0, 166, 81, 0.25);
-                    border-radius: 6px; font-size: 11px; font-weight: 700; padding: 4px 0;
+            self.setStyleSheet(f"""
+                UserRow {{
+                    background: {DARK['BG_RAISED']};
+                    border-radius: 8px;
                 }}
-                QPushButton:hover {{ background: rgba(0, 166, 81, 0.22); }}
+                UserRow:hover {{
+                    background: {DARK['BG_HOVER']};
+                }}
             """)
-        self.call_btn.setVisible(False)
-        self.call_btn.clicked.connect(lambda: self.call_clicked.emit(self.user_id))
-        layout.addWidget(self.call_btn)
+
+    def set_state(self, state):
+        """Update visual state: idle, connecting, or live."""
+        self._state = state
+        self._apply_style()
+        if state == self.STATE_LIVE:
+            self._status_lbl.setText("LIVE")
+            self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['DANGER']}; border: none;")
+            self._status_lbl.setVisible(True)
+            self._eq.setVisible(True)
+        elif state == self.STATE_CONNECTING:
+            self._status_lbl.setText("...")
+            self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {DARK['TEXT_FAINT']}; border: none;")
+            self._status_lbl.setVisible(True)
+            self._eq.setVisible(False)
+        else:
+            self._status_lbl.setVisible(False)
+            self._eq.setVisible(False)
+
+    def set_eq_level(self, level):
+        """Update the inline EQ meter."""
+        self._eq.set_level(level)
 
     def set_message(self, has_msg):
         self.msg_dot.setVisible(has_msg)
 
-    def enterEvent(self, event):
-        self._hovered = True
-        self.call_btn.setVisible(True)
-        super().enterEvent(event)
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._pressed = True
+            self.intercom_pressed.emit(self.user_id)
+        super().mousePressEvent(event)
 
-    def leaveEvent(self, event):
-        self._hovered = False
-        self.call_btn.setVisible(False)
-        super().leaveEvent(event)
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._pressed:
+            self._pressed = False
+            self.intercom_released.emit(self.user_id)
+        super().mouseReleaseEvent(event)
 
 
 # ═══════════════════════════════════════════════════════════════════

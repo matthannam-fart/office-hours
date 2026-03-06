@@ -69,7 +69,9 @@ class FloatingPanel(QWidget):
     ptt_released = Signal()
     page_all_pressed = Signal()
     page_all_released = Signal()
-    call_user_requested = Signal(str)     # user_id
+    call_user_requested = Signal(str)     # user_id (legacy)
+    intercom_pressed = Signal(str)        # user_id — hold to talk
+    intercom_released = Signal(str)       # user_id — release to stop
     leave_requested = Signal()
     accept_call_requested = Signal()
     decline_call_requested = Signal()
@@ -995,7 +997,7 @@ class FloatingPanel(QWidget):
         self._onboarding.setVisible(False)
         self._team_bar.setVisible(True)
         self._user_section.setVisible(True)
-        self._ptt_bar.setVisible(True)
+        self._ptt_bar.setVisible(False)  # User rows are the PTT now
 
         # Leaving onboarding — clear height lock
         self._is_onboarding = False
@@ -1599,6 +1601,7 @@ class FloatingPanel(QWidget):
     def set_users(self, users):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]"""
         # Clear existing
+        self._user_rows = {}  # track rows by user_id for inline state updates
         while self._user_layout.count() > 1:  # keep the stretch
             item = self._user_layout.takeAt(0)
             if item.widget():
@@ -1612,18 +1615,33 @@ class FloatingPanel(QWidget):
                 u.get('has_message', False)
             )
             row.call_clicked.connect(self.call_user_requested.emit)
+            row.intercom_pressed.connect(self.intercom_pressed.emit)
+            row.intercom_released.connect(self.intercom_released.emit)
+            self._user_rows[u.get('id', '')] = row
             self._user_layout.insertWidget(self._user_layout.count() - 1, row)
 
         self.online_count.setText(str(len(users)))
 
         # Dynamic panel height based on user count
         if not self._pinned and not self._is_onboarding:
-            # Fixed chrome: header(48) + disconn/conn(36) + team(28) + section hdr(28) + ptt(60) + margins(16)
-            chrome_height = 48 + 36 + 28 + 28 + 60 + 16
+            # Fixed chrome: header(48) + disconn/conn(36) + team(28) + section hdr(28) + margins(16)
+            chrome_height = 48 + 36 + 28 + 28 + 16
             user_height = len(users) * 46
             target = chrome_height + max(user_height, 46)  # min space for 1 row
             target = min(target, 520)  # cap so it doesn't go off-screen
             self.setFixedHeight(target)
+
+    def set_user_state(self, user_id, state):
+        """Set a user row's visual state (idle/connecting/live)."""
+        row = self._user_rows.get(user_id)
+        if row:
+            row.set_state(state)
+
+    def set_user_eq_level(self, user_id, level):
+        """Update a user row's inline EQ meter."""
+        row = self._user_rows.get(user_id)
+        if row:
+            row.set_eq_level(level)
 
     def _hide_all_banners(self):
         """Clear all call banners — ensures clean state."""

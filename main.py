@@ -84,6 +84,12 @@ class IntercomApp(QObject):
         self._pre_call_mode = None     # Mode before entering a call (restored on disconnect)
         self._connected_peer_id = None # User ID of peer we're in a call with
 
+        # Intercom state (press-and-hold on user rows)
+        self._intercom_target_id = None   # user_id currently being pressed
+        self._intercom_connected = False  # True once connection is ready for audio
+        self._intercom_streaming = False  # True while audio is actively streaming
+        self._intercom_keep_alive = None  # QTimer for 30s keep-alive after release
+
 
         # User identity
         self.display_name = get_display_name()
@@ -169,7 +175,7 @@ class IntercomApp(QObject):
         self.presence_request_signal.connect(self._show_presence_request)
         self.hotkey_press_signal.connect(self.on_talk_press)
         self.hotkey_release_signal.connect(self.on_talk_release)
-        self.mic_level_signal.connect(self.panel.set_mic_level)
+        self.mic_level_signal.connect(self._on_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
         self._join_request_signal.connect(self._show_join_request)
@@ -205,6 +211,8 @@ class IntercomApp(QObject):
         self.panel.ptt_pressed.connect(self.on_talk_press)
         self.panel.ptt_released.connect(self.on_talk_release)
         self.panel.call_user_requested.connect(self._on_call_user)
+        self.panel.intercom_pressed.connect(self._on_intercom_press)
+        self.panel.intercom_released.connect(self._on_intercom_release)
         self.panel.leave_requested.connect(self.do_disconnect)
         self.panel.accept_call_requested.connect(self._on_accept_call)
         self.panel.decline_call_requested.connect(self._on_decline_call)
@@ -382,6 +390,91 @@ class IntercomApp(QObject):
             self.log(f"Direct connection failed, trying relay...")
             if hasattr(self, '_calling_user_id'):
                 self.network.connect_to_user(self._calling_user_id)
+
+    # ── Intercom: Press-and-Hold on User Rows ─────────────────────
+    def _on_intercom_press(self, user_id):
+        """User pressed down on a user row — initiate intercom."""
+        target = self.online_users.get(user_id, {})
+        target_name = target.get("name", "Unknown")
+        target_mode = target.get("mode", "GREEN")
+
+        # DND users can't be intercommed
+        if target_mode == self.MODE_RED:
+            self.log(f"{target_name} is unavailable")
+            return
+
+        self._intercom_target_id = user_id
+
+        # Cancel any keep-alive timer from a previous session
+        if self._intercom_keep_alive:
+            self._intercom_keep_alive.stop()
+            self._intercom_keep_alive = None
+
+        # Already connected to this user? Start streaming immediately
+        if self.network.connected and self._connected_peer_id == user_id:
+            self._intercom_connected = True
+            self._start_intercom_stream(user_id, target_name)
+            return
+
+        # Need to connect first — disconnect any existing call
+        if self.network.connected:
+            self.do_disconnect()
+
+        # Show connecting state on the row
+        self.panel.set_user_state(user_id, "connecting")
+        self.log(f"Connecting to {target_name}...")
+
+        # Initiate connection (reuse existing call flow)
+        self._calling_user_id = user_id
+        self._intercom_connected = False
+
+        lan_ip = self._find_lan_ip(target_name)
+        if lan_ip:
+            threading.Thread(
+                target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
+            ).start()
+        else:
+            self.network.connect_to_user(user_id)
+
+    def _start_intercom_stream(self, user_id, target_name):
+        """Begin streaming audio to the intercom target."""
+        self._intercom_streaming = True
+        self.panel.set_user_state(user_id, "live")
+        self.network.send_control("TALK_START", {})
+        self.audio.start_streaming()
+        self.log(f"Talking to {target_name}")
+
+    def _on_intercom_release(self, user_id):
+        """User released — stop streaming, keep connection warm."""
+        if self._intercom_streaming:
+            self._intercom_streaming = False
+            self.audio.stop_streaming()
+            self.network.send_control("TALK_STOP", {})
+            self.log("Released")
+
+        # Reset row state
+        self.panel.set_user_state(user_id, "idle")
+        self._intercom_target_id = None
+
+        # Keep connection alive for 30 seconds so re-press is instant
+        if self.network.connected:
+            if not self._intercom_keep_alive:
+                self._intercom_keep_alive = QTimer(self)
+                self._intercom_keep_alive.setSingleShot(True)
+                self._intercom_keep_alive.timeout.connect(self._intercom_keepalive_expired)
+            self._intercom_keep_alive.start(30_000)
+
+    def _on_mic_level(self, level):
+        """Route mic level to call banner and/or active intercom row."""
+        self.panel.set_mic_level(level)
+        if self._intercom_target_id and self._intercom_streaming:
+            self.panel.set_user_eq_level(self._intercom_target_id, level)
+
+    def _intercom_keepalive_expired(self):
+        """30 seconds idle — disconnect."""
+        if self.network.connected and not self._intercom_streaming:
+            self.log("Idle — disconnecting")
+            self.do_disconnect()
 
     # ── Accept / Decline Call ─────────────────────────────────────
     def _on_accept_call(self):
@@ -648,6 +741,16 @@ class IntercomApp(QObject):
     @Slot(str)
     def _on_call_connected(self, peer_name):
         """Called on main thread when call is established."""
+        self._intercom_connected = True
+
+        # If user is still holding during an intercom press, start streaming now
+        if self._intercom_target_id and not self._intercom_streaming:
+            self._start_intercom_stream(self._intercom_target_id, peer_name)
+            # Don't show the old-style call banner — the row handles it
+            self.panel.hide_outgoing()
+            return
+
+        # Legacy call flow (call banners etc.)
         self.panel.hide_outgoing()
         self.panel.show_call(peer_name)
         self.panel.set_connection(True, peer_name)
