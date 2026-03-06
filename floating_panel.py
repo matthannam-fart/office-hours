@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect, QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
-    QComboBox, QStackedWidget
+    QComboBox, QStackedWidget, QMenu
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot,
@@ -28,7 +28,10 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtCore import QUrl
 
 # Shared constants (extracted to ui_constants.py)
-from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK, SIDEBAR_W
+from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK, LIGHT, SIDEBAR_W
+
+# Snapshot the original dark palette so we can restore it after switching to light
+_DARK_ORIGINAL = dict(DARK)
 
 # Widget classes (extracted to widgets.py)
 from widgets import GlowingOrb, LevelMeter, UnicodeEQ, SmallOrb, UserRow, ToggleSwitch, NavButton
@@ -199,6 +202,7 @@ class FloatingPanel(QWidget):
 
         # ── RIGHT: Content area ───────────────────────────────
         content_frame = QFrame()
+        content_frame.setObjectName("content_frame")
         content_frame.setStyleSheet(f"border-left: 1px solid {DARK['BORDER']};")
         self._content_layout = QVBoxLayout(content_frame)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
@@ -295,9 +299,10 @@ class FloatingPanel(QWidget):
     # ── Sidebar ─────────────────────────────────────────────────────
     def _build_sidebar(self):
         sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(SIDEBAR_W)
         sidebar.setStyleSheet(f"""
-            QFrame {{
+            QFrame#sidebar {{
                 background: {DARK['BG']};
                 border: none;
             }}
@@ -320,7 +325,21 @@ class FloatingPanel(QWidget):
         self._nav_radio.clicked.connect(self._on_nav_clicked)
         v.addWidget(self._nav_radio)
 
-        self._nav_settings = NavButton("settings", "⚙", "MORE")
+        self._nav_settings = NavButton("settings", "", "")
+        # Use a QPixmap gear icon instead of emoji (emojis don't scale on macOS)
+        gear_pixmap = QPixmap(36, 36)
+        gear_pixmap.fill(QColor(0, 0, 0, 0))
+        gp = QPainter(gear_pixmap)
+        gp.setRenderHint(QPainter.Antialiasing)
+        gf = QFont()
+        gf.setPixelSize(34)
+        gp.setFont(gf)
+        gp.setPen(QColor(DARK['TEXT_DIM']))
+        gp.drawText(QRect(0, 0, 36, 36), Qt.AlignCenter, "⚙")
+        gp.end()
+        self._nav_settings._icon.setPixmap(gear_pixmap)
+        self._nav_settings._icon.setFixedSize(36, 36)
+        self._nav_settings.setFixedSize(56, 56)
         self._nav_settings.clicked.connect(self._on_nav_clicked)
         v.addWidget(self._nav_settings)
 
@@ -358,6 +377,9 @@ class FloatingPanel(QWidget):
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
         # Update section title
         self._section_title.setText(key.upper())
+        # Populate settings when navigating to it
+        if key == "settings":
+            self._populate_settings()
         # Auto-play radio when navigating to it
         if key == "radio":
             self.start_radio_on_nav()
@@ -2389,32 +2411,6 @@ class FloatingPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # ── Header with back button ──
-        hdr = QFrame()
-        hdr.setStyleSheet(f"border-bottom: 1px solid {DARK['BORDER']};")
-        hdr.setFixedHeight(40)
-        hdr_layout = QHBoxLayout(hdr)
-        hdr_layout.setContentsMargins(10, 0, 10, 0)
-        hdr_layout.setSpacing(8)
-
-        back_btn = QPushButton("<")
-        back_btn.setFixedSize(28, 28)
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 16px; font-weight: 700; color: {DARK['TEAL']};
-                background: transparent; border: none; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: rgba(42,191,191,0.12); }}
-        """)
-        back_btn.clicked.connect(self._close_settings)
-        hdr_layout.addWidget(back_btn)
-
-        title = QLabel("Settings")
-        title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
-        hdr_layout.addWidget(title, 1)
-        v.addWidget(hdr)
-
         # ── Scrollable settings items ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -2456,152 +2452,190 @@ class FloatingPanel(QWidget):
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """
+        section_style = f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; padding: 4px 12px 2px 12px; text-transform: uppercase; letter-spacing: 1px;"
 
-        # ── Change Name ──
-        name_btn = QPushButton("Change Name")
+        combo_style = f"""
+            QComboBox {{
+                font-size: 11px; padding: 3px 6px;
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+            }}
+            QComboBox QAbstractItemView {{
+                background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                border: 1px solid {DARK['BORDER']};
+                selection-background-color: {DARK['BG_HOVER']};
+            }}
+        """
+
+        def _divider():
+            d = QFrame()
+            d.setFixedHeight(1)
+            d.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
+            return d
+
+        def _section(title):
+            lbl = QLabel(title)
+            lbl.setStyleSheet(section_style)
+            return lbl
+
+        tile_style = f"""
+            QPushButton {{
+                padding: 8px 6px; font-size: 11px; font-weight: 600;
+                color: {DARK['TEXT']}; background: {DARK['BG_RAISED']};
+                border: 1px solid {DARK['BORDER']}; border-radius: 8px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
+        """
+        menu_style = f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{ padding: 5px 12px; border-radius: 4px; }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+        """
+
+        def _tile_row(*buttons):
+            """Create a horizontal row of equally-sized tile buttons."""
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(4, 0, 4, 0)
+            h.setSpacing(6)
+            for btn in buttons:
+                h.addWidget(btn, 1)
+            return row
+
+        # ── Row 1: Name + Theme ──
+        display_name = getattr(self, '_display_name', None) or 'Not set'
+        name_btn = QPushButton(f"👤  {display_name}")
         name_btn.setCursor(Qt.PointingHandCursor)
-        name_btn.setStyleSheet(row_style)
-        name_btn.clicked.connect(lambda: (self._close_settings(), self._change_name_dialog()))
-        layout.addWidget(name_btn)
+        name_btn.setStyleSheet(tile_style)
+        name_btn.clicked.connect(lambda: (self._change_name_dialog(), self._populate_settings()))
 
-        # ── Incognito ──
-        incognito_text = "Visible" if self._incognito else "Incognito"
+        theme_text = "☀  Light Mode" if self._dark_mode else "🌙  Dark Mode"
+        theme_btn = QPushButton(theme_text)
+        theme_btn.setCursor(Qt.PointingHandCursor)
+        theme_btn.setStyleSheet(tile_style)
+        theme_btn.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
+
+        layout.addWidget(_tile_row(name_btn, theme_btn))
+
+        # ── Row 2: Incognito ── (still useful as full-width conceptually, but pair it)
+        incognito_text = "👁  Go Incognito" if not self._incognito else "👁‍🗨  Go Visible"
         incognito_btn = QPushButton(incognito_text)
         incognito_btn.setCursor(Qt.PointingHandCursor)
-        incognito_btn.setStyleSheet(row_style)
+        incognito_btn.setStyleSheet(tile_style)
         incognito_btn.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
-        layout.addWidget(incognito_btn)
 
-        # ── Pin Window ──
-        pin_text = "Unpin Window" if self._pinned else "Pin Window"
-        pin_btn = QPushButton(pin_text)
-        pin_btn.setCursor(Qt.PointingHandCursor)
-        pin_btn.setStyleSheet(row_style)
-        pin_btn.clicked.connect(lambda: (self._close_settings(), self._toggle_pin()))
-        layout.addWidget(pin_btn)
+        # Placeholder for second column — could add PTT key config later
+        hotkey_btn = QPushButton("⌨  PTT Key")
+        hotkey_btn.setCursor(Qt.PointingHandCursor)
+        hotkey_btn.setStyleSheet(tile_style)
+        hotkey_btn.setEnabled(False)
+        hotkey_btn.setToolTip("Coming soon")
 
-        # ── Divider ──
-        div1 = QFrame()
-        div1.setFixedHeight(1)
-        div1.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
-        layout.addWidget(div1)
+        layout.addWidget(_tile_row(incognito_btn, hotkey_btn))
 
-        # ── Audio Devices ──
+        layout.addWidget(_divider())
+
+        # ── AUDIO: Input + Output ──
+        layout.addWidget(_section("AUDIO"))
+
         try:
             import sounddevice as sd
             devices = sd.query_devices()
 
-            # Input device
-            in_row = QWidget()
-            in_h = QHBoxLayout(in_row)
-            in_h.setContentsMargins(12, 4, 12, 4)
-            in_h.setSpacing(8)
-            in_icon = QLabel("Input")
-            in_icon.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']};")
-            in_h.addWidget(in_icon)
-            in_combo = QComboBox()
-            in_combo.setStyleSheet(f"""
-                QComboBox {{
-                    font-size: 11px; padding: 3px 6px;
-                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-                }}
-                QComboBox QAbstractItemView {{
-                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-                    border: 1px solid {DARK['BORDER']};
-                    selection-background-color: {DARK['BG_HOVER']};
-                }}
-            """)
-            in_combo.addItem("System Default", None)
+            input_devices = [("Default", None)]
+            output_devices = [("Default", None)]
             current_in = getattr(self, '_current_input_idx', None)
-            for i, d in enumerate(devices):
-                if d['max_input_channels'] > 0:
-                    in_combo.addItem(d['name'][:28], i)
-                    if current_in == i:
-                        in_combo.setCurrentIndex(in_combo.count() - 1)
-            in_combo.currentIndexChanged.connect(
-                lambda idx, c=in_combo: self._on_input_device_changed(c.currentData())
-            )
-            in_h.addWidget(in_combo, 1)
-            layout.addWidget(in_row)
-
-            # Output device
-            out_row = QWidget()
-            out_h = QHBoxLayout(out_row)
-            out_h.setContentsMargins(12, 4, 12, 4)
-            out_h.setSpacing(8)
-            out_icon = QLabel("Output")
-            out_icon.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']};")
-            out_h.addWidget(out_icon)
-            out_combo = QComboBox()
-            out_combo.setStyleSheet(f"""
-                QComboBox {{
-                    font-size: 11px; padding: 3px 6px;
-                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-                    min-width: 100px;
-                }}
-                QComboBox QAbstractItemView {{
-                    background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-                    border: 1px solid {DARK['BORDER']};
-                    selection-background-color: {DARK['BG_HOVER']};
-                }}
-            """)
-            out_combo.addItem("System Default", None)
             current_out = getattr(self, '_current_output_idx', None)
+            current_in_name = "Default"
+            current_out_name = "Default"
+
             for i, d in enumerate(devices):
+                short_name = d['name'][:20]
+                if d['max_input_channels'] > 0:
+                    input_devices.append((short_name, i))
+                    if current_in == i:
+                        current_in_name = short_name
                 if d['max_output_channels'] > 0:
-                    out_combo.addItem(d['name'][:28], i)
+                    output_devices.append((short_name, i))
                     if current_out == i:
-                        out_combo.setCurrentIndex(out_combo.count() - 1)
-            out_combo.currentIndexChanged.connect(
-                lambda idx, c=out_combo: self._on_output_device_changed(c.currentData())
-            )
-            out_h.addWidget(out_combo, 1)
-            layout.addWidget(out_row)
+                        current_out_name = short_name
+
+            in_btn = QPushButton(f"🎤  {current_in_name}")
+            in_btn.setCursor(Qt.PointingHandCursor)
+            in_btn.setStyleSheet(tile_style)
+            in_menu = QMenu(in_btn)
+            in_menu.setStyleSheet(menu_style)
+            for name, idx in input_devices:
+                action = in_menu.addAction(name)
+                action.triggered.connect(
+                    lambda checked=False, i=idx: (self._on_input_device_changed(i), self._populate_settings())
+                )
+            in_btn.setMenu(in_menu)
+
+            out_btn = QPushButton(f"🔊  {current_out_name}")
+            out_btn.setCursor(Qt.PointingHandCursor)
+            out_btn.setStyleSheet(tile_style)
+            out_menu = QMenu(out_btn)
+            out_menu.setStyleSheet(menu_style)
+            for name, idx in output_devices:
+                action = out_menu.addAction(name)
+                action.triggered.connect(
+                    lambda checked=False, i=idx: (self._on_output_device_changed(i), self._populate_settings())
+                )
+            out_btn.setMenu(out_menu)
+
+            layout.addWidget(_tile_row(in_btn, out_btn))
         except Exception as e:
             print(f"Audio device settings error: {e}")
 
-        # ── Divider ──
-        div3 = QFrame()
-        div3.setFixedHeight(1)
-        div3.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
-        layout.addWidget(div3)
+        layout.addWidget(_divider())
 
-        # ── Copy Invite Code ──
-        copy_code_btn = QPushButton("Copy Invite Code")
+        # ── TEAM: Copy Code + Invite a Friend ──
+        layout.addWidget(_section("TEAM"))
+
+        copy_code_btn = QPushButton("📋  Copy Code")
         copy_code_btn.setCursor(Qt.PointingHandCursor)
-        copy_code_btn.setStyleSheet(row_style)
-        copy_code_btn.clicked.connect(lambda: self._copy_invite_code())
-        layout.addWidget(copy_code_btn)
+        copy_code_btn.setStyleSheet(tile_style)
+        copy_code_btn.clicked.connect(lambda: (self._copy_invite_code(), self._show_copied_toast()))
 
-        # ── Leave Team ──
+        invite_btn = QPushButton("✉  Invite a Friend")
+        invite_btn.setCursor(Qt.PointingHandCursor)
+        invite_btn.setStyleSheet(tile_style)
+        invite_btn.clicked.connect(self._invite_friend_email)
+
+        layout.addWidget(_tile_row(copy_code_btn, invite_btn))
+
+        layout.addWidget(_divider())
+
+        # ── Leave Team + Quit ──
         leave_team_btn = QPushButton("Leave Team")
         leave_team_btn.setCursor(Qt.PointingHandCursor)
         leave_team_btn.setStyleSheet(f"""
             QPushButton {{
-                text-align: left; padding: 8px 12px; font-size: 13px;
-                font-weight: 500; color: {DARK['WARN']}; background: transparent;
-                border: none; border-radius: 8px;
+                padding: 8px 6px; font-size: 11px; font-weight: 600;
+                color: {DARK['WARN']}; background: {DARK['BG_RAISED']};
+                border: 1px solid rgba(230,175,0,0.3); border-radius: 8px;
             }}
             QPushButton:hover {{ background: rgba(230,175,0,0.10); }}
         """)
         leave_team_btn.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
-        layout.addWidget(leave_team_btn)
 
-        # ── Quit ──
         quit_btn = QPushButton("Quit OH")
         quit_btn.setCursor(Qt.PointingHandCursor)
         quit_btn.setStyleSheet(f"""
             QPushButton {{
-                text-align: left; padding: 8px 12px; font-size: 13px;
-                font-weight: 500; color: {DARK['DANGER']}; background: transparent;
-                border: none; border-radius: 8px;
+                padding: 8px 6px; font-size: 11px; font-weight: 600;
+                color: {DARK['DANGER']}; background: {DARK['BG_RAISED']};
+                border: 1px solid rgba(229,57,53,0.3); border-radius: 8px;
             }}
             QPushButton:hover {{ background: rgba(229,57,53,0.10); }}
         """)
         quit_btn.clicked.connect(self.quit_requested.emit)
-        layout.addWidget(quit_btn)
+
+        layout.addWidget(_tile_row(leave_team_btn, quit_btn))
 
     def _show_hamburger_menu(self):
         """Toggle the inline settings view."""
@@ -2672,6 +2706,25 @@ class FloatingPanel(QWidget):
         anim.finished.connect(toast.deleteLater)
         anim.start()
 
+    def _invite_friend_email(self):
+        """Open a mailto: link to invite a friend with the current team's invite code."""
+        import urllib.parse as _up
+        idx = self._team_combo.currentIndex()
+        code = ""
+        team_name = "Office Hours"
+        if idx >= 0:
+            code = self._team_combo.itemData(idx, Qt.UserRole + 2) or ""
+            team_name = self._team_combo.currentText() or "Office Hours"
+        subject = f"Join me on Office Hours"
+        body = f"Hey!\n\nI'm using Office Hours — a voice intercom app for teams.\n\n"
+        if code:
+            body += f"Join my team \"{team_name}\" with this invite code: {code}\n\n"
+        body += "Download it here: https://github.com/matthannam-fart/office-hours\n"
+        mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        QDesktopServices.openUrl(QUrl(mailto))
+
     def _copy_invite_code(self):
         """Copy the current team's invite code to the clipboard."""
         idx = self._team_combo.currentIndex()
@@ -2737,17 +2790,40 @@ class FloatingPanel(QWidget):
 
     def _toggle_dark_mode(self):
         self._dark_mode = not self._dark_mode
+        self._apply_theme()
         self.dark_mode_toggled.emit(self._dark_mode)
 
+    def _apply_theme(self):
+        """Swap the DARK dict values in-place to match current theme, then restyle."""
+        target = _DARK_ORIGINAL if self._dark_mode else LIGHT
+        for k in DARK:
+            if k in target:
+                DARK[k] = target[k]
+        # Restyle the main panel frame
+        self._content_frame.setStyleSheet(f"""
+            QFrame#content_frame {{
+                background: {DARK['BG']};
+                border: 1px solid {DARK['BORDER']};
+                border-radius: {PANEL_RADIUS}px;
+            }}
+        """)
+        self._sidebar.setStyleSheet(f"""
+            QFrame#sidebar {{
+                background: {DARK['BG_RAISED']};
+                border-right: 1px solid {DARK['BORDER']};
+                border-top-left-radius: {PANEL_RADIUS}px;
+                border-bottom-left-radius: {PANEL_RADIUS}px;
+            }}
+        """)
+        # Re-populate settings so tile colors update
+        self._populate_settings()
+        self.update()
+
     def apply_dark_mode(self, enabled):
-        """Apply dark or light mode color palette to the panel.
-        Note: The panel defaults to dark. This method exists for the settings toggle.
-        """
+        """Apply dark or light mode color palette to the panel."""
         self._dark_mode = enabled
-        # Since dark is now the default, this is a no-op for enabled=True.
-        # A full light-mode implementation would require restyling everything;
-        # for now we just update user row text color for consistency.
-        text_color = DARK['TEXT'] if enabled else "#3a3a3a"
+        self._apply_theme()
+        text_color = DARK['TEXT']
         for i in range(self._user_layout.count()):
             widget = self._user_layout.itemAt(i).widget()
             if widget and hasattr(widget, 'name_label'):

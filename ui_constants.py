@@ -49,3 +49,23 @@ DARK = {
     'DANGER':     '#e53935',   # Red / destructive
     'WARN':       '#e6af00',   # Yellow / busy
 }
+
+# ── Light Theme Palette ──────────────────────────────────────────
+LIGHT = {
+    'BG':         '#f5f5f5',
+    'BG_RAISED':  '#ffffff',
+    'BG_HOVER':   '#e8e8e8',
+    'BORDER':     '#d0d0d0',
+    'BORDER_LT':  '#e0e0e0',
+    'TEXT':        '#1e1e1e',
+    'TEXT_DIM':    '#666666',
+    'TEXT_FAINT':  '#999999',
+    'ACCENT':     '#00a651',
+    'ACCENT_DIM': '#008040',
+    'ACCENT_LT':  '#2e7d32',
+    'INFO':       '#1976d2',
+    'INFO_LT':    '#1565c0',
+    'TEAL':       '#00897b',
+    'DANGER':     '#d32f2f',
+    'WARN':       '#f9a825',
+}
