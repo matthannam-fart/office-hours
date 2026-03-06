@@ -241,13 +241,15 @@ class SmallOrb(QWidget):
 #  User Row Widget
 # ═══════════════════════════════════════════════════════════════════
 class UserRow(QWidget):
-    """Press-and-hold intercom button for each online user."""
-    call_clicked = Signal(str)            # user_id (legacy, still used for single-click fallback)
-    intercom_pressed = Signal(str)        # user_id — finger/mouse down
-    intercom_released = Signal(str)       # user_id — finger/mouse up
+    """Clickable user row — click to select as PTT target."""
+    call_clicked = Signal(str)            # user_id (legacy)
+    intercom_pressed = Signal(str)        # user_id — used for PTT start (from main.py)
+    intercom_released = Signal(str)       # user_id — used for PTT stop (from main.py)
+    user_selected = Signal(str)           # user_id — single click to select as target
 
     # Visual states
     STATE_IDLE = "idle"
+    STATE_SELECTED = "selected"
     STATE_CONNECTING = "connecting"
     STATE_LIVE = "live"
 
@@ -314,6 +316,14 @@ class UserRow(QWidget):
                     border-radius: 10px;
                 }}
             """)
+        elif self._state == self.STATE_SELECTED:
+            self.setStyleSheet(f"""
+                UserRow {{
+                    background: rgba(0, 166, 81, 0.10);
+                    border: 1px solid rgba(0, 166, 81, 0.30);
+                    border-radius: 10px;
+                }}
+            """)
         else:
             self.setStyleSheet(f"""
                 UserRow {{
@@ -326,7 +336,7 @@ class UserRow(QWidget):
             """)
 
     def set_state(self, state):
-        """Update visual state: idle, connecting, or live."""
+        """Update visual state: idle, selected, connecting, or live."""
         self._state = state
         self._apply_style()
         if state == self.STATE_LIVE:
@@ -337,6 +347,11 @@ class UserRow(QWidget):
         elif state == self.STATE_CONNECTING:
             self._status_lbl.setText("...")
             self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {DARK['TEXT_FAINT']}; border: none;")
+            self._status_lbl.setVisible(True)
+            self._eq.setVisible(False)
+        elif state == self.STATE_SELECTED:
+            self._status_lbl.setText("▶ TARGET")
+            self._status_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['ACCENT_LT']}; border: none;")
             self._status_lbl.setVisible(True)
             self._eq.setVisible(False)
         else:
@@ -353,13 +368,13 @@ class UserRow(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._pressed = True
-            self.intercom_pressed.emit(self.user_id)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._pressed:
             self._pressed = False
-            self.intercom_released.emit(self.user_id)
+            # Single click selects this user as PTT target
+            self.user_selected.emit(self.user_id)
         super().mouseReleaseEvent(event)
 
 

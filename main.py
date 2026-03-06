@@ -84,11 +84,11 @@ class IntercomApp(QObject):
         self._pre_call_mode = None     # Mode before entering a call (restored on disconnect)
         self._connected_peer_id = None # User ID of peer we're in a call with
 
-        # Intercom state (press-and-hold on user rows)
-        self._intercom_target_id = None   # user_id currently being pressed
+        # Intercom state (click to select + PTT)
+        self._intercom_target_id = None   # user_id selected as PTT target
         self._intercom_connected = False  # True once connection is ready for audio
         self._intercom_streaming = False  # True while audio is actively streaming
-        self._intercom_keep_alive = None  # QTimer for 30s keep-alive after release
+        self._intercom_keep_alive = None  # QTimer for 30s keep-alive after PTT release
 
 
         # User identity
@@ -213,6 +213,7 @@ class IntercomApp(QObject):
         self.panel.call_user_requested.connect(self._on_call_user)
         self.panel.intercom_pressed.connect(self._on_intercom_press)
         self.panel.intercom_released.connect(self._on_intercom_release)
+        self.panel.user_selected.connect(self._on_user_selected)
         self.panel.leave_requested.connect(self.do_disconnect)
         self.panel.accept_call_requested.connect(self._on_accept_call)
         self.panel.decline_call_requested.connect(self._on_decline_call)
@@ -391,50 +392,63 @@ class IntercomApp(QObject):
             if hasattr(self, '_calling_user_id'):
                 self.network.connect_to_user(self._calling_user_id)
 
-    # ── Intercom: Press-and-Hold on User Rows ─────────────────────
-    def _on_intercom_press(self, user_id):
-        """User pressed down on a user row — initiate intercom."""
+    # ── Intercom: Click to Select + PTT ──────────────────────────
+    def _on_user_selected(self, user_id):
+        """User clicked a row to select as PTT target."""
+        if not user_id:
+            # Deselected — clear target
+            self._intercom_target_id = None
+            self.log("Target cleared")
+            return
+
         target = self.online_users.get(user_id, {})
         target_name = target.get("name", "Unknown")
         target_mode = target.get("mode", "GREEN")
 
-        # DND users can't be intercommed
+        # DND users can't be targeted
         if target_mode == self.MODE_RED:
             self.log(f"{target_name} is unavailable")
+            self.panel.set_user_state(user_id, "idle")
             return
 
         self._intercom_target_id = user_id
+        self.log(f"Target: {target_name}")
 
         # Cancel any keep-alive timer from a previous session
         if self._intercom_keep_alive:
             self._intercom_keep_alive.stop()
             self._intercom_keep_alive = None
 
-        # Already connected to this user? Start streaming immediately
-        if self.network.connected and self._connected_peer_id == user_id:
-            self._intercom_connected = True
-            self._start_intercom_stream(user_id, target_name)
-            return
-
-        # Need to connect first — disconnect any existing call
-        if self.network.connected:
-            self.do_disconnect()
-
-        # Show connecting state on the row
-        self.panel.set_user_state(user_id, "connecting")
-        self.log(f"Connecting to {target_name}...")
-
-        # Initiate connection (reuse existing call flow)
-        self._calling_user_id = user_id
-        self._intercom_connected = False
-
-        lan_ip = self._find_lan_ip(target_name)
-        if lan_ip:
-            threading.Thread(
-                target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
-            ).start()
+        # Pre-connect in background so PTT is instant
+        if not (self.network.connected and self._connected_peer_id == user_id):
+            if self.network.connected:
+                self.do_disconnect()
+            self.panel.set_user_state(user_id, "connecting")
+            self._calling_user_id = user_id
+            self._intercom_connected = False
+            lan_ip = self._find_lan_ip(target_name)
+            if lan_ip:
+                threading.Thread(
+                    target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
+                ).start()
+            else:
+                self.network.connect_to_user(user_id)
         else:
-            self.network.connect_to_user(user_id)
+            self._intercom_connected = True
+
+    def _on_intercom_press(self, user_id):
+        """PTT pressed — start streaming to selected target."""
+        if not self._intercom_target_id:
+            return
+        target = self.online_users.get(self._intercom_target_id, {})
+        target_name = target.get("name", "Unknown")
+
+        if self.network.connected and self._connected_peer_id == self._intercom_target_id:
+            self._intercom_connected = True
+            self._start_intercom_stream(self._intercom_target_id, target_name)
+        else:
+            # Not yet connected — connect and stream once ready
+            self._on_user_selected(self._intercom_target_id)
 
     def _start_intercom_stream(self, user_id, target_name):
         """Begin streaming audio to the intercom target."""
@@ -445,24 +459,24 @@ class IntercomApp(QObject):
         self.log(f"Talking to {target_name}")
 
     def _on_intercom_release(self, user_id):
-        """User released — stop streaming, keep connection warm."""
+        """PTT released — stop streaming, keep connection warm."""
         if self._intercom_streaming:
             self._intercom_streaming = False
             self.audio.stop_streaming()
             self.network.send_control("TALK_STOP", {})
             self.log("Released")
 
-        # Reset row state
-        self.panel.set_user_state(user_id, "idle")
-        self._intercom_target_id = None
+        # Keep row in selected state (not idle)
+        if self._intercom_target_id:
+            self.panel.set_user_state(self._intercom_target_id, "selected")
 
-        # Keep connection alive for 30 seconds so re-press is instant
+        # Keep connection alive for 60 seconds so re-PTT is instant
         if self.network.connected:
             if not self._intercom_keep_alive:
                 self._intercom_keep_alive = QTimer(self)
                 self._intercom_keep_alive.setSingleShot(True)
                 self._intercom_keep_alive.timeout.connect(self._intercom_keepalive_expired)
-            self._intercom_keep_alive.start(30_000)
+            self._intercom_keep_alive.start(60_000)
 
     def _on_mic_level(self, level):
         """Route mic level to call banner and/or active intercom row."""
@@ -863,6 +877,12 @@ class IntercomApp(QObject):
                 self.cycle_mode()
 
     def on_talk_press(self):
+        # Route through intercom system if a target is selected
+        if self._intercom_target_id:
+            self._on_intercom_press(self._intercom_target_id)
+            self.panel.set_ptt_active(True)
+            return
+
         if not self.network.connected:
             self.log("Not connected to a peer.")
             return
@@ -888,6 +908,12 @@ class IntercomApp(QObject):
             self.log("Peer is unavailable (DND).")
 
     def on_talk_release(self):
+        # Route through intercom system if a target is selected
+        if self._intercom_target_id:
+            self._on_intercom_release(self._intercom_target_id)
+            self.panel.set_ptt_active(False)
+            return
+
         self.audio.stop_streaming()
         self.network.send_control("TALK_STOP", {})
         self.panel.set_ptt_active(False)

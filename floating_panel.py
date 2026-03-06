@@ -72,6 +72,7 @@ class FloatingPanel(QWidget):
     call_user_requested = Signal(str)     # user_id (legacy)
     intercom_pressed = Signal(str)        # user_id — hold to talk
     intercom_released = Signal(str)       # user_id — release to stop
+    user_selected = Signal(str)           # user_id — click to select as PTT target
     leave_requested = Signal()
     accept_call_requested = Signal()
     decline_call_requested = Signal()
@@ -312,7 +313,7 @@ class FloatingPanel(QWidget):
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
         """)
-        add_btn.clicked.connect(self.create_team_requested.emit)
+        add_btn.clicked.connect(self._on_create_team_click)
         # Center the button
         btn_container = QHBoxLayout()
         btn_container.setContentsMargins(0, 8, 0, 8)
@@ -1907,6 +1908,7 @@ class FloatingPanel(QWidget):
             row.call_clicked.connect(self.call_user_requested.emit)
             row.intercom_pressed.connect(self.intercom_pressed.emit)
             row.intercom_released.connect(self.intercom_released.emit)
+            row.user_selected.connect(self._on_user_row_clicked)
             # Restore intercom state if this row was active
             if uid in old_states:
                 row.set_state(old_states[uid])
@@ -1919,8 +1921,24 @@ class FloatingPanel(QWidget):
         if not self._pinned and not self._is_onboarding:
             self._auto_resize()
 
+    def _on_user_row_clicked(self, user_id):
+        """Handle click on a user row — select as PTT target."""
+        # Deselect all other rows (except if they're in connecting/live state)
+        for uid, row in self._user_rows.items():
+            if uid != user_id and row._state == UserRow.STATE_SELECTED:
+                row.set_state(UserRow.STATE_IDLE)
+        # Toggle selection on clicked row
+        row = self._user_rows.get(user_id)
+        if row:
+            if row._state == UserRow.STATE_SELECTED:
+                row.set_state(UserRow.STATE_IDLE)
+                self.user_selected.emit("")  # Deselect
+            elif row._state == UserRow.STATE_IDLE:
+                row.set_state(UserRow.STATE_SELECTED)
+                self.user_selected.emit(user_id)
+
     def set_user_state(self, user_id, state):
-        """Set a user row's visual state (idle/connecting/live)."""
+        """Set a user row's visual state (idle/selected/connecting/live)."""
         row = self._user_rows.get(user_id)
         if row:
             row.set_state(state)
