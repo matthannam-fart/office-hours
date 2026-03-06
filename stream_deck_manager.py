@@ -72,13 +72,23 @@ class StreamDeckHandler:
         self.connect()
 
     def connect(self):
+        self._check_elgato_app()
+
         streamdecks = DeviceManager().enumerate()
         if not streamdecks:
             print("No Stream Deck found.")
             return
 
         self.deck = streamdecks[0]
-        self.deck.open()
+        try:
+            self.deck.open()
+        except Exception as e:
+            if self._elgato_running:
+                raise RuntimeError(
+                    "Cannot open Stream Deck — the Elgato app is running.\n"
+                    "Please quit the Elgato Stream Deck app and restart Office Hours."
+                ) from e
+            raise
         self.deck.reset()
         self._key_count = self.deck.key_count()
         self._cols = self.deck.key_layout()[1]
@@ -89,6 +99,26 @@ class StreamDeckHandler:
         self.deck.set_brightness(100)
 
         self._init_keys()
+
+    def _check_elgato_app(self):
+        """Detect if the Elgato Stream Deck app is running."""
+        self._elgato_running = False
+        try:
+            import subprocess
+            if sys.platform == 'darwin':
+                result = subprocess.run(
+                    ['pgrep', '-f', 'Stream Deck'],
+                    capture_output=True, timeout=3
+                )
+                self._elgato_running = result.returncode == 0
+            elif sys.platform == 'win32':
+                result = subprocess.run(
+                    ['tasklist', '/FI', 'IMAGENAME eq StreamDeck.exe'],
+                    capture_output=True, text=True, timeout=3
+                )
+                self._elgato_running = 'StreamDeck.exe' in result.stdout
+        except Exception:
+            pass
 
     @property
     def is_large(self):
