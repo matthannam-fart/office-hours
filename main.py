@@ -1223,8 +1223,6 @@ class IntercomApp(QObject):
         """Re-filter and display online users based on current team."""
         panel_users = []
         for uid, info in self.online_users.items():
-            if uid == self._connected_peer_id:
-                continue
             if self.active_team_id and info.get("team_id", "") != self.active_team_id:
                 continue
             panel_users.append({

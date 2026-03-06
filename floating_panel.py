@@ -111,6 +111,7 @@ class FloatingPanel(QWidget):
         self._dark_mode = True
         self._is_onboarding = False  # True while onboarding is shown
         self._radio_station = None  # currently playing station name
+        self._user_rows = {}  # uid -> UserRow (initialized before set_users can be called)
 
         # Radio player
         self._audio_output = QAudioOutput()
