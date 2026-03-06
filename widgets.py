@@ -130,45 +130,69 @@ class LevelMeter(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Unicode EQ Visualizer — retro stereo look
+#  Unicode EQ Visualizer — retro VU meter (green → yellow → red)
 # ═══════════════════════════════════════════════════════════════════
 import random
 
 # Block characters from shortest to tallest
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 
-class UnicodeEQ(QLabel):
-    """Retro equalizer using unicode block characters.
-    Looks like ▂▅█▃▆▁▄ — bouncy bars that respond to audio level."""
+# VU meter colors: green (low) → yellow (mid) → red (hot)
+_VU_COLORS = {
+    0: "#333333",  # silent — dim
+    1: "#4caf50",  # green
+    2: "#4caf50",
+    3: "#66bb6a",
+    4: "#c8e600",  # yellow-green
+    5: "#fdd835",  # yellow
+    6: "#ffb300",  # amber
+    7: "#ff6d00",  # orange
+    8: "#e53935",  # red — hot!
+}
+
+class UnicodeEQ(QWidget):
+    """Retro VU-meter equalizer with green/yellow/red color coding.
+    Each bar is colored by its height — like a real stereo."""
 
     def __init__(self, num_bars=8, color="#4caf50", parent=None):
         super().__init__(parent)
         self._num_bars = num_bars
-        self._color = color
+        self._fallback_color = color
         self._level = 0.0
-        self._bars = [0] * num_bars  # per-bar heights (0–8)
-        self._decay = 0.6  # how fast bars fall
-        self.setStyleSheet(
-            f"font-family: monospace; font-size: 14px; color: {color}; "
-            f"letter-spacing: 1px; border: none;"
-        )
-        self.setText(_BLOCKS[0] * num_bars)
+        self._bars = [0] * num_bars
+        self._font_size = 14
+        # Size: each bar char is roughly font_size * 0.7 wide, plus letter-spacing
+        bar_width = int(self._font_size * 0.75 * num_bars) + 8
+        self.setFixedSize(bar_width, self._font_size + 4)
 
     def set_level(self, level):
         """Update with audio level (0.0–1.0)."""
         self._level = max(0.0, min(1.0, level))
-        # Map level to a target height (0–8)
         target = int(self._level * 8)
         for i in range(self._num_bars):
             if self._level > 0.02:
-                # Each bar gets the target ± some jitter for the EQ bounce effect
                 jitter = random.randint(-2, 2)
                 self._bars[i] = max(0, min(8, target + jitter))
             else:
-                # Decay toward zero when quiet
                 self._bars[i] = max(0, self._bars[i] - random.randint(1, 2))
-        text = "".join(_BLOCKS[h] for h in self._bars)
-        self.setText(text)
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QFont
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        font = QFont("monospace", self._font_size)
+        font.setStyleHint(QFont.Monospace)
+        p.setFont(font)
+
+        char_w = self.width() / self._num_bars
+        for i, h in enumerate(self._bars):
+            color = QColor(_VU_COLORS.get(h, self._fallback_color))
+            p.setPen(color)
+            x = int(i * char_w)
+            p.drawText(x, self._font_size, _BLOCKS[h])
+
+        p.end()
 
 
 # ═══════════════════════════════════════════════════════════════════
