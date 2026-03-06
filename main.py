@@ -88,7 +88,8 @@ class IntercomApp(QObject):
         self._intercom_target_id = None   # user_id selected as PTT target
         self._intercom_connected = False  # True once connection is ready for audio
         self._intercom_streaming = False  # True while audio is actively streaming
-        self._intercom_keep_alive = None  # QTimer for 30s keep-alive after PTT release
+        self._intercom_ptt_held = False   # True while PTT is physically held down
+        self._intercom_keep_alive = None  # QTimer for 60s keep-alive after PTT release
 
 
         # User identity
@@ -398,6 +399,7 @@ class IntercomApp(QObject):
         if not user_id:
             # Deselected — clear target
             self._intercom_target_id = None
+            self._intercom_ptt_held = False
             self.log("Target cleared")
             return
 
@@ -440,6 +442,7 @@ class IntercomApp(QObject):
         """PTT pressed — start streaming to selected target."""
         if not self._intercom_target_id:
             return
+        self._intercom_ptt_held = True
         target = self.online_users.get(self._intercom_target_id, {})
         target_name = target.get("name", "Unknown")
 
@@ -460,6 +463,7 @@ class IntercomApp(QObject):
 
     def _on_intercom_release(self, user_id):
         """PTT released — stop streaming, keep connection warm."""
+        self._intercom_ptt_held = False
         if self._intercom_streaming:
             self._intercom_streaming = False
             self.audio.stop_streaming()
@@ -757,11 +761,17 @@ class IntercomApp(QObject):
         """Called on main thread when call is established."""
         self._intercom_connected = True
 
-        # If user is still holding during an intercom press, start streaming now
-        if self._intercom_target_id and not self._intercom_streaming:
+        # If PTT is physically held while connection completes, start streaming now
+        if self._intercom_target_id and self._intercom_ptt_held and not self._intercom_streaming:
             self._start_intercom_stream(self._intercom_target_id, peer_name)
-            # Don't show the old-style call banner — the row handles it
             self.panel.hide_outgoing()
+            return
+
+        # If just selecting (no PTT), update row state and suppress call banner
+        if self._intercom_target_id:
+            self.panel.set_user_state(self._intercom_target_id, "selected")
+            self.panel.hide_outgoing()
+            self.log(f"Ready — {peer_name}")
             return
 
         # Legacy call flow (call banners etc.)

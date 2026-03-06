@@ -308,6 +308,7 @@ class UserRow(QWidget):
                     border-radius: 10px;
                 }}
             """)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {DARK['DANGER']}; border: none;")
         elif self._state == self.STATE_CONNECTING:
             self.setStyleSheet(f"""
                 UserRow {{
@@ -316,24 +317,30 @@ class UserRow(QWidget):
                     border-radius: 10px;
                 }}
             """)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT_DIM']}; border: none;")
         elif self._state == self.STATE_SELECTED:
             self.setStyleSheet(f"""
                 UserRow {{
-                    background: rgba(0, 166, 81, 0.10);
-                    border: 1px solid rgba(0, 166, 81, 0.30);
+                    background: rgba(0, 166, 81, 0.12);
+                    border-left: 3px solid rgba(0, 166, 81, 0.80);
+                    border-top: none; border-right: none; border-bottom: none;
                     border-radius: 10px;
                 }}
             """)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {DARK['ACCENT_LT']}; border: none;")
         else:
             self.setStyleSheet(f"""
                 UserRow {{
                     background: {DARK['BG_RAISED']};
+                    border: 1px solid transparent;
                     border-radius: 10px;
                 }}
                 UserRow:hover {{
                     background: {DARK['BG_HOVER']};
+                    border: 1px solid {DARK['BORDER']};
                 }}
             """)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
 
     def set_state(self, state):
         """Update visual state: idle, selected, connecting, or live."""
@@ -350,9 +357,7 @@ class UserRow(QWidget):
             self._status_lbl.setVisible(True)
             self._eq.setVisible(False)
         elif state == self.STATE_SELECTED:
-            self._status_lbl.setText("▶ TARGET")
-            self._status_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['ACCENT_LT']}; border: none;")
-            self._status_lbl.setVisible(True)
+            self._status_lbl.setVisible(False)
             self._eq.setVisible(False)
         else:
             self._status_lbl.setVisible(False)

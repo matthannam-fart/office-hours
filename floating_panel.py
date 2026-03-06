@@ -238,7 +238,11 @@ class FloatingPanel(QWidget):
         self._teams_page = self._build_teams_page()
         self._content_stack.addWidget(self._teams_page)
 
-        # Page 2: Settings
+        # Page 2: Radio
+        self._radio_page = self._build_radio_page()
+        self._content_stack.addWidget(self._radio_page)
+
+        # Page 3: Settings
         self._settings_view = self._build_settings_view()
         self._content_stack.addWidget(self._settings_view)
 
@@ -330,6 +334,10 @@ class FloatingPanel(QWidget):
         self._nav_teams.clicked.connect(self._on_nav_clicked)
         v.addWidget(self._nav_teams)
 
+        self._nav_radio = NavButton("radio", "📻", "RADIO")
+        self._nav_radio.clicked.connect(self._on_nav_clicked)
+        v.addWidget(self._nav_radio)
+
         self._nav_settings = NavButton("settings", "⚙", "SETTINGS")
         self._nav_settings.clicked.connect(self._on_nav_clicked)
         v.addWidget(self._nav_settings)
@@ -337,6 +345,7 @@ class FloatingPanel(QWidget):
         self._nav_buttons = {
             "users": self._nav_users,
             "teams": self._nav_teams,
+            "radio": self._nav_radio,
             "settings": self._nav_settings,
         }
 
@@ -365,7 +374,7 @@ class FloatingPanel(QWidget):
         for k, btn in self._nav_buttons.items():
             btn.set_selected(k == key)
         # Switch stacked widget
-        page_map = {"users": 0, "teams": 1, "settings": 2}
+        page_map = {"users": 0, "teams": 1, "radio": 2, "settings": 3}
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
         # Update section title
         self._section_title.setText(key.upper())
@@ -2016,6 +2025,27 @@ class FloatingPanel(QWidget):
             # Restore normal style
             self.set_mode(self._current_mode)
 
+    # ── Radio Page ─────────────────────────────────────────────
+    def _build_radio_page(self):
+        """Placeholder radio page — future: ambient music / broadcast channels."""
+        page = QFrame()
+        page.setStyleSheet("border: none;")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(16, 20, 16, 16)
+        v.setSpacing(12)
+
+        title = QLabel("Radio")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
+        v.addWidget(title)
+
+        desc = QLabel("Ambient channels and broadcast streams.\nComing soon.")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"font-size: 13px; color: {DARK['TEXT_DIM']}; border: none;")
+        v.addWidget(desc)
+
+        v.addStretch()
+        return page
+
     # ── Settings View (inline) ──────────────────────────────────
     def _build_settings_view(self):
         """Build an inline settings panel that replaces the main content."""
@@ -2440,63 +2470,14 @@ class FloatingPanel(QWidget):
         p.end()
 
     # ── Size Management ─────────────────────────────────────────
+    # Fixed panel height — consistent across all pages
+    PANEL_H = 520
+
     def _auto_resize(self):
-        """Calculate and apply the ideal panel height based on visible content.
-        New sidebar layout: sidebar stretches full height, content area sizes to fit."""
+        """Set panel to a fixed height so it stays consistent across pages."""
         if self._pinned or self._is_onboarding:
             return
-
-        # Outer margins: notch(7) + bottom shadow(9)
-        outer = 16
-
-        # Content header (search + section title)
-        h = 90  # search(36) + spacing + title row + padding
-
-        # Connection / disconnection bar
-        if self._conn_bar.isVisible():
-            h += 42
-        elif self._disconn_bar.isVisible():
-            h += 38
-
-        # Banners (outgoing, incoming, call, message)
-        if self._outgoing_banner.isVisible():
-            h += 60
-        if self._incoming_banner.isVisible():
-            h += 80
-        if self._call_banner.isVisible():
-            h += 60
-        if self._message_banner.isVisible():
-            h += 60
-
-        # Content area depends on active page
-        if self._active_nav == "users":
-            # Section header ("ONLINE" + count)
-            h += 34
-            # User rows
-            n_users = len(self._user_rows)
-            if n_users > 0:
-                h += n_users * 50 + (n_users - 1) * 4 + 16
-            else:
-                h += 50
-            # PTT bar
-            if self._ptt_bar.isVisible():
-                h += 60
-        elif self._active_nav == "teams":
-            h += 240  # Team combo + actions
-        elif self._active_nav == "settings":
-            h += 300  # Settings content
-
-        # Status bar at bottom
-        h += 44
-
-        # Add outer margins and breathing room
-        target = h + outer + 8
-
-        # Min/max bounds
-        target = max(target, 320)
-        target = min(target, 620)
-
-        self.setFixedHeight(target)
+        self.setFixedHeight(self.PANEL_H)
 
     def _resize_panel(self):
         """Resize the panel, but skip during onboarding (height is locked)."""
