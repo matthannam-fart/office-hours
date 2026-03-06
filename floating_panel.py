@@ -1601,6 +1601,7 @@ class FloatingPanel(QWidget):
             self.conn_label.setText(f"Connected to {peer_name}")
         elif connected:
             self.conn_label.setText("Connected")
+        self._auto_resize()
 
     def set_users(self, users):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]
@@ -1637,16 +1638,9 @@ class FloatingPanel(QWidget):
 
         self.online_count.setText(str(len(users)))
 
-        # Dynamic panel height based on user count
+        # Dynamic panel height based on visible content
         if not self._pinned and not self._is_onboarding:
-            # Fixed chrome: header(48) + section hdr(22) + margins(12)
-            chrome_height = 48 + 22 + 12
-            if self._team_bar.isVisible():
-                chrome_height += 36
-            user_height = len(users) * 40
-            target = chrome_height + max(user_height, 40)  # min space for 1 row
-            target = min(target, 520)  # cap so it doesn't go off-screen
-            self.setFixedHeight(target)
+            self._auto_resize()
 
     def set_user_state(self, user_id, state):
         """Set a user row's visual state (idle/connecting/live)."""
@@ -2212,11 +2206,64 @@ class FloatingPanel(QWidget):
         p.end()
 
     # ── Size Management ─────────────────────────────────────────
+    def _auto_resize(self):
+        """Calculate and apply the ideal panel height based on visible content."""
+        if self._pinned or self._is_onboarding:
+            return
+
+        # Outer margins: notch(7) + bottom shadow(9)
+        outer = 16
+
+        # Header is always visible
+        h = 48
+
+        # Connection / disconnection bar
+        if self._conn_bar.isVisible():
+            h += 36
+        elif self._disconn_bar.isVisible():
+            h += 32
+
+        # Banners (outgoing, incoming, call, message)
+        if self._outgoing_banner.isVisible():
+            h += 60
+        if self._incoming_banner.isVisible():
+            h += 80
+        if self._call_banner.isVisible():
+            h += 60
+        if self._message_banner.isVisible():
+            h += 60
+
+        # Team bar
+        if self._team_bar.isVisible():
+            h += 36
+
+        # Section header ("ONLINE" + count badge)
+        h += 28
+
+        # User rows (40px each) + layout spacing (4px between) + container margins (8)
+        n_users = len(self._user_rows)
+        if n_users > 0:
+            h += n_users * 40 + (n_users - 1) * 4 + 12
+        else:
+            h += 40  # Minimum space even with no users
+
+        # PTT bar at bottom
+        if self._ptt_bar.isVisible():
+            h += 60
+
+        # Add outer margins and a little breathing room
+        target = h + outer + 8
+
+        # Cap so it doesn't go off-screen
+        target = min(target, 520)
+
+        self.setFixedHeight(target)
+
     def _resize_panel(self):
         """Resize the panel, but skip during onboarding (height is locked)."""
         if self._is_onboarding:
             return
-        self.adjustSize()
+        self._auto_resize()
 
     # ── Positioning ───────────────────────────────────────────────
     def show_at(self, global_pos):
