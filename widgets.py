@@ -257,13 +257,13 @@ class UserRow(QWidget):
         self._mode = mode
         self._pressed = False
         self._state = self.STATE_IDLE
-        self.setFixedHeight(40)
+        self.setFixedHeight(50)
         self.setCursor(Qt.PointingHandCursor)
         self._apply_style()
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 4, 8, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 6, 12, 6)
+        layout.setSpacing(10)
 
         # Orb
         self.orb = SmallOrb(mode)
@@ -271,7 +271,7 @@ class UserRow(QWidget):
 
         # Name
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
+        self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
         layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # Message indicator (amber dot)
@@ -303,7 +303,7 @@ class UserRow(QWidget):
                 UserRow {{
                     background: rgba(229, 57, 53, 0.12);
                     border: 1px solid rgba(229, 57, 53, 0.25);
-                    border-radius: 8px;
+                    border-radius: 10px;
                 }}
             """)
         elif self._state == self.STATE_CONNECTING:
@@ -311,14 +311,14 @@ class UserRow(QWidget):
                 UserRow {{
                     background: rgba(255, 255, 255, 0.06);
                     border: 1px solid {DARK['BORDER']};
-                    border-radius: 8px;
+                    border-radius: 10px;
                 }}
             """)
         else:
             self.setStyleSheet(f"""
                 UserRow {{
                     background: {DARK['BG_RAISED']};
-                    border-radius: 8px;
+                    border-radius: 10px;
                 }}
                 UserRow:hover {{
                     background: {DARK['BG_HOVER']};

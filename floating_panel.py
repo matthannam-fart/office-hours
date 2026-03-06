@@ -250,11 +250,11 @@ class FloatingPanel(QWidget):
     def _build_header(self):
         header = QFrame()
         header.setStyleSheet(f"border-bottom: 1px solid {DARK['BORDER']};")
-        header.setFixedHeight(48)
+        header.setFixedHeight(54)
 
         h = QHBoxLayout(header)
-        h.setContentsMargins(12, 8, 10, 8)
-        h.setSpacing(8)
+        h.setContentsMargins(16, 10, 12, 10)
+        h.setSpacing(10)
 
         # Status orb (16px — color conveys mode)
         self.orb = GlowingOrb(16)
@@ -358,11 +358,11 @@ class FloatingPanel(QWidget):
     def _build_conn_bar(self):
         bar = QFrame()
         bar.setStyleSheet(f"background: {DARK['BG_RAISED']}; border-bottom: 1px solid {DARK['BORDER']};")
-        bar.setFixedHeight(36)
+        bar.setFixedHeight(42)
 
         h = QHBoxLayout(bar)
-        h.setContentsMargins(12, 0, 8, 0)
-        h.setSpacing(6)
+        h.setContentsMargins(16, 0, 12, 0)
+        h.setSpacing(8)
 
         # Green dot
         dot = QLabel("●")
@@ -408,10 +408,10 @@ class FloatingPanel(QWidget):
     def _build_disconn_bar(self):
         bar = QFrame()
         bar.setStyleSheet(f"background: transparent; border-bottom: 1px solid {DARK['BORDER']};")
-        bar.setFixedHeight(32)
+        bar.setFixedHeight(38)
 
         h = QHBoxLayout(bar)
-        h.setContentsMargins(14, 4, 14, 4)
+        h.setContentsMargins(16, 6, 16, 6)
 
         # Status label
         self._disconn_label = QLabel("Connecting...")
@@ -1139,11 +1139,11 @@ class FloatingPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Section header — compact
+        # Section header
         sec_hdr = QHBoxLayout()
-        sec_hdr.setContentsMargins(14, 6, 14, 2)
+        sec_hdr.setContentsMargins(16, 10, 16, 4)
         self._online_label = QLabel("ONLINE")
-        self._online_label.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
+        self._online_label.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.2px;")
         sec_hdr.addWidget(self._online_label)
         sec_hdr.addStretch()
         self.online_count = QLabel("0")
@@ -1174,7 +1174,7 @@ class FloatingPanel(QWidget):
 
         self._user_container = QWidget()
         self._user_layout = QVBoxLayout(self._user_container)
-        self._user_layout.setContentsMargins(6, 2, 6, 6)
+        self._user_layout.setContentsMargins(8, 4, 8, 8)
         self._user_layout.setSpacing(4)
         self._user_layout.addStretch()
 
@@ -2215,13 +2215,13 @@ class FloatingPanel(QWidget):
         outer = 16
 
         # Header is always visible
-        h = 48
+        h = 54
 
         # Connection / disconnection bar
         if self._conn_bar.isVisible():
-            h += 36
+            h += 42
         elif self._disconn_bar.isVisible():
-            h += 32
+            h += 38
 
         # Banners (outgoing, incoming, call, message)
         if self._outgoing_banner.isVisible():
@@ -2238,24 +2238,24 @@ class FloatingPanel(QWidget):
             h += 36
 
         # Section header ("ONLINE" + count badge)
-        h += 28
+        h += 34
 
-        # User rows (40px each) + layout spacing (4px between) + container margins (8)
+        # User rows (50px each) + layout spacing (4px between) + container margins
         n_users = len(self._user_rows)
         if n_users > 0:
-            h += n_users * 40 + (n_users - 1) * 4 + 12
+            h += n_users * 50 + (n_users - 1) * 4 + 16
         else:
-            h += 40  # Minimum space even with no users
+            h += 50  # Minimum space even with no users
 
         # PTT bar at bottom
         if self._ptt_bar.isVisible():
             h += 60
 
-        # Add outer margins and a little breathing room
-        target = h + outer + 8
+        # Add outer margins and breathing room
+        target = h + outer + 12
 
         # Cap so it doesn't go off-screen
-        target = min(target, 520)
+        target = min(target, 580)
 
         self.setFixedHeight(target)
 
