@@ -212,35 +212,41 @@ class NetworkManager:
     # ── Relay Connection ─────────────────────────────────────────
 
     def create_room(self, relay_host, relay_port=None):
-        """Connect to relay and create a new room. Returns room code or None."""
+        """Connect to relay and create a new room. Returns room code or None.
+        Uses a local socket variable during handshake to avoid race conditions
+        with _accept_tcp() which can overwrite self.tcp_socket."""
         if relay_port is None:
             relay_port = RELAY_PORT
         self.relay_host = relay_host
         self.relay_port = relay_port
 
+        sock = None  # Local socket — not shared until handshake completes
         try:
             raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             raw_sock.settimeout(10)
             raw_sock.connect((relay_host, relay_port))
 
             # Wrap with TLS
-            self.tcp_socket = self._wrap_relay_socket(raw_sock, relay_host)
-            self.tcp_socket.settimeout(None)
+            sock = self._wrap_relay_socket(raw_sock, relay_host)
+            sock.settimeout(None)
 
-            # Send CREATE_ROOM handshake
-            self._send_frame(json.dumps({"action": "CREATE_ROOM"}).encode('utf-8'))
+            # Send CREATE_ROOM handshake on the local socket
+            self._send_frame_on(sock, json.dumps({"action": "CREATE_ROOM"}).encode('utf-8'))
 
             # Read response
-            response = self._read_frame()
+            response = self._read_frame_on(sock)
             if not response:
                 self._log("No response from relay server")
-                self.tcp_socket.close()
+                sock.close()
                 return None
 
             msg = json.loads(response.decode('utf-8'))
             if msg.get("status") == "created":
                 self.room_code = msg.get("room")
-                self.relay_mode = True
+                # Assign to self.tcp_socket now — handshake is done
+                with self._conn_lock:
+                    self.tcp_socket = sock
+                    self.relay_mode = True
                 self._log(f"Room created: {self.room_code}")
                 self._log("Waiting for peer to join...")
 
@@ -249,54 +255,59 @@ class NetworkManager:
                 return self.room_code
             else:
                 self._log(f"Relay error: {msg.get('message', 'Unknown error')}")
-                self.tcp_socket.close()
+                sock.close()
                 return None
 
         except Exception as e:
             self._log(f"Relay connection failed: {e}")
-            if self.tcp_socket:
+            if sock:
                 try:
-                    self.tcp_socket.close()
+                    sock.close()
                 except:
                     pass
             return None
 
     def join_room(self, relay_host, room_code, relay_port=None):
-        """Connect to relay and join an existing room. Returns True on success."""
+        """Connect to relay and join an existing room. Returns True on success.
+        Uses a local socket variable during handshake to avoid race conditions
+        with _accept_tcp() which can overwrite self.tcp_socket."""
         if relay_port is None:
             relay_port = RELAY_PORT
         self.relay_host = relay_host
         self.relay_port = relay_port
         self.room_code = room_code.upper()
 
+        sock = None  # Local socket — not shared until handshake completes
         try:
             raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             raw_sock.settimeout(10)
             raw_sock.connect((relay_host, relay_port))
 
             # Wrap with TLS
-            self.tcp_socket = self._wrap_relay_socket(raw_sock, relay_host)
-            self.tcp_socket.settimeout(None)
+            sock = self._wrap_relay_socket(raw_sock, relay_host)
+            sock.settimeout(None)
 
-            # Send JOIN_ROOM handshake
-            self._send_frame(json.dumps({
+            # Send JOIN_ROOM handshake on the local socket
+            self._send_frame_on(sock, json.dumps({
                 "action": "JOIN_ROOM",
                 "room": self.room_code
             }).encode('utf-8'))
 
             # Read response — may get "waiting" then "paired", or "paired" directly
             while True:
-                response = self._read_frame()
+                response = self._read_frame_on(sock)
                 if not response:
                     self._log("No response from relay server")
-                    self.tcp_socket.close()
+                    sock.close()
                     return False
 
                 msg = json.loads(response.decode('utf-8'))
                 status = msg.get("status")
 
                 if status == "paired":
+                    # Handshake complete — NOW assign to self.tcp_socket
                     with self._conn_lock:
+                        self.tcp_socket = sock
                         self.relay_mode = True
                         self.connected = True
                         self._conn_generation += 1
@@ -309,16 +320,20 @@ class NetworkManager:
                 elif status == "waiting":
                     self._log(f"Waiting for peer in room {self.room_code}...")
                     continue  # Keep reading until we get "paired"
-                else:
+                elif status == "error":
                     self._log(f"Join failed: {msg.get('message', 'Unknown error')}")
-                    self.tcp_socket.close()
+                    sock.close()
+                    return False
+                else:
+                    self._log(f"Join failed: unexpected status={status!r} msg={msg}")
+                    sock.close()
                     return False
 
         except Exception as e:
             self._log(f"Relay connection failed: {e}")
-            if self.tcp_socket:
+            if sock:
                 try:
-                    self.tcp_socket.close()
+                    sock.close()
                 except:
                     pass
             return False
