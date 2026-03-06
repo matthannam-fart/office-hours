@@ -26,7 +26,8 @@ RADIO_STATIONS = {
 }
 
 # Panel dimensions
-PANEL_W = 380
+PANEL_W = 480
+SIDEBAR_W = 70
 PANEL_RADIUS = 14
 
 # ── Dark Theme Palette ───────────────────────────────────────────

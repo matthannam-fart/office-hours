@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
     QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
-    QComboBox
+    QComboBox, QStackedWidget
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot,
@@ -24,10 +24,10 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtCore import QUrl
 
 # Shared constants (extracted to ui_constants.py)
-from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK
+from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK, SIDEBAR_W
 
 # Widget classes (extracted to widgets.py)
-from widgets import GlowingOrb, LevelMeter, UnicodeEQ, SmallOrb, UserRow, ToggleSwitch
+from widgets import GlowingOrb, LevelMeter, UnicodeEQ, SmallOrb, UserRow, ToggleSwitch, NavButton
 
 # ── Font Loading ─────────────────────────────────────────────────
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -174,114 +174,379 @@ class FloatingPanel(QWidget):
         shadow.setColor(QColor(0, 0, 0, 80))
         self._frame.setGraphicsEffect(shadow)
 
+        # ── Top-level: horizontal split (sidebar | content) ───
+        frame_layout = QHBoxLayout(self._frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
 
-        root = QVBoxLayout(self._frame)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        # ── LEFT: Sidebar ─────────────────────────────────────
+        self._sidebar = self._build_sidebar()
+        frame_layout.addWidget(self._sidebar)
 
-        # ── Header ────────────────────────────────────────────
-        self._header = self._build_header()
-        root.addWidget(self._header)
+        # ── RIGHT: Content area ───────────────────────────────
+        content_frame = QFrame()
+        content_frame.setStyleSheet(f"border-left: 1px solid {DARK['BORDER']};")
+        self._content_layout = QVBoxLayout(content_frame)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
 
-        # ── Outgoing Call Banner (hidden by default) ──────────
+        # Banners (connection, calls) sit above the stacked content
         self._outgoing_banner = self._build_outgoing_banner()
         self._outgoing_banner.setVisible(False)
-        root.addWidget(self._outgoing_banner)
+        self._content_layout.addWidget(self._outgoing_banner)
 
-        # ── Incoming Call Banner (hidden by default) ──────────
         self._incoming_banner = self._build_incoming_banner()
         self._incoming_banner.setVisible(False)
-        root.addWidget(self._incoming_banner)
+        self._content_layout.addWidget(self._incoming_banner)
 
-        # ── Call Banner (hidden by default) ───────────────────
         self._call_banner = self._build_call_banner()
         self._call_banner.setVisible(False)
-        root.addWidget(self._call_banner)
+        self._content_layout.addWidget(self._call_banner)
 
-        # ── Message Banner (hidden by default) ────────────────
         self._message_banner = self._build_message_banner()
         self._message_banner.setVisible(False)
-        root.addWidget(self._message_banner)
+        self._content_layout.addWidget(self._message_banner)
 
-
-
-        # ── Connected Bar (hidden by default) ────────────────
         self._conn_bar = self._build_conn_bar()
         self._conn_bar.setVisible(False)
-        root.addWidget(self._conn_bar)
+        self._content_layout.addWidget(self._conn_bar)
 
-        # ── Disconnected Bar (hidden when connected) ──────────
         self._disconn_bar = self._build_disconn_bar()
         self._disconn_bar.setVisible(False)
-        root.addWidget(self._disconn_bar)
+        self._content_layout.addWidget(self._disconn_bar)
 
-        # ── Team Selector ────────────────────────────────────
-        self._team_bar = self._build_team_bar()
-        self._team_bar.setVisible(False)  # Hidden until teams loaded
-        root.addWidget(self._team_bar)
+        # ── Content header (search + section title) ───────────
+        self._content_header = self._build_content_header()
+        self._content_layout.addWidget(self._content_header)
 
-        # ── Onboarding (shown when no teams) ─────────────────
+        # ── Stacked content pages ─────────────────────────────
+        self._content_stack = QStackedWidget()
+
+        # Page 0: Users
+        self._users_page = QWidget()
+        users_v = QVBoxLayout(self._users_page)
+        users_v.setContentsMargins(0, 0, 0, 0)
+        users_v.setSpacing(0)
+        self._user_section = self._build_user_section()
+        users_v.addWidget(self._user_section, 1)
+        self._ptt_bar = self._build_ptt_bar()
+        users_v.addWidget(self._ptt_bar)
+        self._content_stack.addWidget(self._users_page)
+
+        # Page 1: Teams
+        self._teams_page = self._build_teams_page()
+        self._content_stack.addWidget(self._teams_page)
+
+        # Page 2: Settings
+        self._settings_view = self._build_settings_view()
+        self._content_stack.addWidget(self._settings_view)
+
+        self._content_layout.addWidget(self._content_stack, 1)
+
+        # ── Status bar at bottom of content ───────────────────
+        self._status_bar = self._build_status_bar()
+        self._content_layout.addWidget(self._status_bar)
+
+        frame_layout.addWidget(content_frame, 1)
+
+        # ── Onboarding overlay (hidden, covers entire panel) ──
         self._onboarding = self._build_onboarding()
         self._onboarding.setVisible(False)
-        root.addWidget(self._onboarding, 1)
-
-        # ── User List ─────────────────────────────────────────
-        self._user_section = self._build_user_section()
-        root.addWidget(self._user_section, 1)
-
-        # ── PTT Bar ───────────────────────────────────────────
-        self._ptt_bar = self._build_ptt_bar()
-        root.addWidget(self._ptt_bar)
-
-        # ── Settings View (hidden by default) ──────────────────
-        self._settings_view = self._build_settings_view()
-        self._settings_view.setVisible(False)
-        root.addWidget(self._settings_view, 1)
+        # Onboarding is parented to _frame so it overlays everything
+        self._onboarding.setParent(self._frame)
 
         # ── Pinned compact (hidden by default) ────────────────
         self._pinned_compact = self._build_pinned_compact()
         self._pinned_compact.setVisible(False)
-        root.addWidget(self._pinned_compact)
+        self._pinned_compact.setParent(self._frame)
 
-        # Store root layout ref
-        self._root = root
+        # Legacy compat: _header reference (used by _toggle_pin etc.)
+        self._header = self._sidebar
+        # Team bar reference (used by set_teams, _auto_resize, etc.)
+        self._team_bar = QWidget()  # Dummy — teams now in teams_page
+        self._team_bar.setVisible(False)
 
-    # ── Header ────────────────────────────────────────────────────
-    def _build_header(self):
+        # Store layout refs
+        self._root = self._content_layout
+        self._content_frame = content_frame
+
+        # Default to Users page
+        self._active_nav = "users"
+        self._switch_page("users")
+
+    # ── Sidebar ─────────────────────────────────────────────────────
+    def _build_sidebar(self):
+        sidebar = QFrame()
+        sidebar.setFixedWidth(SIDEBAR_W)
+        sidebar.setStyleSheet(f"""
+            QFrame {{
+                background: {DARK['BG']};
+                border: none;
+            }}
+        """)
+
+        v = QVBoxLayout(sidebar)
+        v.setContentsMargins(0, 12, 0, 10)
+        v.setSpacing(2)
+        v.setAlignment(Qt.AlignTop)
+
+        # OH logo at top
+        logo = QLabel("OH")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedHeight(36)
+        logo.setStyleSheet(f"""
+            font-size: 18px; font-weight: 900; color: {DARK['ACCENT']};
+            letter-spacing: 2px; border: none; background: transparent;
+        """)
+        v.addWidget(logo)
+
+        # "+" add button
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(36, 36)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 20px; font-weight: 400; color: {DARK['TEXT_DIM']};
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
+        """)
+        add_btn.clicked.connect(self.create_team_requested.emit)
+        # Center the button
+        btn_container = QHBoxLayout()
+        btn_container.setContentsMargins(0, 8, 0, 8)
+        btn_container.setAlignment(Qt.AlignCenter)
+        btn_container.addWidget(add_btn)
+        v.addLayout(btn_container)
+
+        # Navigation buttons
+        self._nav_users = NavButton("users", "👥", "USERS")
+        self._nav_users.clicked.connect(self._on_nav_clicked)
+        v.addWidget(self._nav_users)
+
+        self._nav_teams = NavButton("teams", "📁", "TEAMS")
+        self._nav_teams.clicked.connect(self._on_nav_clicked)
+        v.addWidget(self._nav_teams)
+
+        self._nav_settings = NavButton("settings", "⚙", "SETTINGS")
+        self._nav_settings.clicked.connect(self._on_nav_clicked)
+        v.addWidget(self._nav_settings)
+
+        self._nav_buttons = {
+            "users": self._nav_users,
+            "teams": self._nav_teams,
+            "settings": self._nav_settings,
+        }
+
+        v.addStretch()
+
+        # User avatar at bottom
+        self._sidebar_avatar = QLabel("●")
+        self._sidebar_avatar.setAlignment(Qt.AlignCenter)
+        self._sidebar_avatar.setFixedHeight(32)
+        self._sidebar_avatar.setStyleSheet(f"""
+            font-size: 14px; color: {DARK['ACCENT']};
+            border: none; background: transparent;
+        """)
+        v.addWidget(self._sidebar_avatar)
+
+        return sidebar
+
+    def _on_nav_clicked(self, key):
+        """Handle sidebar nav button clicks."""
+        self._switch_page(key)
+
+    def _switch_page(self, key):
+        """Switch the content area to show the selected page."""
+        self._active_nav = key
+        # Update nav button states
+        for k, btn in self._nav_buttons.items():
+            btn.set_selected(k == key)
+        # Switch stacked widget
+        page_map = {"users": 0, "teams": 1, "settings": 2}
+        self._content_stack.setCurrentIndex(page_map.get(key, 0))
+        # Update section title
+        self._section_title.setText(key.upper())
+        self._auto_resize()
+
+    # ── Content Header (search + section title) ───────────────────
+    def _build_content_header(self):
         header = QFrame()
-        header.setStyleSheet(f"border-bottom: 1px solid {DARK['BORDER']};")
-        header.setFixedHeight(54)
+        header.setStyleSheet("border: none;")
 
-        h = QHBoxLayout(header)
-        h.setContentsMargins(16, 10, 12, 10)
-        h.setSpacing(10)
+        v = QVBoxLayout(header)
+        v.setContentsMargins(12, 10, 12, 0)
+        v.setSpacing(8)
+
+        # Search bar
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Search...")
+        self._search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 8px 12px; font-size: 13px;
+                color: {DARK['TEXT']}; selection-background-color: {DARK['ACCENT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['ACCENT']}; }}
+        """)
+        self._search_input.setFixedHeight(36)
+        v.addWidget(self._search_input)
+
+        # Section title with accent underline
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(2, 4, 0, 0)
+        self._section_title = QLabel("USERS")
+        self._section_title.setStyleSheet(f"""
+            font-size: 16px; font-weight: 800; color: {DARK['TEXT']};
+            letter-spacing: 1px; border: none; padding-bottom: 4px;
+            border-bottom: 2px solid {DARK['ACCENT']};
+        """)
+        title_row.addWidget(self._section_title)
+        title_row.addStretch()
+
+        # Hotline toggle (moved from old header)
+        self._hotline_lbl = QLabel("Hotline")
+        self._hotline_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
+        title_row.addWidget(self._hotline_lbl)
+
+        self.open_toggle = ToggleSwitch()
+        self.open_toggle.toggled.connect(self.hotline_toggled.emit)
+        title_row.addWidget(self.open_toggle)
+
+        v.addLayout(title_row)
+
+        return header
+
+    # ── Teams Page ────────────────────────────────────────────────
+    def _build_teams_page(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # Team selector (combo)
+        team_frame = QFrame()
+        team_frame.setStyleSheet("border: none;")
+        tf = QVBoxLayout(team_frame)
+        tf.setContentsMargins(12, 8, 12, 8)
+        tf.setSpacing(8)
+
+        lbl = QLabel("CURRENT TEAM")
+        lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
+        tf.addWidget(lbl)
+
+        self._team_combo = QComboBox()
+        self._team_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 6px 10px; font-size: 13px;
+                color: {DARK['TEXT']}; font-weight: 500;
+            }}
+            QComboBox:hover {{ border-color: {DARK['TEXT_FAINT']}; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{ image: none; border: none; }}
+            QComboBox QAbstractItemView {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                color: {DARK['TEXT']}; selection-background-color: {DARK['BG_HOVER']};
+            }}
+        """)
+        self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
+        tf.addWidget(self._team_combo)
+
+        v.addWidget(team_frame)
+
+        # Divider
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet(f"background: {DARK['BORDER']};")
+        v.addWidget(div)
+
+        # Team actions
+        actions_frame = QFrame()
+        actions_frame.setStyleSheet("border: none;")
+        af = QVBoxLayout(actions_frame)
+        af.setContentsMargins(12, 8, 12, 8)
+        af.setSpacing(6)
+
+        # Invite code
+        self._invite_code_lbl = QLabel("")
+        self._invite_code_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
+        self._invite_code_lbl.setVisible(False)
+        af.addWidget(self._invite_code_lbl)
+
+        copy_code_btn = QPushButton("Copy Invite Code")
+        copy_code_btn.setCursor(Qt.PointingHandCursor)
+        copy_code_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 10px; font-size: 13px;
+                font-weight: 500; color: {DARK['TEXT_DIM']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
+        """)
+        copy_code_btn.clicked.connect(self._copy_invite_code)
+        af.addWidget(copy_code_btn)
+
+        # Manage team button (admin only)
+        self._team_manage_btn = QPushButton("Manage Team")
+        self._team_manage_btn.setCursor(Qt.PointingHandCursor)
+        self._team_manage_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 10px; font-size: 13px;
+                font-weight: 500; color: {DARK['TEXT_DIM']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT']}; }}
+        """)
+        self._team_manage_btn.clicked.connect(self.manage_team_requested.emit)
+        self._team_manage_btn.setVisible(False)
+        af.addWidget(self._team_manage_btn)
+
+        # Leave team button
+        leave_team_btn = QPushButton("Leave Team")
+        leave_team_btn.setCursor(Qt.PointingHandCursor)
+        leave_team_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid rgba(229,57,53,0.3);
+                border-radius: 8px; padding: 10px; font-size: 13px;
+                font-weight: 500; color: {DARK['DANGER']};
+            }}
+            QPushButton:hover {{ background: rgba(229,57,53,0.08); }}
+        """)
+        leave_team_btn.clicked.connect(self.leave_team_requested.emit)
+        af.addWidget(leave_team_btn)
+
+        v.addWidget(actions_frame)
+        v.addStretch()
+
+        return page
+
+    # ── Status Bar (bottom of content) ────────────────────────────
+    def _build_status_bar(self):
+        bar = QFrame()
+        bar.setStyleSheet(f"border-top: 1px solid {DARK['BORDER']}; background: {DARK['BG']};")
+        bar.setFixedHeight(44)
+
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(12, 0, 12, 0)
+        h.setSpacing(8)
 
         # Status orb (16px — color conveys mode)
         self.orb = GlowingOrb(16)
         h.addWidget(self.orb)
 
-        # Mode cycle button
+        # Mode cycle button (shows colored pill with mode label)
         self.mode_btn = QPushButton()
         self.mode_btn.setCursor(Qt.PointingHandCursor)
         self.mode_btn.setMinimumHeight(28)
         self.mode_btn.clicked.connect(self.mode_cycle_requested.emit)
         h.addWidget(self.mode_btn)
-
         self._update_mode_btn()
 
-        # Spacer
-        h.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        h.addStretch()
 
-        # Hotline toggle with label
-        self._hotline_lbl = QLabel("Hotline")
-        self._hotline_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
-        h.addWidget(self._hotline_lbl)
-
-        self.open_toggle = ToggleSwitch()
-        self.open_toggle.toggled.connect(self.hotline_toggled.emit)
-        h.addWidget(self.open_toggle)
-
-        # Hamburger / settings button (replaces pin in header)
+        # Menu / more button
         self.menu_btn = QPushButton("···")
         self.menu_btn.setFixedSize(26, 26)
         self.menu_btn.setCursor(Qt.PointingHandCursor)
@@ -296,12 +561,34 @@ class FloatingPanel(QWidget):
         self.menu_btn.clicked.connect(self._show_hamburger_menu)
         h.addWidget(self.menu_btn)
 
-        # Hidden pin button (used programmatically, no longer in header)
+        # Quit button
+        quit_btn = QPushButton("✕")
+        quit_btn.setFixedSize(24, 24)
+        quit_btn.setToolTip("Quit Office Hours")
+        quit_btn.setStyleSheet(f"""
+            QPushButton {{
+                border: none; background: transparent; font-size: 13px;
+                color: {DARK['TEXT_FAINT']}; border-radius: 4px;
+            }}
+            QPushButton:hover {{ color: {DARK['DANGER']}; background: rgba(229,57,53,0.10); }}
+        """)
+        quit_btn.clicked.connect(self.quit_requested.emit)
+        h.addWidget(quit_btn)
+
+        # Hidden pin button (used programmatically)
         self.pin_btn = QPushButton()
         self.pin_btn.setFixedSize(0, 0)
         self.pin_btn.setVisible(False)
         self._update_pin_style(False)
 
+        return bar
+
+    # ── Header (LEGACY — no longer used, widgets moved to status bar + content header) ──
+    def _build_header(self):
+        """Legacy stub — header widgets now live in _build_status_bar and _build_content_header."""
+        header = QFrame()
+        header.setFixedHeight(0)
+        header.setVisible(False)
         return header
 
     def _update_pin_style(self, pinned):
@@ -984,26 +1271,16 @@ class FloatingPanel(QWidget):
         has_teams = bool(teams)
 
         if force_lobby or not has_teams:
-            # Show lobby (onboarding) — user picks their team
+            # Show lobby (onboarding) — overlays entire panel
             self._onboarding.setVisible(True)
-            self._team_bar.setVisible(False)
-            self._user_section.setVisible(False)
-            self._ptt_bar.setVisible(False)
+            self._onboarding.raise_()
+            self._onboarding.setGeometry(self._frame.rect())
             self._is_onboarding = True
-            self._disconn_bar.setVisible(False)
             self.setFixedHeight(500)
             return
 
-        # Transition to normal team UI (after user selected a team)
+        # Transition to normal sidebar UI (after user selected a team)
         self._onboarding.setVisible(False)
-        # Hide team bar when there's only one team — no need to show a selector
-        self._team_bar.setVisible(len(teams) > 1)
-        # Hide disconn bar in team view — user rows show connection state
-        self._disconn_bar.setVisible(False)
-        self._user_section.setVisible(True)
-        self._ptt_bar.setVisible(False)  # User rows are the PTT now
-
-        # Leaving onboarding — clear height lock
         self._is_onboarding = False
         self.setMinimumHeight(0)
         self.setMaximumHeight(16777215)  # Qt default max
@@ -1666,13 +1943,11 @@ class FloatingPanel(QWidget):
         self.outgoing_name.setText(target_name)
         self.outgoing_sub.setText("Calling...")
         self._outgoing_banner.setVisible(True)
-        self._user_section.setVisible(False)
         self._resize_panel()
 
     def hide_outgoing(self):
         """Hide the outgoing call banner."""
         self._outgoing_banner.setVisible(False)
-        self._user_section.setVisible(True)
         self._resize_panel()
 
     def show_incoming(self, caller_name):
@@ -1680,14 +1955,11 @@ class FloatingPanel(QWidget):
         self._hide_all_banners()
         self.incoming_name.setText(caller_name)
         self._incoming_banner.setVisible(True)
-        self._user_section.setVisible(False)
         self._resize_panel()
 
     def hide_incoming(self):
         """Hide the incoming call banner."""
         self._incoming_banner.setVisible(False)
-        if not self._outgoing_banner.isVisible() and not self._call_banner.isVisible():
-            self._user_section.setVisible(True)
         self._resize_panel()
 
     def show_call(self, caller_name):
@@ -1695,10 +1967,7 @@ class FloatingPanel(QWidget):
         self._hide_all_banners()
         self.call_name_label.setText(caller_name)
         self._call_banner.setVisible(True)
-        self._user_section.setVisible(False)
         self._conn_bar.setVisible(False)   # Call banner replaces connection bar
-        self._team_bar.setVisible(False)   # Hide team bar during call — less clutter
-        # Update PTT to show who you're talking to
         self._call_peer_name = caller_name
         if not self._is_open_line:
             self.ptt_btn.setText(f"●  Talking to {caller_name}")
@@ -1707,8 +1976,6 @@ class FloatingPanel(QWidget):
     def hide_call(self):
         """Hide the in-call banner and restore normal layout."""
         self._hide_all_banners()
-        self._user_section.setVisible(True)
-        self._team_bar.setVisible(True)  # Restore team bar after call
         self._call_peer_name = None
         # Reset PTT text
         if self._is_open_line:
@@ -2000,55 +2267,13 @@ class FloatingPanel(QWidget):
             self._open_settings()
 
     def _open_settings(self):
-        """Show the inline settings, hiding main content."""
+        """Switch to settings page in the sidebar nav."""
         self._populate_settings()
-        # Save visibility state of all main sections
-        self._pre_settings_vis = {
-            'user':      self._user_section.isVisible(),
-            'ptt':       self._ptt_bar.isVisible(),
-            'disconn':   self._disconn_bar.isVisible(),
-            'conn':      self._conn_bar.isVisible(),
-            'team':      self._team_bar.isVisible(),
-            'onboarding': self._onboarding.isVisible(),
-            'outgoing':  self._outgoing_banner.isVisible(),
-            'incoming':  self._incoming_banner.isVisible(),
-            'call':      self._call_banner.isVisible(),
-            'message':   self._message_banner.isVisible(),
-        }
-        # Hide everything
-        self._user_section.setVisible(False)
-        self._ptt_bar.setVisible(False)
-        self._disconn_bar.setVisible(False)
-        self._conn_bar.setVisible(False)
-        self._team_bar.setVisible(False)
-        self._onboarding.setVisible(False)
-        self._outgoing_banner.setVisible(False)
-        self._incoming_banner.setVisible(False)
-        self._call_banner.setVisible(False)
-        self._message_banner.setVisible(False)
-        self._settings_view.setVisible(True)
-        # Expand panel to fit settings content (header + all settings items)
-        self.setMinimumHeight(500)
-        self._resize_panel()
+        self._switch_page("settings")
 
     def _close_settings(self):
-        """Hide settings, restore main content."""
-        self._settings_view.setVisible(False)
-        # Clear the minimum height set by _open_settings
-        self.setMinimumHeight(0)
-        # Restore previous visibility state
-        vis = getattr(self, '_pre_settings_vis', {})
-        self._user_section.setVisible(vis.get('user', True))
-        self._ptt_bar.setVisible(vis.get('ptt', True))
-        self._disconn_bar.setVisible(vis.get('disconn', False))
-        self._conn_bar.setVisible(vis.get('conn', False))
-        self._team_bar.setVisible(vis.get('team', False))
-        self._onboarding.setVisible(vis.get('onboarding', False))
-        self._outgoing_banner.setVisible(vis.get('outgoing', False))
-        self._incoming_banner.setVisible(vis.get('incoming', False))
-        self._call_banner.setVisible(vis.get('call', False))
-        self._message_banner.setVisible(vis.get('message', False))
-        self._resize_panel()
+        """Switch back to users page from settings."""
+        self._switch_page("users")
 
     def _on_input_device_changed(self, device_index):
         self._current_input_idx = device_index
@@ -2158,14 +2383,8 @@ class FloatingPanel(QWidget):
 
         if self._pinned:
             # Collapse to compact PTT bar
-            self._header.setVisible(False)
-
-            self._conn_bar.setVisible(False)
-            self._disconn_bar.setVisible(False)
-            self._user_section.setVisible(False)
-            self._ptt_bar.setVisible(False)
-            self._incoming_banner.setVisible(False)
-            self._call_banner.setVisible(False)
+            self._sidebar.setVisible(False)
+            self._content_frame.setVisible(False)
             self._pinned_compact.setVisible(True)
             # Force panel to compact size
             self.setFixedHeight(58)
@@ -2173,11 +2392,8 @@ class FloatingPanel(QWidget):
             # Expand to full panel
             self.setMaximumHeight(16777215)  # Remove fixed height
             self.setMinimumHeight(0)
-            self._header.setVisible(True)
-            self._conn_bar.setVisible(self._connected)
-            self._disconn_bar.setVisible(not self._connected)
-            self._user_section.setVisible(True)
-            self._ptt_bar.setVisible(True)
+            self._sidebar.setVisible(True)
+            self._content_frame.setVisible(True)
             self._pinned_compact.setVisible(False)
             self._resize_panel()
 
@@ -2207,15 +2423,16 @@ class FloatingPanel(QWidget):
 
     # ── Size Management ─────────────────────────────────────────
     def _auto_resize(self):
-        """Calculate and apply the ideal panel height based on visible content."""
+        """Calculate and apply the ideal panel height based on visible content.
+        New sidebar layout: sidebar stretches full height, content area sizes to fit."""
         if self._pinned or self._is_onboarding:
             return
 
         # Outer margins: notch(7) + bottom shadow(9)
         outer = 16
 
-        # Header is always visible
-        h = 54
+        # Content header (search + section title)
+        h = 90  # search(36) + spacing + title row + padding
 
         # Connection / disconnection bar
         if self._conn_bar.isVisible():
@@ -2233,29 +2450,33 @@ class FloatingPanel(QWidget):
         if self._message_banner.isVisible():
             h += 60
 
-        # Team bar
-        if self._team_bar.isVisible():
-            h += 36
+        # Content area depends on active page
+        if self._active_nav == "users":
+            # Section header ("ONLINE" + count)
+            h += 34
+            # User rows
+            n_users = len(self._user_rows)
+            if n_users > 0:
+                h += n_users * 50 + (n_users - 1) * 4 + 16
+            else:
+                h += 50
+            # PTT bar
+            if self._ptt_bar.isVisible():
+                h += 60
+        elif self._active_nav == "teams":
+            h += 240  # Team combo + actions
+        elif self._active_nav == "settings":
+            h += 300  # Settings content
 
-        # Section header ("ONLINE" + count badge)
-        h += 34
-
-        # User rows (50px each) + layout spacing (4px between) + container margins
-        n_users = len(self._user_rows)
-        if n_users > 0:
-            h += n_users * 50 + (n_users - 1) * 4 + 16
-        else:
-            h += 50  # Minimum space even with no users
-
-        # PTT bar at bottom
-        if self._ptt_bar.isVisible():
-            h += 60
+        # Status bar at bottom
+        h += 44
 
         # Add outer margins and breathing room
-        target = h + outer + 12
+        target = h + outer + 8
 
-        # Cap so it doesn't go off-screen
-        target = min(target, 580)
+        # Min/max bounds
+        target = max(target, 320)
+        target = min(target, 620)
 
         self.setFixedHeight(target)
 

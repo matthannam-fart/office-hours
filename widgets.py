@@ -2,9 +2,9 @@
 widgets.py — Reusable UI widgets for Office Hours
 Extracted from floating_panel.py for maintainability.
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QRectF, Property
-from PySide6.QtGui import QColor, QPainter, QBrush, QRadialGradient, QPen
+from PySide6.QtGui import QColor, QPainter, QBrush, QRadialGradient, QPen, QFont
 
 # Import shared constants (from separate module to avoid circular imports)
 from ui_constants import COLORS, DARK
@@ -403,3 +403,69 @@ class ToggleSwitch(QWidget):
         p.setBrush(QBrush(QColor('white')))
         p.drawEllipse(QRectF(knob_x, 2, 16, 16))
         p.end()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Sidebar Navigation Button
+# ═══════════════════════════════════════════════════════════════════
+class NavButton(QWidget):
+    """Vertical sidebar nav button with icon + label."""
+    clicked = Signal(str)  # emits the nav key
+
+    def __init__(self, key, icon_char, label, parent=None):
+        super().__init__(parent)
+        self._key = key
+        self._selected = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(70, 56)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 6, 0, 4)
+        layout.setSpacing(2)
+        layout.setAlignment(Qt.AlignCenter)
+
+        self._icon = QLabel(icon_char)
+        self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setStyleSheet(f"font-size: 18px; color: {DARK['TEXT_DIM']}; border: none; background: transparent;")
+        layout.addWidget(self._icon)
+
+        self._label = QLabel(label)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 0.5px; border: none; background: transparent;")
+        layout.addWidget(self._label)
+
+        self._update_style()
+
+    def set_selected(self, selected):
+        self._selected = selected
+        self._update_style()
+
+    def _update_style(self):
+        if self._selected:
+            self.setStyleSheet(f"""
+                NavButton {{
+                    background: rgba(255, 255, 255, 0.06);
+                    border-left: 2px solid {DARK['ACCENT']};
+                    border-radius: 0px;
+                }}
+            """)
+            self._icon.setStyleSheet(f"font-size: 18px; color: {DARK['TEXT']}; border: none; background: transparent;")
+            self._label.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['ACCENT_LT']}; letter-spacing: 0.5px; border: none; background: transparent;")
+        else:
+            self.setStyleSheet(f"""
+                NavButton {{
+                    background: transparent;
+                    border-left: 2px solid transparent;
+                    border-radius: 0px;
+                }}
+                NavButton:hover {{
+                    background: rgba(255, 255, 255, 0.03);
+                }}
+            """)
+            self._icon.setStyleSheet(f"font-size: 18px; color: {DARK['TEXT_DIM']}; border: none; background: transparent;")
+            self._label.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 0.5px; border: none; background: transparent;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self._key)
+        super().mousePressEvent(event)
