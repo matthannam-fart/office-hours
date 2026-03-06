@@ -261,7 +261,6 @@ class UserRow(QWidget):
         self._state = self.STATE_IDLE
         self.setFixedHeight(50)
         self.setCursor(Qt.PointingHandCursor)
-        self._apply_style()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 6, 12, 6)
@@ -297,6 +296,9 @@ class UserRow(QWidget):
         self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {DARK['TEXT_FAINT']}; border: none;")
         self._status_lbl.setVisible(False)
         layout.addWidget(self._status_lbl)
+
+        # Apply initial style (must be after name_label is created)
+        self._apply_style()
 
     def _apply_style(self):
         """Set background based on current state."""
