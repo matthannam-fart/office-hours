@@ -257,12 +257,12 @@ class UserRow(QWidget):
         self._mode = mode
         self._pressed = False
         self._state = self.STATE_IDLE
-        self.setFixedHeight(46)
+        self.setFixedHeight(40)
         self.setCursor(Qt.PointingHandCursor)
         self._apply_style()
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 8, 6)
+        layout.setContentsMargins(10, 4, 8, 4)
         layout.setSpacing(8)
 
         # Orb

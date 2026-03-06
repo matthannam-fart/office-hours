@@ -769,9 +769,6 @@ class IntercomApp(QObject):
             mode = user.get("mode", "GREEN")
             team_id = user.get("team_id", "")
             self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": team_id}
-            # Don't show the peer we're currently in a call with — they're in the call banner
-            if uid == self._connected_peer_id:
-                continue
             # Filter by active team — only show users in the same team
             if self.active_team_id and team_id != self.active_team_id:
                 continue

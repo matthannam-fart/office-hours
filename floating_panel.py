@@ -995,7 +995,10 @@ class FloatingPanel(QWidget):
 
         # Transition to normal team UI (after user selected a team)
         self._onboarding.setVisible(False)
-        self._team_bar.setVisible(True)
+        # Hide team bar when there's only one team — no need to show a selector
+        self._team_bar.setVisible(len(teams) > 1)
+        # Hide disconn bar in team view — user rows show connection state
+        self._disconn_bar.setVisible(False)
         self._user_section.setVisible(True)
         self._ptt_bar.setVisible(False)  # User rows are the PTT now
 
@@ -1135,17 +1138,17 @@ class FloatingPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # Section header
+        # Section header — compact
         sec_hdr = QHBoxLayout()
-        sec_hdr.setContentsMargins(14, 10, 14, 4)
+        sec_hdr.setContentsMargins(14, 6, 14, 2)
         self._online_label = QLabel("ONLINE")
-        self._online_label.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
+        self._online_label.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1px;")
         sec_hdr.addWidget(self._online_label)
         sec_hdr.addStretch()
         self.online_count = QLabel("0")
         self.online_count.setStyleSheet(f"""
-            font-size: 11px; font-weight: 700; color: {DARK['TEXT_DIM']};
-            background: {DARK['BG_RAISED']}; border-radius: 8px; padding: 2px 7px;
+            font-size: 10px; font-weight: 700; color: {DARK['TEXT_DIM']};
+            background: {DARK['BG_RAISED']}; border-radius: 8px; padding: 1px 6px;
         """)
         sec_hdr.addWidget(self.online_count)
         v.addLayout(sec_hdr)
@@ -1599,17 +1602,25 @@ class FloatingPanel(QWidget):
             self.conn_label.setText("Connected")
 
     def set_users(self, users):
-        """Replace the user list. users = [{id, name, mode, has_message}, ...]"""
+        """Replace the user list. users = [{id, name, mode, has_message}, ...]
+        Preserves intercom state (connecting/live) for rows that still exist."""
+        # Snapshot active states before rebuild
+        old_states = {}
+        for uid, row in self._user_rows.items():
+            if row._state != UserRow.STATE_IDLE:
+                old_states[uid] = row._state
+
         # Clear existing
-        self._user_rows = {}  # track rows by user_id for inline state updates
+        self._user_rows = {}
         while self._user_layout.count() > 1:  # keep the stretch
             item = self._user_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         for u in users:
+            uid = u.get('id', '')
             row = UserRow(
-                u.get('id', ''),
+                uid,
                 u.get('name', 'Unknown'),
                 u.get('mode', 'GREEN'),
                 u.get('has_message', False)
@@ -1617,17 +1628,22 @@ class FloatingPanel(QWidget):
             row.call_clicked.connect(self.call_user_requested.emit)
             row.intercom_pressed.connect(self.intercom_pressed.emit)
             row.intercom_released.connect(self.intercom_released.emit)
-            self._user_rows[u.get('id', '')] = row
+            # Restore intercom state if this row was active
+            if uid in old_states:
+                row.set_state(old_states[uid])
+            self._user_rows[uid] = row
             self._user_layout.insertWidget(self._user_layout.count() - 1, row)
 
         self.online_count.setText(str(len(users)))
 
         # Dynamic panel height based on user count
         if not self._pinned and not self._is_onboarding:
-            # Fixed chrome: header(48) + disconn/conn(36) + team(28) + section hdr(28) + margins(16)
-            chrome_height = 48 + 36 + 28 + 28 + 16
-            user_height = len(users) * 46
-            target = chrome_height + max(user_height, 46)  # min space for 1 row
+            # Fixed chrome: header(48) + section hdr(22) + margins(12)
+            chrome_height = 48 + 22 + 12
+            if self._team_bar.isVisible():
+                chrome_height += 36
+            user_height = len(users) * 40
+            target = chrome_height + max(user_height, 40)  # min space for 1 row
             target = min(target, 520)  # cap so it doesn't go off-screen
             self.setFixedHeight(target)
 
