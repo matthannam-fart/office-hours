@@ -1241,7 +1241,7 @@ class FloatingPanel(QWidget):
     def _build_outgoing_banner(self):
         banner = QFrame()
         banner.setStyleSheet(f"""
-            background: rgba(30, 70, 120, 0.25);
+            background: {DARK['BG_RAISED']};
             border-bottom: 1px solid {DARK['BORDER']};
         """)
 
@@ -1257,10 +1257,10 @@ class FloatingPanel(QWidget):
 
         call_info = QVBoxLayout()
         self.outgoing_name = QLabel("")
-        self.outgoing_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['INFO_LT']};")
+        self.outgoing_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['TEXT']};")
         call_info.addWidget(self.outgoing_name)
         self.outgoing_sub = QLabel("Calling...")
-        self.outgoing_sub.setStyleSheet(f"font-size: 11px; color: {DARK['INFO']};")
+        self.outgoing_sub.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
         call_info.addWidget(self.outgoing_sub)
         top.addLayout(call_info, 1)
         v.addLayout(top)
@@ -1286,7 +1286,7 @@ class FloatingPanel(QWidget):
     def _build_incoming_banner(self):
         banner = QFrame()
         banner.setStyleSheet(f"""
-            background: rgba(0, 100, 50, 0.20);
+            background: {DARK['BG_RAISED']};
             border-bottom: 1px solid {DARK['BORDER']};
         """)
 
@@ -1302,10 +1302,10 @@ class FloatingPanel(QWidget):
 
         caller_info = QVBoxLayout()
         self.incoming_name = QLabel("Jane D.")
-        self.incoming_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['ACCENT_LT']};")
+        self.incoming_name.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['TEXT']};")
         caller_info.addWidget(self.incoming_name)
         caller_sub = QLabel("wants to connect")
-        caller_sub.setStyleSheet(f"font-size: 11px; color: {DARK['ACCENT_LT']};")
+        caller_sub.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']};")
         caller_info.addWidget(caller_sub)
         top.addLayout(caller_info, 1)
         v.addLayout(top)
@@ -1346,7 +1346,7 @@ class FloatingPanel(QWidget):
     def _build_call_banner(self):
         banner = QFrame()
         banner.setStyleSheet(f"""
-            background: rgba(0, 100, 50, 0.20);
+            background: {DARK['BG_RAISED']};
             border-bottom: 1px solid {DARK['BORDER']};
         """)
 
@@ -1363,7 +1363,7 @@ class FloatingPanel(QWidget):
         top.addWidget(call_orb)
 
         self.call_name_label = QLabel("")
-        self.call_name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['ACCENT_LT']};")
+        self.call_name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {DARK['TEXT']};")
         top.addWidget(self.call_name_label, 1)
 
         end_btn = QPushButton("End")
