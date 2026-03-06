@@ -293,7 +293,10 @@ class NetworkManager:
                 "room": self.room_code
             }).encode('utf-8'))
 
-            # Read response — may get "waiting" then "paired", or "paired" directly
+            # Read response — may get "waiting" then "paired", or "paired" directly.
+            # The relay may forward peer messages (TALK_START etc.) before sending
+            # "paired" to us, so we buffer those and replay them after pairing.
+            early_frames = []
             while True:
                 response = self._read_frame_on(sock)
                 if not response:
@@ -314,6 +317,10 @@ class NetworkManager:
                         gen = self._conn_generation
                     self._log(f"Joined room: {self.room_code} — Connected!")
                     self._register_udp_with_relay()
+                    # Replay any early frames that arrived before "paired"
+                    for early_msg in early_frames:
+                        if self.message_callback:
+                            self.message_callback(early_msg)
                     threading.Thread(target=self._listen_tcp, args=(gen,), daemon=True).start()
                     threading.Thread(target=self._listen_relay_udp, daemon=True).start()
                     return True
@@ -324,6 +331,11 @@ class NetworkManager:
                     self._log(f"Join failed: {msg.get('message', 'Unknown error')}")
                     sock.close()
                     return False
+                elif status is None and msg.get("type"):
+                    # Early relay frame from peer (e.g. TALK_START) — buffer it
+                    self._log(f"Buffering early relay message: {msg.get('type')}")
+                    early_frames.append(msg)
+                    continue
                 else:
                     self._log(f"Join failed: unexpected status={status!r} msg={msg}")
                     sock.close()
