@@ -169,8 +169,8 @@ def ensure_lan_cert():
                 .issuer_name(issuer)
                 .public_key(key.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.utcnow())
-                .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+                .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+                .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
                 .sign(key, hashes.SHA256())
             )
 
@@ -202,7 +202,8 @@ def ensure_lan_cert():
                 '-days', '3650', '-nodes',
                 '-subj', '/CN=Office Hours LAN'
             ], check=True, capture_output=True)
-            os.chmod(KEY_FILE, 0o600)
+            if sys.platform != 'win32':
+                os.chmod(KEY_FILE, 0o600)
             return CERT_FILE, KEY_FILE
 
     except Exception as e:

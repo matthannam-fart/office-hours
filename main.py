@@ -16,7 +16,9 @@ from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUN
 from network_manager import NetworkManager
 from audio_manager import AudioManager
 try:
-    from stream_deck_manager import StreamDeckHandler
+    from stream_deck_manager import (StreamDeckHandler, KEY_TALK, KEY_MSG, KEY_LOGO,
+                                      MODE_KEY_OFFSET_LARGE, MODE_KEY_OFFSET_SMALL,
+                                      SLOT_KEY_A, SLOT_KEY_B, CYCLE_KEY)
 except ImportError:
     StreamDeckHandler = None  # streamdeck/hidapi not available (common on Windows)
 from discovery_manager import DiscoveryManager
@@ -31,9 +33,18 @@ from ui_constants import COLORS
 
 # Mock for systems without Stream Deck
 class MockDeck:
+    is_large = False
+    on_team_selected = None
+    on_user_selected = None
     def update_key_color(self, k, r, g, b, l=""): pass
-    def update_key_image(self, key, text="", color=(0,0,0), render_oh=False):
-        pass
+    def update_key_image(self, key, text="", color=(0,0,0), render_oh=False): pass
+    def set_active_mode(self, mode): pass
+    def set_talk_active(self, active, recording=False): pass
+    def set_message_indicator(self, has_message): pass
+    def set_teams(self, teams, active_team_id=""): pass
+    def set_users(self, users, active_user_id=""): pass
+    def handle_cycle_key(self): pass
+    def handle_slot_key(self, slot): pass
     def close(self): pass
 
 class IntercomApp(QObject):
@@ -52,6 +63,8 @@ class IntercomApp(QObject):
     hotkey_release_signal = Signal()                 # global PTT released
     mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
     speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
+    _deck_team_signal = Signal(str, str)              # team_id, team_name from deck thread
+    _deck_user_signal = Signal(str, str)              # user_id, user_name from deck thread
     _teams_loaded_signal = Signal()                   # Supabase teams loaded (internal)
     _join_request_signal = Signal(str, str, str, str)  # request_id, team_id, requester_name, requester_id
     _join_response_signal = Signal(str, bool)          # request_id, approved
@@ -120,10 +133,11 @@ class IntercomApp(QObject):
             if StreamDeckHandler is None:
                 raise ImportError("streamdeck library not available")
             self.deck = StreamDeckHandler(self.handle_deck_input)
-            self.deck.update_key_image(0, render_oh=True)
         except Exception as e:
             self.log(f"Stream Deck: Not connected ({e})")
             self.deck = MockDeck()
+        self.deck.on_team_selected = lambda tid, tn: self._deck_team_signal.emit(tid, tn)
+        self.deck.on_user_selected = lambda uid, un: self._deck_user_signal.emit(uid, un)
 
         # Global PTT Hotkey
         ptt_key = get_ptt_hotkey()
@@ -183,6 +197,8 @@ class IntercomApp(QObject):
         self.hotkey_release_signal.connect(self.on_talk_release)
         self.mic_level_signal.connect(self._on_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
+        self._deck_team_signal.connect(self._switch_team)
+        self._deck_user_signal.connect(self._deck_user_selected)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
         self._join_request_signal.connect(self._show_join_request)
         self._join_response_signal.connect(self._handle_join_response)
@@ -902,17 +918,39 @@ class IntercomApp(QObject):
     # ── Button / Deck Logic ───────────────────────────────────────
 
     def handle_deck_input(self, key, state):
-        if key == 0:
+        # Key 0: PTT (hold to talk)
+        if key == KEY_TALK:
             if state:
                 self.on_talk_press()
             else:
                 self.on_talk_release()
-        elif key == 1:
-            if state:
-                self.on_answer()
-        elif key == 2:
-            if state:
-                self.cycle_mode()
+            return
+
+        # Only act on key-down for the rest
+        if not state:
+            return
+
+        # Key 1: Message — play/acknowledge
+        if key == KEY_MSG:
+            self.on_answer()
+            return
+
+        # Mode keys (row 2)
+        mode_off = self.deck._mode_offset if hasattr(self.deck, '_mode_offset') else 5
+        if key == mode_off:
+            self._set_mode(self.MODE_GREEN)
+        elif key == mode_off + 1:
+            self._set_mode(self.MODE_YELLOW)
+        elif key == mode_off + 2:
+            self._set_mode(self.MODE_RED)
+
+        # Bottom row browser (row 3, large decks only)
+        elif key == CYCLE_KEY and self.deck.is_large:
+            self.deck.handle_cycle_key()
+        elif key == SLOT_KEY_A and self.deck.is_large:
+            self.deck.handle_slot_key(0)
+        elif key == SLOT_KEY_B and self.deck.is_large:
+            self.deck.handle_slot_key(1)
 
     def on_talk_press(self):
         # Route through intercom system if a target is selected
@@ -937,11 +975,11 @@ class IntercomApp(QObject):
         if self.remote_mode in (self.MODE_GREEN, self.MODE_OPEN):
             self.log("Streaming Audio...")
             self.audio.start_streaming()
-            self.deck.update_key_color(0, 255, 0, 0, "LIVE")
+            self.deck.set_talk_active(True)
         elif self.remote_mode == self.MODE_YELLOW:
             self.log("Recording Message...")
             self.audio.start_recording_message()
-            self.deck.update_key_color(0, 255, 255, 0, "REC")
+            self.deck.set_talk_active(True, recording=True)
         elif self.remote_mode == self.MODE_RED:
             self.log("Peer is unavailable (DND).")
 
@@ -962,6 +1000,7 @@ class IntercomApp(QObject):
                 self.log(f"Sending Message ({filename})...")
                 self.network.send_file(filename)
 
+        self.deck.set_talk_active(False)
         self.update_deck_display()
 
     # ── Page All ───────────────────────────────────────────────────
@@ -1001,33 +1040,54 @@ class IntercomApp(QObject):
             self.panel.hide_message()
             self.audio.play_file(self.incoming_message_path)
 
-    def cycle_mode(self):
+    def _set_mode(self, new_mode):
+        """Set mode directly (used by deck buttons)."""
+        if new_mode == self.mode:
+            return
         old_mode = self.mode
+        self.mode = new_mode
 
-        if self.mode == self.MODE_GREEN:
-            self.mode = self.MODE_YELLOW
-        elif self.mode == self.MODE_YELLOW:
-            self.mode = self.MODE_RED
-        elif self.mode == self.MODE_RED:
-            self.mode = self.MODE_GREEN
-        else:  # OPEN — cycling goes back to GREEN
-            self.mode = self.MODE_GREEN
-
-        # Handle streaming transitions for OPEN mode
         if old_mode == self.MODE_OPEN and self.mode != self.MODE_OPEN:
             self.audio.stop_streaming()
             self.panel.set_hotline(False)
 
-        # Update UI
         self.panel.set_mode(self.mode)
         self._update_tray_icon()
-
         label = self.MODE_LABELS.get(self.mode, self.mode)
         self.log(f"Mode: {label}")
         self.send_status()
         self.network.update_presence_mode(self.mode)
         self.update_deck_display()
         self._update_ptt_for_mode()
+
+    def cycle_mode(self):
+        if self.mode == self.MODE_GREEN:
+            self._set_mode(self.MODE_YELLOW)
+        elif self.mode == self.MODE_YELLOW:
+            self._set_mode(self.MODE_RED)
+        elif self.mode == self.MODE_RED:
+            self._set_mode(self.MODE_GREEN)
+        else:  # OPEN — cycling goes back to GREEN
+            self._set_mode(self.MODE_GREEN)
+
+    @Slot(str, str)
+    def _deck_user_selected(self, user_id, user_name):
+        """Called when a user is selected via Stream Deck browser."""
+        self._on_user_selected(user_id)
+
+    def _switch_team(self, team_id, team_name):
+        """Switch active team (used by deck buttons)."""
+        if team_id == self.active_team_id:
+            return
+        self.active_team_id = team_id
+        self.active_team_name = team_name
+        set_active_team(team_id)
+        set_active_team_name(team_name)
+        self.log(f"Switched to team: {team_name}")
+        self.network.update_presence_team(team_id)
+        self._refilter_online_users()
+        self.panel.set_teams(self.my_teams, self.active_team_id)
+        self.deck.set_teams(self.my_teams, self.active_team_id)
 
     def _hotkey_talk_press(self):
         """Called from pynput thread — emit signal to run on Qt thread."""
@@ -1136,44 +1196,14 @@ class IntercomApp(QObject):
     # ── Display ───────────────────────────────────────────────────
 
     def update_deck_display(self):
-        if not self.deck: return
-
-        COLOR_GREEN = (0, 100, 0)
-        COLOR_YELLOW = (200, 180, 0)
-        COLOR_RED = (50, 0, 0)
-        COLOR_OFF = (0, 0, 0)
-
-        if self.is_flashing:
-            if self.flash_state:
-                self.deck.update_key_image(0, text="READ", color=COLOR_YELLOW)
-            else:
-                self.deck.update_key_image(0, text="MSG", color=COLOR_RED)
-        else:
-            bg = COLOR_OFF
-            if self.mode == self.MODE_GREEN: bg = COLOR_GREEN
-            elif self.mode == self.MODE_YELLOW: bg = COLOR_YELLOW
-            elif self.mode == self.MODE_RED: bg = COLOR_RED
-            self.deck.update_key_image(0, render_oh=True, color=bg)
-
-        if self.mode == self.MODE_GREEN:
-            self.deck.update_key_image(1, text="TALK", color=COLOR_GREEN)
-            self.deck.update_key_image(2, text="DND", color=(50, 50, 50))
-        elif self.mode == self.MODE_YELLOW:
-            self.deck.update_key_image(1, text="REC", color=COLOR_YELLOW)
-            self.deck.update_key_image(2, text="BACK", color=(50, 50, 50))
-        elif self.mode == self.MODE_RED:
-            self.deck.update_key_image(1, text="--", color=COLOR_RED)
-            self.deck.update_key_image(2, text="OPEN", color=COLOR_GREEN)
+        if not self.deck:
+            return
+        self.deck.set_active_mode(self.mode)
+        self.deck.set_message_indicator(self.has_message)
 
     def flash_loop(self):
-        if self.is_flashing and self.has_message:
-            self.flash_state = not self.flash_state
-            if self.flash_state:
-                self.deck.update_key_color(1, 255, 255, 0, "MSG!")
-            else:
-                self.deck.update_key_color(1, 0, 0, 0, "")
-        elif not self.has_message:
-            self.deck.update_key_color(1, 0, 0, 0, "")
+        # Message pulsing is now handled by stream_deck_manager internally
+        pass
 
     def _cleanup_messages(self):
         cfg_dir = _config_dir()
@@ -1238,6 +1268,8 @@ class IntercomApp(QObject):
             # Multiple teams or none — show lobby so user can pick or create
             self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
             self._lobby_refresh_timer.start()  # Start polling for new teams
+        # Update Stream Deck team row
+        self.deck.set_teams(self.my_teams, self.active_team_id)
 
     @Slot(list)
     def _set_available_teams(self, data):
@@ -1297,6 +1329,8 @@ class IntercomApp(QObject):
                 'has_message': False,
             })
         self.panel.set_users(panel_users)
+        # Feed filtered users to Stream Deck browser
+        self.deck.set_users(panel_users, self._intercom_target_id or "")
 
     def _ensure_presence_connected(self):
         """Ensure Supabase profile exists and presence server is connected.

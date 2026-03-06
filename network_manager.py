@@ -148,13 +148,12 @@ class NetworkManager:
                 self._log(f"TOFU WARNING: Peer {peer_ip} certificate changed!")
                 self._log(f"  Expected: {stored[:23]}...")
                 self._log(f"  Got:      {fingerprint[:23]}...")
-                self._log(f"  This could indicate a man-in-the-middle attack.")
-                # Still allow for now but log prominently — future: show UI warning
-                trust_peer(peer_ip, fingerprint)  # Update to new fingerprint
-                return True
+                self._log(f"  Rejecting connection — possible man-in-the-middle attack.")
+                self._log(f"  If this peer legitimately changed certs, remove its entry from trusted_peers in settings.")
+                return False
         except Exception as e:
             self._log(f"TOFU verification error: {e}")
-            return True  # Don't block on verification errors
+            return False  # Reject on verification errors
 
     def set_peer_ip(self, ip):
         self.peer_ip = ip
@@ -181,7 +180,9 @@ class NetworkManager:
             if self._lan_tls_context_client:
                 try:
                     wrapped = self._lan_tls_context_client.wrap_socket(raw_sock)
-                    self._verify_peer_tofu(wrapped, ip)
+                    if not self._verify_peer_tofu(wrapped, ip):
+                        wrapped.close()
+                        return False
                     self._log(f"Connected to {ip} (TLS encrypted)")
                     final_sock = wrapped
                 except ssl.SSLError as e:
@@ -507,7 +508,9 @@ class NetworkManager:
                             # Looks like TLS
                             try:
                                 client = self._lan_tls_context_server.wrap_socket(client, server_side=True)
-                                self._verify_peer_tofu(client, addr[0])
+                                if not self._verify_peer_tofu(client, addr[0]):
+                                    client.close()
+                                    continue
                                 self._log(f"Accepted TLS connection from {addr}")
                             except (ssl.SSLError, OSError) as e:
                                 self._log(f"TLS handshake failed from {addr}: {e}")
@@ -559,9 +562,13 @@ class NetworkManager:
 
     def _recv_all(self, n):
         """Helper to receive exactly n bytes"""
+        with self._conn_lock:
+            sock = self.tcp_socket
+        if not sock:
+            return None
         data = b''
         while len(data) < n:
-            packet = self.tcp_socket.recv(n - len(data))
+            packet = sock.recv(n - len(data))
             if not packet:
                 return None
             data += packet

@@ -45,8 +45,8 @@ def generate_certs(domain="localhost", output_dir="."):
         .issuer_name(ca_name)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.utcnow())
-        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -85,8 +85,8 @@ def generate_certs(domain="localhost", output_dir="."):
         .issuer_name(ca_name)
         .public_key(server_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.utcnow())
-        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
         .add_extension(
             x509.SubjectAlternativeName(san_names),
             critical=False,
@@ -110,7 +110,8 @@ def generate_certs(domain="localhost", output_dir="."):
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption()
         ))
-    os.chmod(key_path, 0o600)
+    if sys.platform != 'win32':
+        os.chmod(key_path, 0o600)
     print(f"  Server private key: {key_path}")
 
     # ── Summary ──────────────────────────────────────────────────

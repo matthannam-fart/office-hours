@@ -101,6 +101,11 @@ class AudioManager:
         self.mic_level_callback = None    # Called with mic RMS level
         self.speaker_level_callback = None  # Called with speaker RMS level
 
+        # Threading state
+        self.listening = False
+        self.stream_thread = None
+        self.play_thread = None
+
         # Threading guard
         self._stream_lock = threading.Lock()
     def log(self, msg):
@@ -134,7 +139,7 @@ class AudioManager:
             if self.streaming:
                 return
             # Wait for any previous stream thread to fully exit before starting
-            if hasattr(self, 'stream_thread') and self.stream_thread.is_alive():
+            if self.stream_thread and self.stream_thread.is_alive():
                 self.stream_thread.join(timeout=2.0)
             self.streaming = True
             self.stream_thread = threading.Thread(target=self._stream_mic, daemon=True)
@@ -142,7 +147,7 @@ class AudioManager:
 
     def stop_streaming(self):
         self.streaming = False
-        if hasattr(self, 'stream_thread') and self.stream_thread.is_alive():
+        if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=1.0)
 
     def _is_ducking(self):
@@ -309,7 +314,7 @@ class AudioManager:
             
     def stop_listening(self):
         self.listening = False
-        if hasattr(self, 'play_thread') and self.play_thread.is_alive():
+        if self.play_thread and self.play_thread.is_alive():
             self.play_thread.join(timeout=1.0)
             
     def restart_listening(self):

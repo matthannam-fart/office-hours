@@ -474,6 +474,10 @@ def handle_room_client(client_sock, client_addr, udp_sock):
                     send_json(client_sock, {"status": "error", "message": "Room not found"})
                     client_sock.close()
                     return
+                if len(rooms[room_code]["clients"]) >= 2:
+                    send_json(client_sock, {"status": "error", "message": "Room is full"})
+                    client_sock.close()
+                    return
                 rooms[room_code]["clients"].append(client_sock)
                 rooms[room_code]["udp_addrs"].append(None)
                 my_index = len(rooms[room_code]["clients"]) - 1

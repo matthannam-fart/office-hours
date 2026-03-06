@@ -147,7 +147,7 @@ class FloatingPanel(QWidget):
     def _apply_vibrancy(self):
         """Make the native macOS window background transparent
         so our semi-transparent Qt frame shows the desktop through."""
-        if self._vibrancy_applied:
+        if self._vibrancy_applied or sys.platform != 'darwin':
             return
         try:
             import objc
@@ -440,7 +440,7 @@ class FloatingPanel(QWidget):
         af.setContentsMargins(10, 6, 10, 10)
         af.setSpacing(6)
 
-        # Hidden combo (still used for team switching logic elsewhere)
+        # Hidden combo used for team switching logic (visible combo is in sidebar)
         self._team_combo = QComboBox()
         self._team_combo.setVisible(False)
         self._team_combo.currentIndexChanged.connect(self._on_team_combo_changed)
@@ -2314,8 +2314,8 @@ class FloatingPanel(QWidget):
                 with urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read())
                     self._nts_meta_ready.emit(data)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f"NTS metadata fetch failed: {e}")
         threading.Thread(target=_fetch, daemon=True).start()
 
     @Slot(dict)
