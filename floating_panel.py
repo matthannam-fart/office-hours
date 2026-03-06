@@ -13,7 +13,7 @@ from ctypes import c_void_p
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
+    QGraphicsOpacityEffect, QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
     QComboBox, QStackedWidget
 )
 from PySide6.QtCore import (
@@ -539,6 +539,23 @@ class FloatingPanel(QWidget):
             h.addWidget(name_lbl, 1)
 
             if is_active:
+                invite_code = team.get("invite_code", "")
+                if invite_code:
+                    code_btn = QPushButton(f"📋 {invite_code}")
+                    code_btn.setCursor(Qt.PointingHandCursor)
+                    code_btn.setToolTip("Click to copy invite code")
+                    code_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background: transparent; border: 1px solid {DARK['BORDER']};
+                            border-radius: 4px; font-size: 10px; color: {DARK['TEXT_DIM']};
+                            padding: 2px 6px; font-family: monospace;
+                        }}
+                        QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
+                    """)
+                    code_btn.clicked.connect(
+                        lambda checked=False, c=invite_code: self._copy_code(c)
+                    )
+                    h.addWidget(code_btn)
                 check = QLabel("✓")
                 check.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['GREEN']}; border: none;")
                 h.addWidget(check)
@@ -2621,6 +2638,39 @@ class FloatingPanel(QWidget):
             self._display_name = name.strip()
             self._update_pinned_style()
             self.name_change_requested.emit(self._display_name)
+
+    def _copy_code(self, code):
+        """Copy an invite code to clipboard with visual feedback."""
+        QApplication.clipboard().setText(code)
+        self._show_copied_toast()
+
+    def _show_copied_toast(self):
+        """Show a 'Copied!' label that fades up and out."""
+        toast = QLabel("Copied!", self)
+        toast.setStyleSheet(f"""
+            background: {DARK['BG_RAISED']}; color: {COLORS['GREEN']};
+            border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+            padding: 4px 12px; font-size: 11px; font-weight: 600;
+        """)
+        toast.setAlignment(Qt.AlignCenter)
+        toast.adjustSize()
+        # Center horizontally in the panel
+        x = (self.width() - toast.width()) // 2
+        y = self.height() // 2
+        toast.move(x, y)
+        toast.show()
+
+        # Fade out using window opacity
+        effect = QGraphicsOpacityEffect(toast)
+        toast.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", toast)
+        anim.setDuration(1200)
+        anim.setStartValue(1.0)
+        anim.setKeyValueAt(0.6, 1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.finished.connect(toast.deleteLater)
+        anim.start()
 
     def _copy_invite_code(self):
         """Copy the current team's invite code to the clipboard."""
