@@ -277,9 +277,11 @@ class IntercomApp(QObject):
         self.panel.show()
         self.panel.raise_()
         self.panel.activateWindow()
-        # Auto-pin so the panel doesn't vanish on focus loss
-        # (skip during onboarding — _toggle_pin guards this too)
-        if not self.panel.is_pinned() and not self.panel._is_onboarding:
+        # Auto-pin so the panel doesn't vanish on focus loss (macOS only).
+        # On Windows the panel stays visible without pinning, and auto-pin
+        # collapses it into the 58px compact bar which is confusing at startup.
+        import sys as _sys
+        if _sys.platform != 'win32' and not self.panel.is_pinned() and not self.panel._is_onboarding:
             self.panel._toggle_pin()
 
     # ── Tray Icon ─────────────────────────────────────────────────
