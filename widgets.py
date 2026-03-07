@@ -360,7 +360,9 @@ class UserRow(QWidget):
             self._status_lbl.setVisible(True)
             self._eq.setVisible(False)
         elif state == self.STATE_SELECTED:
-            self._status_lbl.setVisible(False)
+            self._status_lbl.setText("TALK")
+            self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['ACCENT']}; border: none;")
+            self._status_lbl.setVisible(True)
             self._eq.setVisible(False)
         else:
             self._status_lbl.setVisible(False)

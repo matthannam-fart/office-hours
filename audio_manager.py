@@ -13,28 +13,41 @@ except ImportError:
     except ImportError:
         # Pure-Python µ-law fallback (slower but functional)
         import struct
+        # µ-law lookup table (ITU-T G.711) — much faster than per-sample math
+        _ULAW_EXP_TABLE = [0,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3,
+                           4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+                           5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
+                           5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
+                           6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+                           6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+                           6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+                           6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+                           7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7]
         class audioop:
             @staticmethod
             def lin2ulaw(data, width):
                 samples = struct.unpack(f'<{len(data)//width}h', data)
-                bias = 0x84
-                clip = 32635
-                result = bytearray()
-                for s in samples:
+                BIAS = 0x84
+                CLIP = 32635
+                result = bytearray(len(samples))
+                for i, s in enumerate(samples):
                     sign = 0x80 if s < 0 else 0
-                    s = min(abs(s), clip) + bias
-                    exp = 7
-                    for i in range(7, 0, -1):
-                        if s >= (1 << (i + 3)):
-                            exp = i
-                            break
+                    s = min(abs(s), CLIP) + BIAS
+                    exp = _ULAW_EXP_TABLE[(s >> 7) & 0xFF]
                     mantissa = (s >> (exp + 3)) & 0x0F
-                    result.append(~(sign | (exp << 4) | mantissa) & 0xFF)
+                    result[i] = ~(sign | (exp << 4) | mantissa) & 0xFF
                 return bytes(result)
             @staticmethod
             def ulaw2lin(data, width):
-                result = bytearray()
-                for b in data:
+                result = bytearray(len(data) * 2)
+                for i, b in enumerate(data):
                     b = ~b & 0xFF
                     sign = b & 0x80
                     exp = (b >> 4) & 0x07
@@ -43,7 +56,7 @@ except ImportError:
                     sample -= 0x84
                     if sign:
                         sample = -sample
-                    result.extend(struct.pack('<h', max(-32768, min(32767, sample))))
+                    struct.pack_into('<h', result, i * 2, max(-32768, min(32767, sample)))
                 return bytes(result)
 import sys
 import time
@@ -91,7 +104,7 @@ class AudioManager:
         self.log_callback = log_callback
         self.recording = False
         self.streaming = False
-        self.audio_queue = queue.Queue(maxsize=10)  # Cap queue to prevent latency buildup
+        self.audio_queue = queue.Queue(maxsize=20)  # Cap queue to prevent latency buildup
         self.input_device = None
         self.output_device = None
 

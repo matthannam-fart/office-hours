@@ -1974,7 +1974,7 @@ class FloatingPanel(QWidget):
         elif connected:
             self.conn_label.setText("Connected")
 
-    def set_users(self, users):
+    def set_users(self, users, selected_user_id=None):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]
         Preserves intercom state (connecting/live) for rows that still exist."""
         # Snapshot active states before rebuild
@@ -1982,6 +1982,9 @@ class FloatingPanel(QWidget):
         for uid, row in self._user_rows.items():
             if row._state != UserRow.STATE_IDLE:
                 old_states[uid] = row._state
+        # Ensure selected target is preserved
+        if selected_user_id and selected_user_id not in old_states:
+            old_states[selected_user_id] = UserRow.STATE_SELECTED
 
         # Clear existing
         self._user_rows = {}

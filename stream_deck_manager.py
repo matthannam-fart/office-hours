@@ -74,7 +74,20 @@ class StreamDeckHandler:
     def connect(self):
         self._check_elgato_app()
 
-        streamdecks = DeviceManager().enumerate()
+        try:
+            streamdecks = DeviceManager().enumerate()
+        except Exception as e:
+            if sys.platform == 'win32':
+                print(f"Stream Deck enumerate failed: {e}")
+                print("On Windows, you may need to install LibUSB via Zadig:")
+                print("  1. Download Zadig from https://zadig.akeo.ie/")
+                print("  2. Options > List All Devices")
+                print("  3. Select your Stream Deck")
+                print("  4. Install WinUSB driver")
+            else:
+                print(f"Stream Deck enumerate failed: {e}")
+            return
+
         if not streamdecks:
             print("No Stream Deck found.")
             return
@@ -88,6 +101,11 @@ class StreamDeckHandler:
                     "Cannot open Stream Deck — the Elgato app is running.\n"
                     "Please quit the Elgato Stream Deck app and restart Office Hours."
                 ) from e
+            if sys.platform == 'win32':
+                print(f"Cannot open Stream Deck: {e}")
+                print("Try: quit the Elgato app, or install LibUSB driver via Zadig.")
+                self.deck = None
+                return
             raise
         self.deck.reset()
         self._key_count = self.deck.key_count()

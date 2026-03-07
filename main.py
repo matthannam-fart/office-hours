@@ -851,7 +851,8 @@ class IntercomApp(QObject):
                 'has_message': False  # TODO: track per-user messages
             })
 
-        self.panel.set_users(panel_users)
+        self.panel.set_users(panel_users, self._intercom_target_id)
+        self.deck.set_users(panel_users, self._intercom_target_id or "")
 
     @Slot(str, str, str)
     def _show_presence_request(self, from_name, from_id, room_code):
@@ -915,7 +916,7 @@ class IntercomApp(QObject):
                 'mode': 'GREEN',
                 'has_message': False,
             })
-        self.panel.set_users(panel_users)
+        self.panel.set_users(panel_users, self._intercom_target_id)
 
     def log(self, msg):
         log.info(msg)
@@ -1333,7 +1334,7 @@ class IntercomApp(QObject):
                 'mode': info["mode"],
                 'has_message': False,
             })
-        self.panel.set_users(panel_users)
+        self.panel.set_users(panel_users, self._intercom_target_id)
         # Feed filtered users to Stream Deck browser
         self.deck.set_users(panel_users, self._intercom_target_id or "")
 
