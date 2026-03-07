@@ -1,5 +1,6 @@
 sounddevice
 numpy
+audioop-lts
 pyside6
 zeroconf
 soundfile
