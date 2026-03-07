@@ -965,6 +965,7 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self._on_intercom_press(self._intercom_target_id)
             self.panel.set_ptt_active(True)
+            self.deck.set_talk_active(True)
             return
 
         if not self.network.connected:
@@ -996,6 +997,7 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self._on_intercom_release(self._intercom_target_id)
             self.panel.set_ptt_active(False)
+            self.deck.set_talk_active(False)
             return
 
         self.audio.stop_streaming()
