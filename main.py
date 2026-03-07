@@ -1081,6 +1081,10 @@ class IntercomApp(QObject):
     @Slot(str, str)
     def _deck_user_selected(self, user_id, user_name):
         """Called when a user is selected via Stream Deck browser."""
+        # Deselect all rows in panel first, then select the new one
+        for uid, row in self.panel._user_rows.items():
+            if uid != user_id and row._state == row.STATE_SELECTED:
+                row.set_state(row.STATE_IDLE)
         self._on_user_selected(user_id)
 
     def _switch_team(self, team_id, team_name):

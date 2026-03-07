@@ -54,10 +54,9 @@ class StreamDeckHandler:
         self._active_team_id = ""
         self._active_user_id = ""
 
-        # Bottom row browser state
-        self._browse_mode = BROWSE_TEAMS
-        self._browse_index = 0     # Index of item shown in slot A (slot B = index+1)
-        self._browsing = False     # True while user is actively browsing
+        # Bottom row state
+        self._team_index = 0       # Index of currently shown team
+        self._user_index = 0       # Index of currently shown user
         self._auto_select_timer = None
 
         # Callbacks for auto-select (set by main.py)
@@ -261,159 +260,133 @@ class StreamDeckHandler:
         self._msg_pulse_timer.daemon = True
         self._msg_pulse_timer.start()
 
-    # ── Bottom row: teams/users browser ───────────────────────
+    # ── Bottom row: team key + user key + (unused key 12) ────
 
     def set_teams(self, teams, active_team_id=""):
-        """Update team data. Refreshes bottom row if in teams mode."""
+        """Update team data. Refreshes bottom row."""
         self._teams = teams or []
         self._active_team_id = active_team_id
-        if self._browse_mode == BROWSE_TEAMS and not self._browsing:
-            self._browse_index = 0
-            # Jump to page containing active team
-            for i, t in enumerate(self._teams):
-                if t.get("id") == active_team_id:
-                    self._browse_index = (i // 2) * 2
-                    break
-            self._render_bottom_row()
+        # Find index of active team
+        self._team_index = 0
+        for i, t in enumerate(self._teams):
+            if t.get("id") == active_team_id:
+                self._team_index = i
+                break
+        self._render_bottom_row()
 
     def set_users(self, users, active_user_id=""):
-        """Update online users data. Refreshes bottom row if in users mode."""
+        """Update online users data. Refreshes bottom row."""
         self._users = users or []
         self._active_user_id = active_user_id
-        if self._browse_mode == BROWSE_USERS and not self._browsing:
-            self._render_bottom_row()
+        # Find index of active user
+        self._user_index = 0
+        for i, u in enumerate(self._users):
+            if u.get("id") == active_user_id:
+                self._user_index = i
+                break
+        self._render_bottom_row()
 
     def handle_cycle_key(self):
-        """Key 12 pressed — toggle between teams and users mode."""
-        if not self.is_large:
-            return
-        if self._browse_mode == BROWSE_TEAMS:
-            self._browse_mode = BROWSE_USERS
-        else:
-            self._browse_mode = BROWSE_TEAMS
-        self._browse_index = 0
-        self._browsing = False
-        self._cancel_auto_select()
-        self._restore_logo()
-        self._render_bottom_row()
+        """Key 12 — unused now (team and user each have their own key)."""
+        pass
 
     def handle_slot_key(self, slot):
-        """Key 10 or 11 pressed — select/highlight an item.
-        slot: 0 for Key 10, 1 for Key 11."""
+        """Key 10 = cycle teams, Key 11 = cycle users."""
         if not self.is_large:
             return
-        items = self._current_items()
-        idx = self._browse_index + slot
-        if idx >= len(items):
-            return
 
-        item = items[idx]
-        name = item.get("name", "?")
-
-        # Show preview on Key 2
-        self._show_preview(name)
-        self._browsing = True
-
-        # Highlight the selected slot
-        self._render_bottom_row(highlight_slot=slot)
-
-        # Start/reset auto-select timer
-        self._cancel_auto_select()
-        self._auto_select_timer = threading.Timer(
-            AUTO_SELECT_DELAY, self._auto_select, args=[idx]
-        )
-        self._auto_select_timer.daemon = True
-        self._auto_select_timer.start()
-
-    def handle_slot_page(self, slot):
-        """Page through items — pressing an already-highlighted slot pages forward."""
-        items = self._current_items()
-        if len(items) <= 2:
-            # No paging needed, just select
-            self.handle_slot_key(slot)
-            return
-
-        # Move browse window forward by 2
-        self._browse_index += 2
-        if self._browse_index >= len(items):
-            self._browse_index = 0
-        self._render_bottom_row()
-        # Auto-highlight slot A after paging
-        self.handle_slot_key(0)
-
-    def _current_items(self):
-        """Return the list for the current browse mode."""
-        if self._browse_mode == BROWSE_TEAMS:
-            return self._teams
-        return self._users
-
-    def _auto_select(self, idx):
-        """Called after AUTO_SELECT_DELAY — commit the selection."""
-        items = self._current_items()
-        if idx >= len(items):
-            self._browsing = False
-            self._restore_logo()
+        if slot == 0:
+            # Cycle teams
+            if not self._teams:
+                return
+            self._team_index = (self._team_index + 1) % len(self._teams)
+            team = self._teams[self._team_index]
+            self._active_team_id = team.get("id", "")
+            self._show_preview(team.get("name", "?"))
             self._render_bottom_row()
-            return
+            # Auto-select after delay
+            self._cancel_auto_select()
+            self._auto_select_timer = threading.Timer(
+                AUTO_SELECT_DELAY, self._auto_select_team
+            )
+            self._auto_select_timer.daemon = True
+            self._auto_select_timer.start()
 
-        item = items[idx]
-        self._browsing = False
+        elif slot == 1:
+            # Cycle users
+            if not self._users:
+                return
+            self._user_index = (self._user_index + 1) % len(self._users)
+            user = self._users[self._user_index]
+            self._active_user_id = user.get("id", "")
+            self._show_preview(user.get("name", "?"))
+            self._render_bottom_row()
+            # Auto-select after delay
+            self._cancel_auto_select()
+            self._auto_select_timer = threading.Timer(
+                AUTO_SELECT_DELAY, self._auto_select_user
+            )
+            self._auto_select_timer.daemon = True
+            self._auto_select_timer.start()
+
+    def _auto_select_team(self):
+        """Commit team selection after delay."""
+        if self._team_index < len(self._teams):
+            team = self._teams[self._team_index]
+            if self.on_team_selected:
+                self.on_team_selected(team.get("id", ""), team.get("name", ""))
         self._restore_logo()
 
-        if self._browse_mode == BROWSE_TEAMS:
-            self._active_team_id = item.get("id", "")
-            if self.on_team_selected:
-                self.on_team_selected(item.get("id", ""), item.get("name", ""))
-        else:
-            self._active_user_id = item.get("id", "")
+    def _auto_select_user(self):
+        """Commit user selection after delay."""
+        if self._user_index < len(self._users):
+            user = self._users[self._user_index]
             if self.on_user_selected:
-                self.on_user_selected(item.get("id", ""), item.get("name", ""))
-
-        self._render_bottom_row()
+                self.on_user_selected(user.get("id", ""), user.get("name", ""))
+        self._restore_logo()
 
     def _cancel_auto_select(self):
         if self._auto_select_timer:
             self._auto_select_timer.cancel()
             self._auto_select_timer = None
 
-    def _render_bottom_row(self, highlight_slot=None):
-        """Draw the bottom row: two item slots + cycle button."""
+    def _render_bottom_row(self, **_kw):
+        """Draw the bottom row: Key 10 = team, Key 11 = user, Key 12 = blank."""
         if not self.deck or not self.is_large:
             return
 
-        items = self._current_items()
-        active_id = self._active_team_id if self._browse_mode == BROWSE_TEAMS else self._active_user_id
+        # Key 10: current team
+        if self._teams and self._team_index < len(self._teams):
+            team = self._teams[self._team_index]
+            name = team.get("name", "?")
+            if len(name) > 6:
+                name = name[:5] + "."
+            is_active = team.get("id") == self._active_team_id
+            self.update_key_image(SLOT_KEY_A, text=f"TEAM\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
+        else:
+            self.update_key_image(SLOT_KEY_A, text="TEAM\n--", color=OH_TEAL_DIM)
 
-        for slot in range(2):
-            key = SLOT_KEY_A + slot
-            idx = self._browse_index + slot
-            if idx < len(items):
-                item = items[idx]
-                name = item.get("name", "?")
-                if len(name) > 6:
-                    name = name[:5] + "."
+        # Key 11: current user
+        if self._users and self._user_index < len(self._users):
+            user = self._users[self._user_index]
+            name = user.get("name", "?")
+            if len(name) > 6:
+                name = name[:5] + "."
+            is_active = user.get("id") == self._active_user_id
+            self.update_key_image(SLOT_KEY_B, text=f"USER\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
+        else:
+            self.update_key_image(SLOT_KEY_B, text="USER\n--", color=OH_TEAL_DIM)
 
-                if highlight_slot == slot:
-                    color = OH_TEAL  # Browsing highlight
-                elif item.get("id") == active_id:
-                    color = OH_TEAL  # Currently active
-                else:
-                    color = OH_TEAL_DIM
-                self.update_key_image(key, text=name, color=color)
-            else:
-                self.update_key_image(key, text="", color=COLOR_OFF)
-
-        # Cycle button — show current mode
-        mode_label = "TEAMS" if self._browse_mode == BROWSE_TEAMS else "USERS"
-        self.update_key_image(CYCLE_KEY, text=mode_label, color=OH_TEAL_DIM)
+        # Key 12: toggle hint
+        self.update_key_image(CYCLE_KEY, text="TOGGLE\n  <-", color=OH_TEAL_DIM)
 
     # ── Compat stubs for main.py ──────────────────────────────
 
     def next_team_page(self):
-        pass  # Handled by handle_slot_page now
+        pass
 
     def get_team_for_key(self, key):
-        return None  # Handled by handle_slot_key now
+        return None
 
     # ── Image rendering ───────────────────────────────────────
 
