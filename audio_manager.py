@@ -54,10 +54,20 @@ DUCK_ATTENUATION = 0.3
 # How long to keep ducking after last incoming audio chunk (seconds)
 DUCK_HOLDOFF = 0.15
 
-# VOX (voice-activated transmit) settings
-VOX_THRESHOLD = 150       # RMS amplitude to trigger transmit (int16 scale, ~0.5% of max)
-VOX_HOLDOFF = 0.4         # Keep transmitting for this long after voice stops (seconds)
-VOX_ATTACK_FRAMES = 1     # Frames above threshold to open gate (prevents click triggering)
+# VOX (voice-activated transmit) — adaptive noise gate
+VOX_HOLDOFF = 0.5             # Seconds to keep gate open after last voice frame
+VOX_ATTACK_FRAMES = 2         # Consecutive voice frames to open gate (anti-click)
+VOX_OPEN_RATIO = 3.0          # Open when RMS > noise_floor × this
+VOX_CLOSE_RATIO = 1.5         # Close when RMS < noise_floor × this (hysteresis)
+VOX_NOISE_ADAPT_RATE = 0.05   # How fast noise floor adapts upward (per frame)
+VOX_NOISE_DECAY_RATE = 0.002  # How fast noise floor decays downward (slow — tracks room)
+VOX_NOISE_FLOOR_INIT = 80     # Initial noise floor estimate (int16 RMS)
+VOX_NOISE_FLOOR_MIN = 20      # Minimum noise floor (prevents divide-by-zero in silent rooms)
+VOX_FADE_IN_MS = 10           # Milliseconds to ramp up when gate opens
+VOX_FADE_OUT_MS = 50          # Milliseconds to ramp down when gate closes
+VOX_VOICE_BAND = (300, 3000)  # Hz — voice energy band for spectral check
+VOX_VOICE_RATIO = 0.4         # Fraction of energy that must be in voice band
+VOX_COMFORT_LEVEL = 0.002     # Comfort noise amplitude (fraction of int16 max)
 
 def _configure_audio_backend():
     """Configure sounddevice for lowest latency on the current platform."""
@@ -96,6 +106,9 @@ class AudioManager:
         self._vox_open = False            # Gate currently open (transmitting)
         self._vox_last_voice = 0.0        # Timestamp of last voice-level audio
         self._vox_attack_count = 0        # Consecutive frames above threshold
+        self._vox_noise_floor = VOX_NOISE_FLOOR_INIT  # Adaptive noise floor (RMS)
+        self._vox_fade_state = 0.0        # 0.0 = fully closed, 1.0 = fully open
+        self._vox_prev_open = False       # Previous frame gate state (for fade detection)
 
         # Audio level callbacks (0.0–1.0 range)
         self.mic_level_callback = None    # Called with mic RMS level
@@ -167,10 +180,40 @@ class AudioManager:
                     level = min(1.0, rms / 32768.0 * 10)  # ×10 for visible range
                     self.mic_level_callback(level)
 
-                # VOX gate: only transmit when voice is detected
+                # VOX gate: adaptive noise gate with spectral voice detection
                 if self._vox_enabled:
                     now = time.time()
-                    if rms >= VOX_THRESHOLD:
+                    audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
+
+                    # ── Adaptive noise floor ──
+                    if rms < self._vox_noise_floor:
+                        # Audio is quieter than floor — decay slowly
+                        self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_DECAY_RATE
+                    elif not self._vox_open:
+                        # Gate closed and audio above floor — adapt upward faster
+                        self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_ADAPT_RATE
+                    self._vox_noise_floor = max(self._vox_noise_floor, VOX_NOISE_FLOOR_MIN)
+
+                    # ── Thresholds with hysteresis ──
+                    open_thresh = self._vox_noise_floor * VOX_OPEN_RATIO
+                    close_thresh = self._vox_noise_floor * VOX_CLOSE_RATIO
+
+                    # ── Spectral voice check ──
+                    is_voice = True
+                    if rms > open_thresh:
+                        try:
+                            fft = np.abs(np.fft.rfft(audio_f32))
+                            freqs = np.fft.rfftfreq(len(audio_f32), 1.0 / SAMPLE_RATE)
+                            total_energy = np.sum(fft ** 2)
+                            if total_energy > 0:
+                                voice_mask = (freqs >= VOX_VOICE_BAND[0]) & (freqs <= VOX_VOICE_BAND[1])
+                                voice_energy = np.sum(fft[voice_mask] ** 2)
+                                is_voice = (voice_energy / total_energy) >= VOX_VOICE_RATIO
+                        except Exception:
+                            pass  # If FFT fails, trust RMS alone
+
+                    # ── Gate logic ──
+                    if rms >= open_thresh and is_voice:
                         self._vox_attack_count += 1
                         if self._vox_attack_count >= VOX_ATTACK_FRAMES:
                             self._vox_open = True
@@ -180,8 +223,30 @@ class AudioManager:
                         if self._vox_open and (now - self._vox_last_voice) > VOX_HOLDOFF:
                             self._vox_open = False
 
-                    if not self._vox_open:
-                        return  # Gate closed — don't transmit silence
+                    # ── Smooth fade ──
+                    frame_len = len(audio_f32)
+                    if self._vox_open and self._vox_fade_state < 1.0:
+                        # Fading in
+                        fade_samples = int(SAMPLE_RATE * VOX_FADE_IN_MS / 1000)
+                        self._vox_fade_state = min(1.0, self._vox_fade_state + frame_len / max(fade_samples, 1))
+                    elif not self._vox_open and self._vox_fade_state > 0.0:
+                        # Fading out
+                        fade_samples = int(SAMPLE_RATE * VOX_FADE_OUT_MS / 1000)
+                        self._vox_fade_state = max(0.0, self._vox_fade_state - frame_len / max(fade_samples, 1))
+
+                    if self._vox_fade_state <= 0.0:
+                        # Gate fully closed — send comfort noise
+                        comfort = np.random.normal(0, VOX_COMFORT_LEVEL * 32768, indata.shape).astype(np.float32)
+                        raw = comfort.astype(DTYPE).tobytes()
+                        compressed = audioop.lin2ulaw(raw, 2)
+                        self.network_manager.send_audio(compressed)
+                        return
+                    elif self._vox_fade_state < 1.0:
+                        # Mid-fade — apply smooth gain
+                        gain = self._vox_fade_state
+                        indata = (indata.astype(np.float32) * gain).astype(DTYPE)
+
+                    self._vox_prev_open = self._vox_open
 
                 # Apply ducking (lighter now: 70% reduction instead of 95%)
                 if self._is_ducking():
@@ -209,6 +274,13 @@ class AudioManager:
         if not enabled:
             self._vox_open = False
             self._vox_attack_count = 0
+            self._vox_fade_state = 0.0
+            self._vox_prev_open = False
+        else:
+            # Reset noise floor on enable so it adapts to current room
+            self._vox_noise_floor = VOX_NOISE_FLOOR_INIT
+            self._vox_fade_state = 0.0
+            self._vox_prev_open = False
 
     def start_recording_message(self):
         """Yellow Mode: Start recording to buffer"""

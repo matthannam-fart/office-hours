@@ -3,7 +3,7 @@ widgets.py — Reusable UI widgets for Office Hours
 Extracted from floating_panel.py for maintainability.
 """
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QRectF, Property
+from PySide6.QtCore import Qt, Signal, QRectF, QTimer
 from PySide6.QtGui import QColor, QPainter, QBrush, QRadialGradient, QPen, QFont
 
 # Import shared constants (from separate module to avoid circular imports)
@@ -21,25 +21,24 @@ class GlowingOrb(QWidget):
         self._size = size
         self._color = QColor(COLORS['GREEN'])
         self._glow_radius = 0.0
+        self._glow_dir = 1
         self._breathing = False
         self.setFixedSize(size, size)
 
-        # Breathing animation
-        self._anim = QPropertyAnimation(self, b"glowRadius")
-        self._anim.setDuration(2500)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(6.0)
-        self._anim.setEasingCurve(QEasingCurve.InOutSine)
-        self._anim.setLoopCount(-1)  # infinite
+        # Breathing animation via QTimer to avoid PySide6 custom property crashes on Windows
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._anim_step)
 
-    def get_glow_radius(self):
-        return self._glow_radius
-
-    def set_glow_radius(self, v):
-        self._glow_radius = v
+    def _anim_step(self):
+        # ~2500ms full cycle at 30ms ticks: 1250/30 ≈ 41 ticks, 6.0/41 ≈ 0.14
+        self._glow_radius += self._glow_dir * 0.14
+        if self._glow_radius >= 6.0:
+            self._glow_radius = 6.0
+            self._glow_dir = -1
+        elif self._glow_radius <= 0.0:
+            self._glow_radius = 0.0
+            self._glow_dir = 1
         self.update()
-
-    glowRadius = Property(float, get_glow_radius, set_glow_radius)
 
     def set_color(self, mode):
         self._color = QColor(COLORS.get(mode, COLORS['GREEN']))
@@ -51,10 +50,12 @@ class GlowingOrb(QWidget):
 
     def start_breathing(self):
         self._breathing = True
-        self._anim.start()
+        self._glow_radius = 0.0
+        self._glow_dir = 1
+        self._anim_timer.start(30)
 
     def stop_breathing(self):
-        self._anim.stop()
+        self._anim_timer.stop()
         self._breathing = False
         self._glow_radius = 0.0
         self.update()

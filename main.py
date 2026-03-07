@@ -278,7 +278,8 @@ class IntercomApp(QObject):
         self.panel.raise_()
         self.panel.activateWindow()
         # Auto-pin so the panel doesn't vanish on focus loss
-        if not self.panel.is_pinned():
+        # (skip during onboarding — _toggle_pin guards this too)
+        if not self.panel.is_pinned() and not self.panel._is_onboarding:
             self.panel._toggle_pin()
 
     # ── Tray Icon ─────────────────────────────────────────────────
@@ -386,6 +387,7 @@ class IntercomApp(QObject):
         # Yellow targets will see accept/decline banner
         self.log(f"Calling {target_name}...")
         self._calling_user_id = user_id
+        self._calling_user_name = target_name
         self.panel.show_outgoing(target_name)
 
         lan_ip = self._find_lan_ip(target_name)
@@ -607,9 +609,11 @@ class IntercomApp(QObject):
         self.panel.hide_outgoing()
         if accepted:
             # Get peer name for display
-            peer_name = "Peer"
+            peer_name = ""
             if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
-                peer_name = self.online_users[self._calling_user_id].get("name", "Peer")
+                peer_name = self.online_users[self._calling_user_id].get("name", "")
+            if not peer_name:
+                peer_name = getattr(self, '_calling_user_name', "Peer")
             self.panel.set_connection(True, peer_name)
             self._start_open_line_if_ready()
             self._set_busy()
@@ -782,16 +786,16 @@ class IntercomApp(QObject):
 
             # Determine peer name and ID for UI
             if role == "creator":
-                target_name = "Peer"
                 self._connected_peer_id = getattr(self, '_calling_user_id', None)
-                if self._connected_peer_id and self._connected_peer_id in self.online_users:
-                    target_name = self.online_users[self._connected_peer_id].get("name", "Peer")
+                target_name = self.online_users.get(self._connected_peer_id, {}).get("name", "") if self._connected_peer_id else ""
+                if not target_name:
+                    target_name = getattr(self, '_calling_user_name', "Peer")
                 self.call_connected_signal.emit(target_name)
             elif role == "joiner":
-                caller_name = "Peer"
                 self._connected_peer_id = self.pending_from_id
-                if self._connected_peer_id and self._connected_peer_id in self.online_users:
-                    caller_name = self.online_users[self._connected_peer_id].get("name", "Peer")
+                caller_name = self.online_users.get(self._connected_peer_id, {}).get("name", "") if self._connected_peer_id else ""
+                if not caller_name:
+                    caller_name = getattr(self, 'pending_from_name', "Peer")
                 self.call_connected_signal.emit(caller_name)
 
             self._start_open_line_if_ready()
@@ -854,6 +858,7 @@ class IntercomApp(QObject):
         """Show incoming call via presence."""
         self.log(f"Incoming call from {from_name} (id={from_id}, room={room_code!r})")
         self.pending_from_id = from_id
+        self.pending_from_name = from_name
         self.pending_room = room_code  # Internal — not shown to user
 
         # Green mode: auto-accept (intercom behavior)

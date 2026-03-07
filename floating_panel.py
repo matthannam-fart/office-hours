@@ -129,19 +129,21 @@ class FloatingPanel(QWidget):
 
         import sys
         if sys.platform == 'win32':
-            # On Windows, skip Qt.Tool so the window appears in the taskbar
-            # (the tray icon often gets hidden in the overflow area)
+            # On Windows: use Qt.Window so taskbar works, skip Qt.Tool
             self.setWindowFlags(
+                Qt.Window |
                 Qt.FramelessWindowHint |
                 Qt.WindowStaysOnTopHint
             )
+            # WA_TranslucentBackground is unreliable on Windows without DWM hooks
+            self.setStyleSheet(f"FloatingPanel {{ background-color: {DARK['BG']}; }}")
         else:
             self.setWindowFlags(
                 Qt.FramelessWindowHint |
                 Qt.WindowStaysOnTopHint |
                 Qt.Tool  # Don't show in dock/taskbar (macOS has visible tray)
             )
-        self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedWidth(PANEL_W)
 
         self._build_ui()
@@ -272,15 +274,12 @@ class FloatingPanel(QWidget):
         frame_layout.addWidget(content_frame, 1)
 
         # ── Onboarding overlay (hidden, covers entire panel) ──
-        self._onboarding = self._build_onboarding()
+        self._onboarding = self._build_onboarding(self._frame)
         self._onboarding.setVisible(False)
-        # Onboarding is parented to _frame so it overlays everything
-        self._onboarding.setParent(self._frame)
 
         # ── Pinned compact (hidden by default) ────────────────
-        self._pinned_compact = self._build_pinned_compact()
+        self._pinned_compact = self._build_pinned_compact(self._frame)
         self._pinned_compact.setVisible(False)
-        self._pinned_compact.setParent(self._frame)
 
         # Legacy compat: _header reference (used by _toggle_pin etc.)
         self._header = self._sidebar
@@ -305,6 +304,8 @@ class FloatingPanel(QWidget):
             QFrame#sidebar {{
                 background: {DARK['BG']};
                 border: none;
+                border-top-left-radius: {PANEL_RADIUS}px;
+                border-bottom-left-radius: {PANEL_RADIUS}px;
             }}
         """)
 
@@ -842,7 +843,7 @@ class FloatingPanel(QWidget):
         return bar
 
     # ── Onboarding (no teams yet) ────────────────────────────
-    def _build_onboarding(self):
+    def _build_onboarding(self, parent_widget=None):
         """First-launch screen: set your name, browse available teams, or create/join with code."""
         # Custom frame that paints an "OH" watermark behind the content
         class WatermarkFrame(QFrame):
@@ -869,8 +870,8 @@ class FloatingPanel(QWidget):
                     p.drawText(r, Qt.AlignCenter, "OH")
                 p.end()
 
-        frame = WatermarkFrame()
-        frame.setStyleSheet("border: none;")
+        frame = WatermarkFrame(parent_widget)
+        frame.setStyleSheet(f"background-color: {DARK['BG']}; border: none; border-radius: {PANEL_RADIUS}px;")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(0)
@@ -1846,8 +1847,8 @@ class FloatingPanel(QWidget):
         self._resize_panel()
 
     # ── Pinned Compact ────────────────────────────────────────────
-    def _build_pinned_compact(self):
-        bar = QFrame()
+    def _build_pinned_compact(self, parent_widget=None):
+        bar = QFrame(parent_widget)
         bar.setFixedHeight(46)
 
         h = QHBoxLayout(bar)
@@ -2830,6 +2831,8 @@ class FloatingPanel(QWidget):
                 widget.name_label.setStyleSheet(f"font-size: 14px; font-weight: 500; color: {text_color}; padding-bottom: 1px;")
 
     def _toggle_pin(self):
+        if self._is_onboarding:
+            return
         self._pinned = not self._pinned
         self.pin_toggled.emit(self._pinned)
         self._update_pin_style(self._pinned)
@@ -2909,6 +2912,36 @@ class FloatingPanel(QWidget):
         # Apply vibrancy after show (needs native window handle)
         QTimer.singleShot(50, self._apply_vibrancy)
         self.activateWindow()
+
+    def resizeEvent(self, event):
+        """Ensure absolute overlay widgets cover the frame properly (needed on Windows)."""
+        super().resizeEvent(event)
+        if hasattr(self, '_frame'):
+            r = self._frame.rect()
+            if hasattr(self, '_onboarding'):
+                self._onboarding.setGeometry(r)
+            if hasattr(self, '_pinned_compact'):
+                self._pinned_compact.setGeometry(r)
+
+    # ── Dragging (needed on Windows for frameless windows) ────
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_drag_active', False):
+            self.move(event.globalPosition().toPoint() - self._drag_start_pos)
+            event.accept()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = False
+            event.accept()
+        super().mouseReleaseEvent(event)
 
     def focusOutEvent(self, event):
         """Close panel when it loses focus (unless pinned)."""
