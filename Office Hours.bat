@@ -188,9 +188,13 @@ if errorlevel 1 (
     venv\Scripts\pip install -r requirements-optional.txt -q >nul 2>&1
     venv\Scripts\python -c "import StreamDeck" >nul 2>&1
     if errorlevel 1 (
-        echo   . Stream Deck support skipped (requires LibUSB driver^).
+        echo   . Stream Deck support skipped (library install failed^).
     ) else (
         echo   . Stream Deck support installed.
+        echo     NOTE: If your Stream Deck isn't detected, you may need:
+        echo       1. Quit the Elgato Stream Deck app if it's running
+        echo       2. Install the LibUSB driver via Zadig (https://zadig.akeo.ie/^)
+        echo          - Options ^> List All Devices ^> Select Stream Deck ^> Install WinUSB
     )
 )
 
