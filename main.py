@@ -327,7 +327,7 @@ class IntercomApp(QObject):
             self.panel.set_hotline(True)
             self.panel.set_mode(self.MODE_OPEN)
             self.tray.setIcon(create_oh_icon(COLORS['OPEN']))
-            self.audio.set_vox(True)  # Voice-activated transmit for hotline
+            self.audio.set_hotline(True)  # Always-on with soft noise suppression
             if self.network.connected:
                 self.audio.start_streaming()
             self.send_status()
@@ -335,7 +335,7 @@ class IntercomApp(QObject):
         else:
             # Restore to GREEN (default when turning off hotline)
             self.mode = self.MODE_GREEN
-            self.audio.set_vox(False)
+            self.audio.set_hotline(False)
             self.audio.stop_streaming()
             self.panel.set_hotline(False)
             self.panel.set_mode(self.MODE_GREEN)

@@ -1538,7 +1538,7 @@ class FloatingPanel(QWidget):
         v.addLayout(btn_row)
 
         # Mode label below both buttons
-        self.ptt_mode_label = QLabel("Hotline — always-on hot mic.")
+        self.ptt_mode_label = QLabel("Hotline — open mic, same-room feel.")
         self.ptt_mode_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
         self.ptt_mode_label.setAlignment(Qt.AlignCenter)
         self.ptt_mode_label.setVisible(False)
@@ -1873,7 +1873,7 @@ class FloatingPanel(QWidget):
         in_call = getattr(self, '_call_peer_name', None)
         if is_on:
             self.ptt_btn.setText("●  Hotline")
-            self.ptt_mode_label.setText("Hotline — always-on hot mic.")
+            self.ptt_mode_label.setText("Hotline — open mic, same-room feel.")
             self.ptt_mode_label.setVisible(True)
         elif in_call:
             self.ptt_btn.setText(f"●  Talking to {in_call}")

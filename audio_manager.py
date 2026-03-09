@@ -121,20 +121,18 @@ AEC_REF_BUFFER_SIZE = 20      # Reference frames to keep (must exceed round-trip
 JITTER_MIN_FRAMES = 3         # Buffer this many frames before starting playback
 JITTER_MAX_FRAMES = 15        # Max buffer depth before dropping old frames
 
-# VOX (voice-activated transmit) — adaptive noise gate
-VOX_HOLDOFF = 0.5
-VOX_ATTACK_FRAMES = 2
-VOX_OPEN_RATIO = 3.0
-VOX_CLOSE_RATIO = 1.5
-VOX_NOISE_ADAPT_RATE = 0.05
-VOX_NOISE_DECAY_RATE = 0.002
-VOX_NOISE_FLOOR_INIT = 80
-VOX_NOISE_FLOOR_MIN = 20
-VOX_FADE_IN_MS = 10
-VOX_FADE_OUT_MS = 50
-VOX_VOICE_BAND = (300, 3000)
-VOX_VOICE_RATIO = 0.4
-VOX_COMFORT_LEVEL = 0.002
+# Hotline (always-on) soft noise suppression settings
+HOTLINE_SUPPRESS_DB = 15        # dB of suppression when no voice detected
+HOTLINE_VOICE_THRESH = 2.5      # RMS must exceed noise_floor * this to count as voice
+HOTLINE_NOISE_ADAPT_RATE = 0.03 # How fast noise floor tracks up
+HOTLINE_NOISE_DECAY_RATE = 0.005  # How fast noise floor drops
+HOTLINE_NOISE_FLOOR_INIT = 80
+HOTLINE_NOISE_FLOOR_MIN = 20
+HOTLINE_ATTACK_MS = 5           # Fade from suppressed to full (fast, natural)
+HOTLINE_RELEASE_MS = 300        # Fade from full to suppressed (slow, keeps tails)
+HOTLINE_VOICE_BAND = (200, 3500)  # Wider band than old VOX for naturalness
+HOTLINE_VOICE_RATIO = 0.3      # Lower threshold — let more through
+HOTLINE_BITRATE = 32000         # 32kbps for continuous streaming (saves bandwidth)
 
 def _configure_audio_backend():
     """Configure sounddevice for lowest latency on the current platform."""
@@ -326,14 +324,11 @@ class AudioManager:
         # NLMS echo canceller replaces ducking
         self._aec = EchoCanceller(frame_size=CHUNK_SIZE)
 
-        # VOX gate state
-        self._vox_enabled = False
-        self._vox_open = False
-        self._vox_last_voice = 0.0
-        self._vox_attack_count = 0
-        self._vox_noise_floor = VOX_NOISE_FLOOR_INIT
-        self._vox_fade_state = 0.0
-        self._vox_prev_open = False
+        # Hotline state (always-on with soft suppression)
+        self._hotline_enabled = False
+        self._hotline_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # Start suppressed
+        self._hotline_noise_floor = HOTLINE_NOISE_FLOOR_INIT
+        self._hotline_opus_encoder = None  # Separate encoder at lower bitrate
 
         # Audio level callbacks (0.0–1.0 range)
         self.mic_level_callback = None
@@ -493,68 +488,64 @@ class AudioManager:
                 level = min(1.0, rms / 32768.0 * 10)
                 self.mic_level_callback(level)
 
-            # VOX gate
-            if self._vox_enabled:
-                now = time.time()
+            # ── Hotline path: always-on with soft noise suppression ──
+            if self._hotline_enabled:
                 audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
+                frame_len = len(audio_f32)
 
-                # Adaptive noise floor
-                if rms < self._vox_noise_floor:
-                    self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_DECAY_RATE
-                elif not self._vox_open:
-                    self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_ADAPT_RATE
-                self._vox_noise_floor = max(self._vox_noise_floor, VOX_NOISE_FLOOR_MIN)
+                # Adaptive noise floor (tracks ambient level)
+                if rms < self._hotline_noise_floor:
+                    self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_DECAY_RATE
+                else:
+                    self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_ADAPT_RATE
+                self._hotline_noise_floor = max(self._hotline_noise_floor, HOTLINE_NOISE_FLOOR_MIN)
 
-                open_thresh = self._vox_noise_floor * VOX_OPEN_RATIO
-                close_thresh = self._vox_noise_floor * VOX_CLOSE_RATIO
-
-                # Spectral voice check
-                is_voice = True
-                if rms > open_thresh:
+                # Determine if voice is present (spectral + level check)
+                voice_thresh = self._hotline_noise_floor * HOTLINE_VOICE_THRESH
+                is_voice = False
+                if rms >= voice_thresh:
                     try:
                         fft = np.abs(np.fft.rfft(audio_f32))
-                        freqs = np.fft.rfftfreq(len(audio_f32), 1.0 / SAMPLE_RATE)
+                        freqs = np.fft.rfftfreq(frame_len, 1.0 / SAMPLE_RATE)
                         total_energy = np.sum(fft ** 2)
                         if total_energy > 0:
-                            voice_mask = (freqs >= VOX_VOICE_BAND[0]) & (freqs <= VOX_VOICE_BAND[1])
+                            voice_mask = (freqs >= HOTLINE_VOICE_BAND[0]) & (freqs <= HOTLINE_VOICE_BAND[1])
                             voice_energy = np.sum(fft[voice_mask] ** 2)
-                            is_voice = (voice_energy / total_energy) >= VOX_VOICE_RATIO
+                            is_voice = (voice_energy / total_energy) >= HOTLINE_VOICE_RATIO
                     except Exception:
-                        pass
+                        is_voice = True  # If FFT fails, assume voice
 
-                # Gate logic
-                if rms >= open_thresh and is_voice:
-                    self._vox_attack_count += 1
-                    if self._vox_attack_count >= VOX_ATTACK_FRAMES:
-                        self._vox_open = True
-                        self._vox_last_voice = now
+                # Smooth gain: ramp toward 1.0 (voice) or suppressed level (no voice)
+                suppress_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # ~0.18 for 15dB
+                target_gain = 1.0 if is_voice else suppress_gain
+
+                if target_gain > self._hotline_gain:
+                    # Attack: fast ramp up
+                    attack_samples = max(1, int(SAMPLE_RATE * HOTLINE_ATTACK_MS / 1000))
+                    self._hotline_gain += (1.0 - suppress_gain) * frame_len / attack_samples
+                    self._hotline_gain = min(self._hotline_gain, 1.0)
                 else:
-                    self._vox_attack_count = 0
-                    if self._vox_open and (now - self._vox_last_voice) > VOX_HOLDOFF:
-                        self._vox_open = False
+                    # Release: slow ramp down (keeps natural tails)
+                    release_samples = max(1, int(SAMPLE_RATE * HOTLINE_RELEASE_MS / 1000))
+                    self._hotline_gain -= (1.0 - suppress_gain) * frame_len / release_samples
+                    self._hotline_gain = max(self._hotline_gain, suppress_gain)
 
-                # Smooth fade
-                frame_len = len(audio_f32)
-                if self._vox_open and self._vox_fade_state < 1.0:
-                    fade_samples = int(SAMPLE_RATE * VOX_FADE_IN_MS / 1000)
-                    self._vox_fade_state = min(1.0, self._vox_fade_state + frame_len / max(fade_samples, 1))
-                elif not self._vox_open and self._vox_fade_state > 0.0:
-                    fade_samples = int(SAMPLE_RATE * VOX_FADE_OUT_MS / 1000)
-                    self._vox_fade_state = max(0.0, self._vox_fade_state - frame_len / max(fade_samples, 1))
+                # Apply gain — never fully silent, always some room tone
+                indata = (indata.astype(np.float32) * self._hotline_gain).astype(DTYPE)
 
-                if self._vox_fade_state <= 0.0:
-                    # Gate closed — send comfort noise
-                    comfort = np.random.normal(0, VOX_COMFORT_LEVEL * 32768, indata.shape).astype(np.float32)
-                    raw = comfort.astype(DTYPE).tobytes()
+                # AEC is critical for hotline (both sides have open mics)
+                cleaned = self._aec.cancel(indata)
+                raw = cleaned.tobytes()
+
+                # Encode with hotline encoder (lower bitrate for continuous streaming)
+                if self._hotline_opus_encoder:
+                    compressed = self._hotline_opus_encoder.encode(raw, OPUS_FRAME_SIZE)
+                else:
                     compressed = self._encode(raw)
-                    self.network_manager.send_audio(compressed)
-                    return
-                elif self._vox_fade_state < 1.0:
-                    gain = self._vox_fade_state
-                    indata = (indata.astype(np.float32) * gain).astype(DTYPE)
+                self.network_manager.send_audio(compressed)
+                return
 
-                self._vox_prev_open = self._vox_open
-
+            # ── PTT path: only sends when streaming flag is set ──
             # AEC: remove echo from mic signal using speaker reference
             cleaned = self._aec.cancel(indata)
             raw = cleaned.tobytes()
@@ -572,18 +563,31 @@ class AudioManager:
         except Exception as e:
             self.log(f"Mic Stream Error: {e}")
 
-    def set_vox(self, enabled):
-        """Enable/disable voice-activated transmit for open-line mode."""
-        self._vox_enabled = enabled
-        if not enabled:
-            self._vox_open = False
-            self._vox_attack_count = 0
-            self._vox_fade_state = 0.0
-            self._vox_prev_open = False
+    def set_hotline(self, enabled):
+        """Enable/disable hotline (always-on) mode with soft noise suppression."""
+        self._hotline_enabled = enabled
+        if enabled:
+            self._hotline_noise_floor = HOTLINE_NOISE_FLOOR_INIT
+            self._hotline_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # Start suppressed
+            # Create a separate Opus encoder at lower bitrate for continuous streaming
+            if _HAS_OPUS and not self._hotline_opus_encoder:
+                try:
+                    self._hotline_opus_encoder = opuslib.Encoder(
+                        SAMPLE_RATE, CHANNELS, opuslib.APPLICATION_VOIP
+                    )
+                    import ctypes
+                    OPUS_SET_BITRATE_REQUEST = 4002
+                    opuslib.api.encoder.encoder_ctl(
+                        self._hotline_opus_encoder.encoder_state,
+                        OPUS_SET_BITRATE_REQUEST,
+                        ctypes.c_int32(HOTLINE_BITRATE)
+                    )
+                    self.log(f"[Audio] Hotline encoder: {HOTLINE_BITRATE // 1000}kbps continuous")
+                except Exception as e:
+                    self.log(f"[Audio] Hotline encoder failed, using main encoder: {e}")
+                    self._hotline_opus_encoder = None
         else:
-            self._vox_noise_floor = VOX_NOISE_FLOOR_INIT
-            self._vox_fade_state = 0.0
-            self._vox_prev_open = False
+            self._hotline_opus_encoder = None
 
     def start_recording_message(self):
         """Yellow Mode: Start recording to buffer"""
