@@ -2665,9 +2665,14 @@ class FloatingPanel(QWidget):
             body += f"5. When it opens, enter your name and use this invite code: {code}\n"
         body += "\nThat's it — you'll see me online once you're in.\n"
         mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
-        from PySide6.QtGui import QDesktopServices
-        from PySide6.QtCore import QUrl
-        QDesktopServices.openUrl(QUrl(mailto))
+        import sys as _sys
+        if _sys.platform == 'darwin':
+            import subprocess
+            subprocess.Popen(['open', mailto])
+        else:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(mailto))
 
     def _copy_invite_code(self):
         """Copy the current team's invite code to the clipboard."""
