@@ -181,24 +181,7 @@ if "%NEED_DEPS%"=="1" (
     echo   All dependencies OK.
 )
 
-REM ── Step 3.5: Optional dependencies (Stream Deck) ──
-venv\Scripts\python -c "import StreamDeck" >nul 2>&1
-if errorlevel 1 (
-    echo   Installing optional packages (Stream Deck support^)...
-    venv\Scripts\pip install -r requirements-optional.txt -q >nul 2>&1
-    venv\Scripts\python -c "import StreamDeck" >nul 2>&1
-    if errorlevel 1 (
-        echo   . Stream Deck support skipped (library install failed^).
-    ) else (
-        echo   . Stream Deck support installed.
-        echo     NOTE: If your Stream Deck isn't detected, you may need:
-        echo       1. Quit the Elgato Stream Deck app if it's running
-        echo       2. Install the LibUSB driver via Zadig (https://zadig.akeo.ie/^)
-        echo          - Options ^> List All Devices ^> Select Stream Deck ^> Install WinUSB
-    )
-)
-
-REM ── Step 3.6: Ensure Opus codec library is available ──
+REM ── Step 3.5: Ensure Opus codec library is available ──
 venv\Scripts\python fetch_opus.py
 venv\Scripts\python -c "import opuslib; print('  Opus codec: OK')" >nul 2>&1
 if errorlevel 1 (
@@ -213,10 +196,26 @@ set "SD_PLUGIN_DIR=%APPDATA%\Elgato\StreamDeck\Plugins"
 set "SD_PLUGIN_NAME=com.officehours.intercom.sdPlugin"
 if exist "%SD_PLUGIN_DIR%" (
     if exist "streamdeck-plugin\%SD_PLUGIN_NAME%\manifest.json" (
+        REM Validate plugin has bundled node_modules
+        if not exist "streamdeck-plugin\%SD_PLUGIN_NAME%\bin\node_modules\ws" (
+            echo   Stream Deck plugin missing node_modules...
+            where npm >nul 2>&1
+            if not errorlevel 1 (
+                pushd "streamdeck-plugin\%SD_PLUGIN_NAME%\bin"
+                call npm install --production >nul 2>&1
+                popd
+            ) else (
+                echo   . npm not found — plugin may not work.
+            )
+        )
         echo   Installing Stream Deck plugin...
         if exist "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" rmdir /s /q "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" >nul 2>&1
-        xcopy "streamdeck-plugin\%SD_PLUGIN_NAME%" "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" /E /I /Q /Y >nul
-        echo   . Stream Deck plugin ready.
+        xcopy "streamdeck-plugin\%SD_PLUGIN_NAME%" "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" /E /I /Q /Y >nul 2>&1
+        if errorlevel 1 (
+            echo   . Stream Deck plugin install failed (copy error^).
+        ) else (
+            echo   . Stream Deck plugin ready.
+        )
     )
 )
 

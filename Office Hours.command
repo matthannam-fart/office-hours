@@ -259,16 +259,6 @@ else
     echo "  ✓ All dependencies OK."
 fi
 
-# Install optional dependencies (Stream Deck) — non-fatal if they fail
-if ! ./venv/bin/python -c "import StreamDeck" 2>/dev/null; then
-    echo "  Installing optional packages (Stream Deck support)..."
-    ./venv/bin/pip install -r requirements-optional.txt -q 2>/dev/null
-    if ./venv/bin/python -c "import StreamDeck" 2>/dev/null; then
-        echo "  ✓ Stream Deck support installed."
-    else
-        echo "  ✓ Stream Deck support skipped (no hardware detected)."
-    fi
-fi
 
 # ── Step 5: Clear Gatekeeper quarantine from venv (PySide6/Qt libs) ──
 if [ -d "venv" ]; then
@@ -306,14 +296,26 @@ fi
 SD_PLUGIN_DIR="$HOME/Library/Application Support/com.elgato.StreamDeck/Plugins"
 SD_PLUGIN_NAME="com.officehours.intercom.sdPlugin"
 if [ -d "$SD_PLUGIN_DIR" ] && [ -d "streamdeck-plugin/$SD_PLUGIN_NAME" ]; then
+    # Validate plugin has bundled node_modules
+    if [ ! -d "streamdeck-plugin/$SD_PLUGIN_NAME/bin/node_modules/ws" ]; then
+        echo "  ⚠ Stream Deck plugin missing node_modules — attempting npm install..."
+        if command -v npm &> /dev/null; then
+            (cd "streamdeck-plugin/$SD_PLUGIN_NAME/bin" && npm install --production 2>/dev/null)
+        else
+            echo "    npm not found — plugin may not work. Install Node.js from https://nodejs.org"
+        fi
+    fi
     # Install or update if our plugin is missing or older than source
     if [ ! -d "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME" ] || \
        [ "streamdeck-plugin/$SD_PLUGIN_NAME/manifest.json" -nt "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME/manifest.json" ]; then
         echo "  Installing Stream Deck plugin..."
         rm -rf "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME"
-        cp -R "streamdeck-plugin/$SD_PLUGIN_NAME" "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME"
-        echo "  ✓ Stream Deck plugin installed."
-        echo "    Restart the Stream Deck app to activate."
+        if cp -R "streamdeck-plugin/$SD_PLUGIN_NAME" "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME" 2>/dev/null; then
+            echo "  ✓ Stream Deck plugin installed."
+            echo "    Restart the Stream Deck app to activate."
+        else
+            echo "  ⚠ Stream Deck plugin install failed (copy error)."
+        fi
     fi
 fi
 

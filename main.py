@@ -16,10 +16,6 @@ from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUN
                      MAX_FILE_SIZE, MAX_FRAME_SIZE, APP_NAME, LOG_LEVEL, log)
 from network_manager import NetworkManager
 from audio_manager import AudioManager
-try:
-    from stream_deck_manager import (StreamDeckHandler, KEY_TALK, KEY_MODE, KEY_LOGO)
-except ImportError:
-    StreamDeckHandler = None  # streamdeck/hidapi not available (common on Windows)
 from discovery_manager import DiscoveryManager
 from user_settings import (get_display_name, set_display_name, get_user_id,
                           get_ptt_hotkey, _config_dir,
@@ -31,27 +27,6 @@ from hotkey_manager import HotkeyManager
 from floating_panel import FloatingPanel, create_oh_icon
 from ui_constants import COLORS
 from deck_ws_server import DeckWSServer
-
-# Mock for systems without Stream Deck
-class MockDeck:
-    is_large = False
-    key_team = 3
-    key_user = 4
-    key_window = 5
-    on_team_selected = None
-    on_user_selected = None
-    def update_key_color(self, k, r, g, b, l=""): pass
-    def update_key_image(self, key, text="", color=(0,0,0), render_oh=False): pass
-    def set_active_mode(self, mode): pass
-    def set_talk_active(self, active, recording=False): pass
-    def set_talk_locked(self, locked): pass
-    def set_message_indicator(self, has_message): pass
-    def cycle_mode(self): return "GREEN"
-    def set_teams(self, teams, active_team_id=""): pass
-    def set_users(self, users, active_user_id=""): pass
-    def handle_team_key(self): pass
-    def handle_user_key(self): pass
-    def close(self): pass
 
 class IntercomApp(QObject):
     # Signals to update UI from other threads
@@ -69,9 +44,6 @@ class IntercomApp(QObject):
     hotkey_release_signal = Signal()                 # global PTT released
     mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
     speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
-    _deck_input_signal = Signal(int, bool)              # key, state from deck thread
-    _deck_team_signal = Signal(str, str)              # team_id, team_name from deck thread
-    _deck_user_signal = Signal(str, str)              # user_id, user_name from deck thread
     _teams_loaded_signal = Signal()                   # Supabase teams loaded (internal)
     _join_request_signal = Signal(str, str, str, str)  # request_id, team_id, requester_name, requester_id
     _join_response_signal = Signal(str, bool)          # request_id, approved
@@ -118,7 +90,7 @@ class IntercomApp(QObject):
         self._last_panel_users = []      # Cached for WS plugin broadcast
         self._auto_select_attempted = ""  # Guard against auto-select retry loops
 
-        # WS plugin browse state (mirrors stream_deck_manager cycling)
+        # WS plugin browse state (mirrors plugin cycling)
         self._ws_team_index = 0
         self._ws_user_index = 0
         self._ws_preview_name = ""       # Name shown during browse
@@ -144,16 +116,6 @@ class IntercomApp(QObject):
         self.audio.mic_level_callback = lambda l: self.mic_level_signal.emit(l)
         self.audio.speaker_level_callback = lambda l: self.speaker_level_signal.emit(l)
         self.audio.start_listening()
-
-        try:
-            if StreamDeckHandler is None:
-                raise ImportError("streamdeck library not available")
-            self.deck = StreamDeckHandler(self.handle_deck_input)
-        except Exception as e:
-            self.log(f"Stream Deck: {e}")
-            self.deck = MockDeck()
-        self.deck.on_team_selected = lambda tid, tn: self._deck_team_signal.emit(tid, tn)
-        self.deck.on_user_selected = lambda uid, un: self._deck_user_signal.emit(uid, un)
 
         # Stream Deck Plugin WebSocket bridge
         self.deck_ws = DeckWSServer(
@@ -205,13 +167,8 @@ class IntercomApp(QObject):
 
         self.panel.set_display_name(self.display_name or "Office Hours")
 
-        # Deferred Stream Deck status (panel now exists)
-        if hasattr(self.deck, 'deck') and self.deck.deck:
-            deck_name = self.deck.deck.deck_type()
-            self.panel.set_deck_status(True, deck_name)
-        else:
-            # Plugin bridge is always available (even without hardware access)
-            self.panel.set_deck_status(True, "Plugin Bridge")
+        # Stream Deck plugin bridge is always available
+        self.panel.set_deck_status(True, "Plugin Bridge")
 
         # Start Services
         self.discovery.register_service()
@@ -236,10 +193,7 @@ class IntercomApp(QObject):
         self.hotkey_release_signal.connect(self.on_talk_release)
         self.mic_level_signal.connect(self._on_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
-        self._deck_input_signal.connect(self._handle_deck_input)
         self._ws_command_signal.connect(self._handle_ws_command)
-        self._deck_team_signal.connect(self._switch_team)
-        self._deck_user_signal.connect(self._deck_user_selected)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
         self._join_request_signal.connect(self._show_join_request)
         self._join_response_signal.connect(self._handle_join_response)
@@ -917,7 +871,6 @@ class IntercomApp(QObject):
 
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
-        self.deck.set_users(panel_users, self._intercom_target_id or "")
         self._broadcast_deck_state()
 
         # Auto-select if there's exactly one online user and no current target
@@ -998,41 +951,6 @@ class IntercomApp(QObject):
 
     # ── Button / Deck Logic ───────────────────────────────────────
 
-    def handle_deck_input(self, key, state):
-        # Stream Deck callbacks come from a background thread.
-        # Use a signal (not QTimer) to safely dispatch to the Qt main thread.
-        self._deck_input_signal.emit(key, state)
-
-    def _handle_deck_input(self, key, state):
-        # Key 0: PTT (hold to talk)
-        if key == KEY_TALK:
-            if state:
-                self.on_talk_press()
-            else:
-                self.on_talk_release()
-            return
-
-        # Only act on key-down for the rest
-        if not state:
-            return
-
-        # Key 1: Mode cycle (Available → Busy → DND → Available)
-        if key == KEY_MODE:
-            new_mode = self.deck.cycle_mode()
-            self._set_mode(new_mode)
-            return
-
-        # Key 2: OH logo — reserved for team/user preview display
-        # (handled by stream_deck_manager during TEAM/USER cycling)
-
-        # Row 2: TEAM, USER, MORE (dynamic keys based on deck columns)
-        if key == self.deck.key_team:
-            self.deck.handle_team_key()
-        elif key == self.deck.key_user:
-            self.deck.handle_user_key()
-        elif key == self.deck.key_window:
-            self._show_panel_at_tray()
-
     @Slot(str, dict)
     def _handle_ws_command(self, action, msg):
         """Handle commands from the Stream Deck plugin via WebSocket."""
@@ -1050,7 +968,7 @@ class IntercomApp(QObject):
             self._show_panel_at_tray()
 
     def _ws_cycle_team(self):
-        """Cycle through teams for WS plugin (mirrors stream_deck_manager)."""
+        """Cycle through teams for WS plugin (mirrors plugin)."""
         teams = getattr(self, 'my_teams', [])
         if not teams:
             return
@@ -1066,7 +984,7 @@ class IntercomApp(QObject):
         self._ws_auto_select_timer.start(1500)
 
     def _ws_cycle_user(self):
-        """Cycle through users for WS plugin (mirrors stream_deck_manager)."""
+        """Cycle through users for WS plugin (mirrors plugin)."""
         users = self._last_panel_users
         if not users:
             return
@@ -1193,7 +1111,6 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self._on_intercom_press(self._intercom_target_id)
             self.panel.set_ptt_active(True)
-            self.deck.set_talk_active(True)
             self._broadcast_deck_state()
             return
 
@@ -1213,11 +1130,9 @@ class IntercomApp(QObject):
         if self.remote_mode in (self.MODE_GREEN, self.MODE_OPEN):
             self.log("Streaming Audio...")
             self.audio.start_streaming()
-            self.deck.set_talk_active(True)
         elif self.remote_mode == self.MODE_YELLOW:
             self.log("Recording Message...")
             self.audio.start_recording_message()
-            self.deck.set_talk_active(True, recording=True)
         elif self.remote_mode == self.MODE_RED:
             self.log("Peer is unavailable (DND).")
 
@@ -1226,7 +1141,6 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self._on_intercom_release(self._intercom_target_id)
             self.panel.set_ptt_active(False)
-            self.deck.set_talk_active(False)
             return
 
         self.audio.stop_streaming()
@@ -1239,7 +1153,6 @@ class IntercomApp(QObject):
                 self.log(f"Sending Message ({filename})...")
                 self.network.send_file(filename)
 
-        self.deck.set_talk_active(False)
         self.update_deck_display()
 
     # ── Page All ───────────────────────────────────────────────────
@@ -1333,15 +1246,6 @@ class IntercomApp(QObject):
         """Direct mode set from sidebar dropdown."""
         self._set_mode(mode)
 
-    @Slot(str, str)
-    def _deck_user_selected(self, user_id, user_name):
-        """Called when a user is selected via Stream Deck browser."""
-        # Deselect all rows in panel first, then select the new one
-        for uid, row in self.panel._user_rows.items():
-            if uid != user_id and row._state == row.STATE_SELECTED:
-                row.set_state(row.STATE_IDLE)
-        self._on_user_selected(user_id)
-
     def _switch_team(self, team_id, team_name):
         """Switch active team (used by deck buttons)."""
         if team_id == self.active_team_id:
@@ -1354,7 +1258,6 @@ class IntercomApp(QObject):
         self.network.update_presence_team(team_id)
         self._refilter_online_users()
         self.panel.set_teams(self.my_teams, self.active_team_id)
-        self.deck.set_teams(self.my_teams, self.active_team_id)
 
     def _hotkey_talk_press(self):
         """Called from pynput thread — emit signal to run on Qt thread."""
@@ -1405,7 +1308,6 @@ class IntercomApp(QObject):
         elif msg_type == "TALK_START":
             self.peer_talking = True
             self.panel.set_ptt_locked(True)
-            self.deck.set_talk_locked(True)
             self._broadcast_deck_state()
             self.log_signal.emit("Peer is talking...")
             # Start fresh voicemail buffer if we're busy
@@ -1415,7 +1317,6 @@ class IntercomApp(QObject):
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
             self.panel.set_ptt_locked(False)
-            self.deck.set_talk_locked(False)
             self._broadcast_deck_state()
             self.audio.play_talk_ended()
             # If we were in busy mode and buffered audio, save as voicemail
@@ -1513,14 +1414,10 @@ class IntercomApp(QObject):
     # ── Display ───────────────────────────────────────────────────
 
     def update_deck_display(self):
-        if not self.deck:
-            return
-        self.deck.set_active_mode(self.mode)
-        self.deck.set_message_indicator(self.has_message)
         self._broadcast_deck_state()
 
     def flash_loop(self):
-        # Message pulsing is now handled by stream_deck_manager internally
+        # Message pulsing handled by Stream Deck plugin
         pass
 
     def _cleanup_messages(self):
@@ -1586,8 +1483,6 @@ class IntercomApp(QObject):
             # Multiple teams or none — show lobby so user can pick or create
             self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
             self._lobby_refresh_timer.start()  # Start polling for new teams
-        # Update Stream Deck team row
-        self.deck.set_teams(self.my_teams, self.active_team_id)
 
     @Slot(list)
     def _set_available_teams(self, data):
@@ -1645,8 +1540,6 @@ class IntercomApp(QObject):
             })
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
-        # Feed filtered users to Stream Deck browser
-        self.deck.set_users(panel_users, self._intercom_target_id or "")
         self._broadcast_deck_state()
 
     def _ensure_presence_connected(self):
@@ -1999,10 +1892,6 @@ class IntercomApp(QObject):
         # Disconnect presence first so relay broadcasts our departure
         self.network.disconnect_presence()
         self.network.close()
-        # Close Stream Deck (blank keys and release device)
-        if hasattr(self, 'deck'):
-            self.log("Closing Stream Deck...")
-            self.deck.close()
         # Stop WebSocket bridge
         if hasattr(self, 'deck_ws'):
             self.deck_ws.stop()

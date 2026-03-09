@@ -8,19 +8,25 @@ cd "$SCRIPT_DIR"
 
 echo "Installing Office Hours Stream Deck plugin..."
 
-# Install Node dependencies (only if npm is available and node_modules missing)
-if [ ! -d "$PLUGIN_DIR/bin/node_modules" ]; then
+# Validate Node dependencies (ws module must exist)
+if [ ! -d "$PLUGIN_DIR/bin/node_modules/ws" ]; then
+    echo "  Node dependencies missing or incomplete."
     if command -v npm &> /dev/null; then
-        echo "  Installing dependencies..."
+        echo "  Installing dependencies via npm..."
         cd "$PLUGIN_DIR/bin"
         npm install --production 2>&1 | head -5
         cd "$SCRIPT_DIR"
+        if [ ! -d "$PLUGIN_DIR/bin/node_modules/ws" ]; then
+            echo "  WARNING: npm install ran but ws module still missing."
+        else
+            echo "  Dependencies installed."
+        fi
     else
-        echo "  WARNING: npm not found and node_modules not bundled."
+        echo "  WARNING: npm not found and ws module not bundled."
         echo "  The plugin may not work. Install Node.js from https://nodejs.org"
     fi
 else
-    echo "  Dependencies already bundled."
+    echo "  Dependencies OK."
 fi
 
 # Determine install location
@@ -39,7 +45,10 @@ fi
 
 # Copy plugin
 echo "  Copying plugin to Stream Deck..."
-cp -R "$PLUGIN_DIR" "$DEST"
-
-echo ""
-echo "Done! Restart the Stream Deck app, then find 'Office Hours' in the action list."
+if cp -R "$PLUGIN_DIR" "$DEST" 2>/dev/null; then
+    echo ""
+    echo "Done! Restart the Stream Deck app, then find 'Office Hours' in the action list."
+else
+    echo ""
+    echo "ERROR: Failed to copy plugin. Check permissions on: $DEST"
+fi

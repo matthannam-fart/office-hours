@@ -8,20 +8,27 @@ cd /d "%SCRIPT_DIR%"
 
 echo Installing Office Hours Stream Deck plugin...
 
-REM Install Node dependencies (only if npm available and node_modules missing)
-if not exist "%PLUGIN_DIR%\bin\node_modules" (
+REM Validate Node dependencies (ws module must exist)
+if not exist "%PLUGIN_DIR%\bin\node_modules\ws" (
+    echo   Node dependencies missing or incomplete.
     where npm >nul 2>&1
     if not errorlevel 1 (
-        echo   Installing dependencies...
+        echo   Installing dependencies via npm...
         cd "%PLUGIN_DIR%\bin"
         call npm install --production
         cd /d "%SCRIPT_DIR%"
+        if not exist "%PLUGIN_DIR%\bin\node_modules\ws" (
+            echo   WARNING: npm install succeeded but ws module still missing.
+            echo   The plugin may not work.
+        ) else (
+            echo   Dependencies installed.
+        )
     ) else (
-        echo   WARNING: npm not found and node_modules not bundled.
+        echo   WARNING: npm not found and ws module not bundled.
         echo   The plugin may not work. Install Node.js from https://nodejs.org
     )
 ) else (
-    echo   Dependencies already bundled.
+    echo   Dependencies OK.
 )
 
 REM Determine install location
@@ -35,8 +42,13 @@ if exist "%DEST%" (
 
 REM Copy plugin
 echo   Copying plugin to Stream Deck...
-xcopy "%PLUGIN_DIR%" "%DEST%" /E /I /Q /Y >nul
-
-echo.
-echo Done! Restart the Stream Deck app, then find "Office Hours" in the action list.
+xcopy "%PLUGIN_DIR%" "%DEST%" /E /I /Q /Y >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   ERROR: Failed to copy plugin to Stream Deck plugins directory.
+    echo   Check that the directory is writable: %DEST%
+) else (
+    echo.
+    echo Done! Restart the Stream Deck app, then find "Office Hours" in the action list.
+)
 pause

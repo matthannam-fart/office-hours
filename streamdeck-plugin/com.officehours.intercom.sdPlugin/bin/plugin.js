@@ -1,10 +1,10 @@
 /// Office Hours — Stream Deck Plugin
 /// Connects to the OH app via ws://localhost:50003
-/// Mirrors stream_deck_manager.py behavior exactly.
+/// Mirrors OH app behavior exactly.
 
 const WebSocket = require("ws");
 
-// ── Colors (match stream_deck_manager.py) ───────────────────
+// ── Colors (match OH app) ───────────────────
 const OH_TEAL     = "#71ada3";
 const OH_TEAL_DIM = "#283c3c";
 const COLOR_OFF   = "#000000";
@@ -64,6 +64,7 @@ let ohState = {
     browseUserIndex: 0,
 };
 let reconnectTimer = null;
+let reconnectDelay = 3000;  // Start at 3s, backoff to 30s max
 
 // Message pulse state (matches stream_deck_manager 0.6s interval)
 let msgPulseOn = false;
@@ -75,12 +76,14 @@ function connectToOH() {
     }
     try {
         ohWs = new WebSocket("ws://127.0.0.1:50003");
-    } catch (_) {
+    } catch (e) {
+        log("OH connection failed: " + e.message);
         scheduleReconnect();
         return;
     }
     ohWs.on("open", () => {
         log("Connected to Office Hours app");
+        reconnectDelay = 3000;  // Reset backoff on success
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         refreshAllButtons();
     });
@@ -107,7 +110,8 @@ function connectToOH() {
         scheduleReconnect();
         showDisconnected();
     });
-    ohWs.on("error", () => {
+    ohWs.on("error", (e) => {
+        log("OH connection error: " + (e.message || e.code || "unknown"));
         ohWs = null;
         scheduleReconnect();
     });
@@ -118,7 +122,9 @@ function scheduleReconnect() {
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connectToOH();
-    }, 3000);
+    }, reconnectDelay);
+    // Exponential backoff: 3s → 6s → 12s → 24s → 30s max
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
 }
 
 function sendToOH(msg) {
@@ -204,7 +210,7 @@ function onKeyUp(action, ctx) {
     }
 }
 
-// ── SVG rendering (matches stream_deck_manager.py visuals) ──
+// ── SVG rendering (matches OH app visuals) ──
 function setImage(action, ctx, svg) {
     if (!sdWs || sdWs.readyState !== WebSocket.OPEN) return;
     const encoded = "data:image/svg+xml;charset=utf8," + encodeURIComponent(svg);

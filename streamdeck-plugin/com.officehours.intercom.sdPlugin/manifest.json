@@ -6,6 +6,7 @@
     "Author": "Office Hours",
     "Description": "Control your Office Hours intercom — push-to-talk, mode switching, team/user selection — right from your Stream Deck.",
     "Icon": "imgs/plugin-icon",
+    "Category": "Office Hours",
     "CategoryIcon": "imgs/category-icon",
     "CodePath": "bin/plugin.js",
     "SDKVersion": 2,

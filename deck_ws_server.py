@@ -19,7 +19,6 @@ The plugin connects to ws://localhost:50003 and exchanges JSON messages:
 import asyncio
 import json
 import threading
-import time
 
 WS_PORT = 50003
 
@@ -37,6 +36,7 @@ class DeckWSServer:
         self._thread = None
         self._state = {}
         self._server = None
+        self._ready = threading.Event()
 
     # ── Public API (called from main thread) ────────────────────
 
@@ -48,6 +48,8 @@ class DeckWSServer:
     def broadcast_state(self, state: dict):
         """Send full state snapshot to all connected plugins."""
         self._state = state
+        if not self._ready.is_set():
+            return  # Server not ready yet — state is cached for new clients
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(
                 asyncio.ensure_future,
@@ -68,6 +70,7 @@ class DeckWSServer:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._loop.run_until_complete(self._serve())
+        self._ready.set()
         self._loop.run_forever()
 
     async def _serve(self):

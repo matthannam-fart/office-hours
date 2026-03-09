@@ -2720,7 +2720,7 @@ class FloatingPanel(QWidget):
 
         subtitle = QLabel(
             "Office Hours works with the Elgato Stream Deck app.\n"
-            "The plugin is already installed — just add the actions:"
+            "The plugin was auto-installed — just add the actions:"
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; border: none;")
@@ -2728,8 +2728,8 @@ class FloatingPanel(QWidget):
 
         steps = QLabel(
             "1. Open the Stream Deck app\n\n"
-            "2. In the right sidebar, scroll to find\n"
-            "   \"Office Hours\" under Custom\n\n"
+            "2. In the right sidebar, find the\n"
+            "   \"Office Hours\" category\n\n"
             "3. Drag these actions onto your deck:\n\n"
             "   • Push to Talk — hold to talk\n"
             "   • Status Mode — cycle availability\n"
