@@ -97,6 +97,7 @@ class FloatingPanel(QWidget):
     manage_team_requested = Signal()       # open team management
     join_code_requested = Signal(str)      # invite_code — user wants to join a team
     leave_team_requested = Signal()        # user wants to leave current team
+    mode_set_requested = Signal(str)       # direct mode selection (GREEN/YELLOW/RED)
     request_to_join = Signal(str, str, str)   # team_id, team_name, admin_id (lobby join request)
     join_request_accepted = Signal(str)        # request_id — admin accepted a join request
     join_request_declined = Signal(str, str)   # request_id, requester_id — admin declined
@@ -249,8 +250,6 @@ class FloatingPanel(QWidget):
         users_v.setSpacing(0)
         self._user_section = self._build_user_section()
         users_v.addWidget(self._user_section, 1)
-        self._ptt_bar = self._build_ptt_bar()
-        users_v.addWidget(self._ptt_bar)
         self._content_stack.addWidget(self._users_page)
 
         # Page 1: Teams
@@ -353,6 +352,74 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
+        # ── Info section above orb ──
+
+        # Active team name
+        self._sidebar_team_label = QLabel("")
+        self._sidebar_team_label.setAlignment(Qt.AlignCenter)
+        self._sidebar_team_label.setWordWrap(True)
+        self._sidebar_team_label.setStyleSheet(f"""
+            font-size: 9px; font-weight: 600; color: {DARK['TEXT_FAINT']};
+            border: none; padding: 0 4px;
+            letter-spacing: 0.5px;
+        """)
+        self._sidebar_team_label.setFixedWidth(SIDEBAR_W)
+        v.addWidget(self._sidebar_team_label)
+
+        # User initials (circular badge — shows local user's initials)
+        self._sidebar_user_initials = QLabel("")
+        self._sidebar_user_initials.setAlignment(Qt.AlignCenter)
+        self._sidebar_user_initials.setFixedSize(36, 36)
+        self._sidebar_user_initials.setStyleSheet(f"""
+            background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+            border-radius: 18px; font-size: 14px; font-weight: 700;
+            color: {DARK['TEXT_DIM']};
+        """)
+        user_container = QHBoxLayout()
+        user_container.setContentsMargins(0, 4, 0, 2)
+        user_container.setAlignment(Qt.AlignCenter)
+        user_container.addWidget(self._sidebar_user_initials)
+        v.addLayout(user_container)
+
+        # Status dropdown button (shows current mode, click for menu)
+        self._sidebar_status_btn = QPushButton("Available ▾")
+        self._sidebar_status_btn.setCursor(Qt.PointingHandCursor)
+        self._sidebar_status_btn.setFixedSize(SIDEBAR_W - 8, 24)
+        self._sidebar_status_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 9px; font-weight: 600;
+                color: #4cdf80; background: rgba(0, 166, 81, 0.10);
+                border: 1px solid rgba(0, 166, 81, 0.30);
+                border-radius: 6px; padding: 2px 4px;
+            }}
+            QPushButton:hover {{ background: rgba(0, 166, 81, 0.20); }}
+            QPushButton::menu-indicator {{ width: 0; height: 0; }}
+        """)
+        # Build the mode selection menu
+        self._status_menu = QMenu(self)
+        self._status_menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        for mode_key, label in [("GREEN", "Available"), ("YELLOW", "Busy"), ("RED", "DND")]:
+            action = self._status_menu.addAction(f"● {label}")
+            color = COLORS[mode_key]
+            action.setData(mode_key)
+            action.triggered.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
+        self._sidebar_status_btn.setMenu(self._status_menu)
+        status_container = QHBoxLayout()
+        status_container.setContentsMargins(4, 2, 4, 2)
+        status_container.setAlignment(Qt.AlignCenter)
+        status_container.addWidget(self._sidebar_status_btn)
+        v.addLayout(status_container)
+
         # Mode orb at bottom of sidebar (large)
         self._sidebar_orb = GlowingOrb(28)
         orb_container = QHBoxLayout()
@@ -380,7 +447,6 @@ class FloatingPanel(QWidget):
         self._section_title.setText(key.upper())
         # Hide search bar and hotline toggle on pages where they don't apply
         show_search = key in ("users", "teams")
-        self._search_input.setVisible(show_search)
         self._hotline_lbl.setVisible(show_search)
         self.open_toggle.setVisible(show_search)
         # Populate settings when navigating to it
@@ -399,20 +465,6 @@ class FloatingPanel(QWidget):
         v = QVBoxLayout(header)
         v.setContentsMargins(12, 10, 12, 0)
         v.setSpacing(8)
-
-        # Search bar
-        self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Search...")
-        self._search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 8px; padding: 8px 12px; font-size: 13px;
-                color: {DARK['TEXT']}; selection-background-color: {DARK['ACCENT']};
-            }}
-            QLineEdit:focus {{ border-color: {DARK['ACCENT']}; }}
-        """)
-        self._search_input.setFixedHeight(36)
-        v.addWidget(self._search_input)
 
         # Section title with accent underline
         title_row = QHBoxLayout()
@@ -614,23 +666,61 @@ class FloatingPanel(QWidget):
         """User clicked Select on a team in the lobby page."""
         self.team_selected_from_lobby.emit(team_id, team_name)
 
-    # ── Status Bar (bottom of content) ────────────────────────────
+    # ── Status Bar (bottom of content) — now houses PTT ──────────
     def _build_status_bar(self):
         bar = QFrame()
         bar.setStyleSheet(f"border: none; background: transparent;")
-        bar.setFixedHeight(48)
+        bar.setFixedHeight(60)
 
         v = QVBoxLayout(bar)
         v.setContentsMargins(8, 4, 8, 6)
-        v.setSpacing(0)
+        v.setSpacing(4)
 
-        # Full-width mode button
+        # Horizontal row: PTT (5/6) + Page All (1/6)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+
+        # PTT button — full-width, mode-colored
+        self.ptt_btn = QPushButton("●  Hold to Talk")
+        self.ptt_btn.setCursor(Qt.PointingHandCursor)
+        self.ptt_btn.setFixedHeight(36)
+        self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
+        self.ptt_btn.released.connect(self.ptt_released.emit)
+        self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        btn_row.addWidget(self.ptt_btn, 5)
+
+        # Page All button
+        self.page_all_btn = QPushButton("Page All")
+        self.page_all_btn.setCursor(Qt.PointingHandCursor)
+        self.page_all_btn.setFixedWidth(62)
+        self.page_all_btn.setFixedHeight(36)
+        self.page_all_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 6px; font-size: 11px;
+                font-weight: 600; color: {DARK['TEXT_FAINT']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT_DIM']}; }}
+            QPushButton:pressed {{ background: {DARK['BG']}; }}
+        """)
+        self.page_all_btn.pressed.connect(self.page_all_pressed.emit)
+        self.page_all_btn.released.connect(self.page_all_released.emit)
+        btn_row.addWidget(self.page_all_btn, 1)
+
+        v.addLayout(btn_row)
+
+        # Hotline mode label below PTT
+        self.ptt_mode_label = QLabel("Hotline — open mic, same-room feel.")
+        self.ptt_mode_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
+        self.ptt_mode_label.setAlignment(Qt.AlignCenter)
+        self.ptt_mode_label.setVisible(False)
+        v.addWidget(self.ptt_mode_label)
+
+        # Legacy: hidden mode_btn (some code references it)
         self.mode_btn = QPushButton()
-        self.mode_btn.setCursor(Qt.PointingHandCursor)
-        self.mode_btn.setFixedHeight(36)
+        self.mode_btn.setFixedSize(0, 0)
+        self.mode_btn.setVisible(False)
         self.mode_btn.clicked.connect(self.mode_cycle_requested.emit)
-        v.addWidget(self.mode_btn)
-        self._update_mode_btn()
 
         # Hidden menu button (triggered from settings page)
         self.menu_btn = QPushButton()
@@ -643,6 +733,8 @@ class FloatingPanel(QWidget):
         self.pin_btn.setFixedSize(0, 0)
         self.pin_btn.setVisible(False)
         self._update_pin_style(False)
+
+        self._update_ptt_style()
 
         return bar
 
@@ -676,48 +768,72 @@ class FloatingPanel(QWidget):
                 QPushButton:hover { background: rgba(255,152,0,0.18); color: #ffb74d; }
             """)
 
+    # Mode color maps (shared by PTT bar and sidebar status)
+    _MODE_TEXT_COLORS = {
+        'GREEN': '#4cdf80', 'YELLOW': '#f0c040',
+        'RED': '#f06060', 'OPEN': '#4cd8d8'
+    }
+    _MODE_BG_COLORS = {
+        'GREEN': 'rgba(0, 166, 81, 0.10)',
+        'YELLOW': 'rgba(230, 175, 0, 0.10)',
+        'RED': 'rgba(229, 57, 53, 0.10)',
+        'OPEN': 'rgba(42, 191, 191, 0.10)',
+    }
+    _MODE_BORDER_COLORS = {
+        'GREEN': 'rgba(0, 166, 81, 0.30)',
+        'YELLOW': 'rgba(230, 175, 0, 0.30)',
+        'RED': 'rgba(229, 57, 53, 0.30)',
+        'OPEN': 'rgba(42, 191, 191, 0.30)',
+    }
+
     def _update_mode_btn(self):
+        """Update the sidebar status button to reflect current mode."""
         mode = self._current_mode
-        color = COLORS.get(mode, COLORS['GREEN'])
-        # Lighter text colors for dark background
-        text_colors = {
-            'GREEN': '#4cdf80', 'YELLOW': '#f0c040',
-            'RED': '#f06060', 'OPEN': '#4cd8d8'
-        }
-        # Subtle tinted backgrounds
-        bg_colors = {
-            'GREEN': 'rgba(0, 166, 81, 0.10)',
-            'YELLOW': 'rgba(230, 175, 0, 0.10)',
-            'RED': 'rgba(229, 57, 53, 0.10)',
-            'OPEN': 'rgba(42, 191, 191, 0.10)',
-        }
-        border_colors = {
-            'GREEN': 'rgba(0, 166, 81, 0.30)',
-            'YELLOW': 'rgba(230, 175, 0, 0.30)',
-            'RED': 'rgba(229, 57, 53, 0.30)',
-            'OPEN': 'rgba(42, 191, 191, 0.30)',
-        }
-        text_color = text_colors.get(mode, '#4cdf80')
-        bg_color = bg_colors.get(mode, 'rgba(0, 166, 81, 0.10)')
-        border_color = border_colors.get(mode, 'rgba(0, 166, 81, 0.30)')
+        text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
+        bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
+        border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
         label = MODE_LABELS.get(mode, 'Available')
 
-        self.mode_btn.setText(label)
-        self.mode_btn.setStyleSheet(f"""
+        self._sidebar_status_btn.setText(f"{label} ▾")
+        self._sidebar_status_btn.setStyleSheet(f"""
             QPushButton {{
-                padding: 6px 12px;
-                border-radius: 8px;
+                font-size: 9px; font-weight: 600;
+                color: {text_color}; background: {bg_color};
                 border: 1px solid {border_color};
-                background: {bg_color};
-                font-size: 13px;
-                font-weight: 700;
-                color: {text_color};
+                border-radius: 6px; padding: 2px 4px;
             }}
-            QPushButton:hover {{
-                background: {DARK['BG_HOVER']};
-                border-color: {text_color};
-            }}
+            QPushButton:hover {{ background: {bg_color.replace('0.10', '0.20')}; }}
+            QPushButton::menu-indicator {{ width: 0; height: 0; }}
         """)
+
+    def _update_ptt_style(self):
+        """Style the PTT button with mode-colored tint."""
+        mode = self._current_mode
+        text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
+        bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
+        border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
+
+        if mode == 'RED':
+            # DND — disabled look
+            self.ptt_btn.setEnabled(False)
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {bg_color}; border: 1px solid {border_color};
+                    border-radius: 8px; padding: 8px; font-size: 13px;
+                    font-weight: 600; color: {DARK['TEXT_FAINT']};
+                }}
+            """)
+        else:
+            self.ptt_btn.setEnabled(True)
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {bg_color}; border: 1px solid {border_color};
+                    border-radius: 8px; padding: 8px; font-size: 13px;
+                    font-weight: 600; color: {text_color};
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {text_color}; }}
+                QPushButton:pressed {{ background: {DARK['BG']}; }}
+            """)
 
     # ── Connection Bar ────────────────────────────────────────────
     def _build_conn_bar(self):
@@ -877,7 +993,7 @@ class FloatingPanel(QWidget):
         layout.addSpacing(3)
 
         self._onboarding_name_input = QLineEdit()
-        self._onboarding_name_input.setPlaceholderText("Display name")
+        self._onboarding_name_input.setPlaceholderText("First Last")
         self._onboarding_name_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
@@ -1326,6 +1442,14 @@ class FloatingPanel(QWidget):
         # Refresh the visual team list on the lobby page
         self._refresh_teams_list(teams, active_team_id)
 
+        # Update sidebar team label
+        active_name = ""
+        for t in teams:
+            if t["id"] == active_team_id:
+                active_name = t["name"]
+                break
+        self.set_sidebar_team(active_name)
+
         # Single team auto-selected → go straight to Users
         # Multiple teams or manual browse → stay on Teams
         if active_team_id and len(teams) == 1:
@@ -1492,64 +1616,7 @@ class FloatingPanel(QWidget):
 
         return section
 
-    # ── PTT Bar ───────────────────────────────────────────────────
-    def _build_ptt_bar(self):
-        bar = QFrame()
-        bar.setStyleSheet(f"border-top: 1px solid {DARK['BORDER']};")
-        bar.setFixedHeight(60)
 
-        v = QVBoxLayout(bar)
-        v.setContentsMargins(12, 8, 12, 8)
-        v.setSpacing(4)
-
-        # Horizontal row: PTT (5/6) + Page All (1/6)
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
-
-        # PTT button
-        self.ptt_btn = QPushButton("●  Hold to Talk")
-        self.ptt_btn.setCursor(Qt.PointingHandCursor)
-        self.ptt_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 10px; padding: 8px; font-size: 13px;
-                font-weight: 500; color: {DARK['TEXT_DIM']};
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['BORDER']}; }}
-            QPushButton:pressed {{ background: {DARK['BG']}; }}
-        """)
-        self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
-        self.ptt_btn.released.connect(self.ptt_released.emit)
-        self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        btn_row.addWidget(self.ptt_btn, 5)
-
-        # Page All button
-        self.page_all_btn = QPushButton("Page All")
-        self.page_all_btn.setCursor(Qt.PointingHandCursor)
-        self.page_all_btn.setFixedWidth(62)
-        self.page_all_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 10px; padding: 8px; font-size: 11px;
-                font-weight: 600; color: {DARK['TEXT_FAINT']};
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT_DIM']}; }}
-            QPushButton:pressed {{ background: {DARK['BG']}; }}
-        """)
-        self.page_all_btn.pressed.connect(self.page_all_pressed.emit)
-        self.page_all_btn.released.connect(self.page_all_released.emit)
-        btn_row.addWidget(self.page_all_btn, 1)
-
-        v.addLayout(btn_row)
-
-        # Mode label below both buttons
-        self.ptt_mode_label = QLabel("Hotline — open mic, same-room feel.")
-        self.ptt_mode_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
-        self.ptt_mode_label.setAlignment(Qt.AlignCenter)
-        self.ptt_mode_label.setVisible(False)
-        v.addWidget(self.ptt_mode_label)
-
-        return bar
 
     # ── Incoming Call Banner ──────────────────────────────────────
     # ── Outgoing Call Banner ────────────────────────────────────────
@@ -1846,30 +1913,11 @@ class FloatingPanel(QWidget):
         self._sidebar_orb.set_mode(mode)
         self.pinned_orb.set_mode(mode)
         self._update_mode_btn()
+        self._update_ptt_style()
         self._update_pinned_style()
 
-        # PTT state
         if mode == 'RED':
-            self.ptt_btn.setEnabled(False)
-            self.ptt_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                    border-radius: 10px; padding: 8px; font-size: 13px;
-                    font-weight: 500; color: {DARK['TEXT_FAINT']};
-                }}
-            """)
             self.ptt_mode_label.setVisible(False)
-        else:
-            self.ptt_btn.setEnabled(True)
-            self.ptt_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                    border-radius: 10px; padding: 8px; font-size: 13px;
-                    font-weight: 500; color: {DARK['TEXT_DIM']};
-                }}
-                QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['BORDER']}; }}
-                QPushButton:pressed {{ background: {DARK['BG']}; }}
-            """)
 
     def set_hotline(self, is_on):
         """Toggle hotline state."""
@@ -1895,10 +1943,27 @@ class FloatingPanel(QWidget):
         else:
             self._hotline_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
 
+    def set_sidebar_team(self, team_name):
+        """Show the active team name in the sidebar."""
+        self._sidebar_team_label.setText(team_name.upper() if team_name else "")
+
     def set_display_name(self, name):
-        """Set the display name shown in the pinned compact bar."""
+        """Set the display name shown in the pinned compact bar and sidebar initials."""
         self._display_name = name
         self._update_pinned_style()
+        # Update sidebar initials
+        if name:
+            parts = name.strip().split()
+            if len(parts) >= 2:
+                initials = parts[0][0].upper() + parts[-1][0].upper()
+            elif parts:
+                initials = parts[0][:2].upper()
+            else:
+                initials = ""
+            self._sidebar_user_initials.setText(initials)
+            self._sidebar_user_initials.setToolTip(name)
+        else:
+            self._sidebar_user_initials.setText("")
 
     def set_connection(self, connected, peer_name=""):
         """Switch between connected and disconnected states.
@@ -2041,13 +2106,37 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: rgba(226, 42, 26, 0.15); border: 2px solid {DARK['DANGER']};
-                    border-radius: 10px; padding: 8px; font-size: 13px;
+                    border-radius: 8px; padding: 8px; font-size: 13px;
                     font-weight: 600; color: {DARK['DANGER']};
                 }}
             """)
         else:
             # Restore normal style
-            self.set_mode(self._current_mode)
+            self._update_ptt_style()
+
+    def set_ptt_locked(self, locked):
+        """Disable PTT while the peer is talking."""
+        if locked:
+            self.ptt_btn.setEnabled(False)
+            self.ptt_btn.setText("●  Listening...")
+            self.ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                    border-radius: 8px; padding: 8px; font-size: 13px;
+                    font-weight: 500; color: {DARK['TEXT_FAINT']};
+                }}
+            """)
+        else:
+            self.ptt_btn.setEnabled(True)
+            # Restore text
+            in_call = getattr(self, '_call_peer_name', None)
+            if self._is_open_line:
+                self.ptt_btn.setText("●  Hotline")
+            elif in_call:
+                self.ptt_btn.setText(f"●  Talking to {in_call}")
+            else:
+                self.ptt_btn.setText("●  Hold to Talk")
+            self._update_ptt_style()
 
     # ── Radio Page ─────────────────────────────────────────────
     _nts_meta_ready = Signal(dict)   # emitted from bg thread with metadata

@@ -17,9 +17,7 @@ from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUN
 from network_manager import NetworkManager
 from audio_manager import AudioManager
 try:
-    from stream_deck_manager import (StreamDeckHandler, KEY_TALK, KEY_MSG, KEY_LOGO,
-                                      MODE_KEY_OFFSET_LARGE, MODE_KEY_OFFSET_SMALL,
-                                      SLOT_KEY_A, SLOT_KEY_B, CYCLE_KEY)
+    from stream_deck_manager import (StreamDeckHandler, KEY_TALK, KEY_MODE, KEY_LOGO)
 except ImportError:
     StreamDeckHandler = None  # streamdeck/hidapi not available (common on Windows)
 from discovery_manager import DiscoveryManager
@@ -35,17 +33,22 @@ from ui_constants import COLORS
 # Mock for systems without Stream Deck
 class MockDeck:
     is_large = False
+    key_team = 3
+    key_user = 4
+    key_window = 5
     on_team_selected = None
     on_user_selected = None
     def update_key_color(self, k, r, g, b, l=""): pass
     def update_key_image(self, key, text="", color=(0,0,0), render_oh=False): pass
     def set_active_mode(self, mode): pass
     def set_talk_active(self, active, recording=False): pass
+    def set_talk_locked(self, locked): pass
     def set_message_indicator(self, has_message): pass
+    def cycle_mode(self): return "GREEN"
     def set_teams(self, teams, active_team_id=""): pass
     def set_users(self, users, active_user_id=""): pass
-    def handle_cycle_key(self): pass
-    def handle_slot_key(self, slot): pass
+    def handle_team_key(self): pass
+    def handle_user_key(self): pass
     def close(self): pass
 
 class IntercomApp(QObject):
@@ -135,15 +138,9 @@ class IntercomApp(QObject):
             if StreamDeckHandler is None:
                 raise ImportError("streamdeck library not available")
             self.deck = StreamDeckHandler(self.handle_deck_input)
-            if self.deck.deck:
-                deck_name = self.deck.deck.deck_type()
-                self.panel.set_deck_status(True, deck_name)
-            else:
-                self.panel.set_deck_status(False)
         except Exception as e:
             self.log(f"Stream Deck: Not connected ({e})")
             self.deck = MockDeck()
-            self.panel.set_deck_status(False)
         self.deck.on_team_selected = lambda tid, tn: self._deck_team_signal.emit(tid, tn)
         self.deck.on_user_selected = lambda uid, un: self._deck_user_signal.emit(uid, un)
 
@@ -181,6 +178,13 @@ class IntercomApp(QObject):
             self.panel.set_onboarding_name(self.display_name)
 
         self.panel.set_display_name(self.display_name or "Office Hours")
+
+        # Deferred Stream Deck status (panel now exists)
+        if hasattr(self.deck, 'deck') and self.deck.deck:
+            deck_name = self.deck.deck.deck_type()
+            self.panel.set_deck_status(True, deck_name)
+        else:
+            self.panel.set_deck_status(False)
 
         # Start Services
         self.discovery.register_service()
@@ -242,6 +246,7 @@ class IntercomApp(QObject):
     # ── Panel Signal Wiring ───────────────────────────────────────
     def _connect_panel_signals(self):
         self.panel.mode_cycle_requested.connect(self.cycle_mode)
+        self.panel.mode_set_requested.connect(self._on_mode_set)
         self.panel.hotline_toggled.connect(self._on_hotline_toggle)
         self.panel.page_all_pressed.connect(self.on_page_all_press)
         self.panel.page_all_released.connect(self.on_page_all_release)
@@ -933,6 +938,11 @@ class IntercomApp(QObject):
     # ── Button / Deck Logic ───────────────────────────────────────
 
     def handle_deck_input(self, key, state):
+        # Stream Deck callbacks come from a background thread.
+        # Dispatch everything to the main/Qt thread to avoid crashes.
+        QTimer.singleShot(0, lambda: self._handle_deck_input(key, state))
+
+    def _handle_deck_input(self, key, state):
         # Key 0: PTT (hold to talk)
         if key == KEY_TALK:
             if state:
@@ -945,27 +955,32 @@ class IntercomApp(QObject):
         if not state:
             return
 
-        # Key 1: Message — play/acknowledge
-        if key == KEY_MSG:
-            self.on_answer()
+        # Key 1: Mode cycle (Available → Busy → DND → Available)
+        if key == KEY_MODE:
+            new_mode = self.deck.cycle_mode()
+            self._set_mode(new_mode)
             return
 
-        # Mode keys (row 2)
-        mode_off = self.deck._mode_offset if hasattr(self.deck, '_mode_offset') else 5
-        if key == mode_off:
-            self._set_mode(self.MODE_GREEN)
-        elif key == mode_off + 1:
-            self._set_mode(self.MODE_YELLOW)
-        elif key == mode_off + 2:
-            self._set_mode(self.MODE_RED)
+        # Key 2: OH logo — toggle panel window
+        if key == KEY_LOGO:
+            self._toggle_panel_visibility()
+            return
 
-        # Bottom row browser (row 3, large decks only)
-        elif key == CYCLE_KEY and self.deck.is_large:
-            self.deck.handle_cycle_key()
-        elif key == SLOT_KEY_A and self.deck.is_large:
-            self.deck.handle_slot_key(0)
-        elif key == SLOT_KEY_B and self.deck.is_large:
-            self.deck.handle_slot_key(1)
+        # Row 2: TEAM, USER, WINDOW (dynamic keys based on deck columns)
+        if key == self.deck.key_team:
+            self.deck.handle_team_key()
+        elif key == self.deck.key_user:
+            self.deck.handle_user_key()
+        elif key == self.deck.key_window:
+            self._toggle_panel_visibility()
+
+    def _toggle_panel_visibility(self):
+        """Toggle panel window visibility (must be called on the main thread)."""
+        if self.panel.isVisible():
+            self.panel.hide()
+        else:
+            self.panel.show()
+            self.panel.raise_()
 
     def on_talk_press(self):
         # Route through intercom system if a target is selected
@@ -1107,6 +1122,10 @@ class IntercomApp(QObject):
         else:  # OPEN — cycling goes back to GREEN
             self._set_mode(self.MODE_GREEN)
 
+    def _on_mode_set(self, mode):
+        """Direct mode set from sidebar dropdown."""
+        self._set_mode(mode)
+
     @Slot(str, str)
     def _deck_user_selected(self, user_id, user_name):
         """Called when a user is selected via Stream Deck browser."""
@@ -1178,6 +1197,8 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_START":
             self.peer_talking = True
+            self.panel.set_ptt_locked(True)
+            self.deck.set_talk_locked(True)
             self.log_signal.emit("Peer is talking...")
             # Start fresh voicemail buffer if we're busy
             if self.mode == self.MODE_YELLOW:
@@ -1185,6 +1206,8 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
+            self.panel.set_ptt_locked(False)
+            self.deck.set_talk_locked(False)
             # If we were in busy mode and buffered audio, save as voicemail
             if self.mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer') and self._vm_buffer:
                 self._save_voicemail_from_buffer()

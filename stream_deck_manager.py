@@ -6,38 +6,39 @@ from StreamDeck.ImageHelpers import PILHelper
 from PIL import Image, ImageDraw, ImageFont
 
 # ── Key Layout ────────────────────────────────────────────────
-# 5x3 deck (15 keys):
-#   0=TALK  1=MSG  2=OH_LOGO/preview  3=--  4=--
-#   5=AVAIL 6=AWAY 7=DND              8=--  9=--
-#  10=slot1 11=slot2 12=CYCLE         13=-- 14=--
+# Optimized for 3x3 minimum (rows map naturally to any size):
 #
-# Smaller decks (6 keys / 2x3):
-#   0=TALK  1=MSG  2=OH_LOGO
-#   3=AVAIL 4=AWAY 5=DND
-#   (no bottom row)
+# 3x3 (9 keys):             5x3 (15 keys):
+#   0=TALK 1=MODE 2=LOGO      0=TALK 1=MODE 2=LOGO 3=-- 4=--
+#   3=TEAM 4=USER 5=WINDOW    5=TEAM 6=USER 7=WIN  8=-- 9=--
+#   6=--   7=--   8=--       10=--  11=--  12=--  13=-- 14=--
 
 KEY_TALK = 0
-KEY_MSG = 1
+KEY_MODE = 1
 KEY_LOGO = 2
-# Mode keys — offset by row depending on deck size
-MODE_KEY_OFFSET_LARGE = 5   # 5x3: keys 5,6,7
-MODE_KEY_OFFSET_SMALL = 3   # 2x3: keys 3,4,5
-# Bottom row (large deck only)
-SLOT_KEY_A = 10
-SLOT_KEY_B = 11
-CYCLE_KEY = 12
+# Row 2 keys — offset by number of columns (set at runtime)
+# 3-col: 3,4,5   5-col: 5,6,7
+KEY_TEAM_OFFSET = 0   # +cols from row start
+KEY_USER_OFFSET = 1
+KEY_WINDOW_OFFSET = 2
 
 # ── Colors ────────────────────────────────────────────────────
 OH_TEAL = (113, 173, 163)          # #71ada3 — from the OH logo
 OH_TEAL_DIM = (40, 65, 60)         # Dimmed teal
 COLOR_OFF = (0, 0, 0)
+COLOR_GREEN = (0, 140, 60)
+COLOR_YELLOW = (180, 140, 0)
+COLOR_RED = (180, 40, 30)
 
-# Bottom row browse modes
-BROWSE_TEAMS = "teams"
-BROWSE_USERS = "users"
+# Mode cycle order
+MODE_CYCLE = ["GREEN", "YELLOW", "RED"]
+MODE_LABELS = {"GREEN": "AVAIL", "YELLOW": "BUSY", "RED": "DND"}
+MODE_COLORS = {"GREEN": COLOR_GREEN, "YELLOW": COLOR_YELLOW, "RED": COLOR_RED}
 
 # Auto-select delay (seconds)
 AUTO_SELECT_DELAY = 1.5
+
+# Bottom row browse modes
 
 
 class StreamDeckHandler:
@@ -48,20 +49,21 @@ class StreamDeckHandler:
         self._cols = 5
         self._icon_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # Data
-        self._teams = []           # [{id, name, ...}, ...]
-        self._users = []           # [{id, name, ...}, ...]
+        # State
+        self._current_mode = "GREEN"
+
+        # Data (for large deck bottom row)
+        self._teams = []
+        self._users = []
         self._active_team_id = ""
         self._active_user_id = ""
-
-        # Bottom row state
-        self._team_index = 0       # Index of currently shown team
-        self._user_index = 0       # Index of currently shown user
+        self._team_index = 0
+        self._user_index = 0
         self._auto_select_timer = None
 
         # Callbacks for auto-select (set by main.py)
-        self.on_team_selected = None    # called with (team_id, team_name)
-        self.on_user_selected = None    # called with (user_id, user_name)
+        self.on_team_selected = None
+        self.on_user_selected = None
 
         # Message pulse state
         self._msg_pulse_active = False
@@ -143,8 +145,21 @@ class StreamDeckHandler:
         return self._cols >= 5
 
     @property
-    def _mode_offset(self):
-        return MODE_KEY_OFFSET_LARGE if self.is_large else MODE_KEY_OFFSET_SMALL
+    def _row2_start(self):
+        """First key index of row 2."""
+        return self._cols
+
+    @property
+    def key_team(self):
+        return self._row2_start + KEY_TEAM_OFFSET
+
+    @property
+    def key_user(self):
+        return self._row2_start + KEY_USER_OFFSET
+
+    @property
+    def key_window(self):
+        return self._row2_start + KEY_WINDOW_OFFSET
 
     # ── Initialization ────────────────────────────────────────
 
@@ -155,17 +170,13 @@ class StreamDeckHandler:
         for k in range(self._key_count):
             self.update_key_image(k, text="", color=COLOR_OFF)
 
-        # Top row
+        # Row 1: TALK, MODE, LOGO
         self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
-        self.update_key_image(KEY_MSG, text="", color=COLOR_OFF)
+        self.set_active_mode("GREEN")
         self._set_logo_key()
 
-        # Mode row
-        self.set_active_mode("GREEN")
-
-        # Bottom row
-        if self.is_large:
-            self._render_bottom_row()
+        # Row 2: TEAM, USER, WINDOW
+        self._render_row2()
 
     # ── Key event routing ─────────────────────────────────────
 
@@ -193,24 +204,27 @@ class StreamDeckHandler:
         """Put the OH icon back on Key 2."""
         self._set_logo_key()
 
-    # ── Mode keys ─────────────────────────────────────────────
+    # ── Mode key (key 1 — cycles through modes) ──────────────
 
     def set_active_mode(self, mode):
-        """Update mode row to highlight the active mode."""
+        """Update mode key to show the current mode."""
         if not self.deck:
             return
-        off = self._mode_offset
-        modes = [
-            ("AVAIL", OH_TEAL, OH_TEAL_DIM),
-            ("AWAY",  OH_TEAL, OH_TEAL_DIM),
-            ("DND",   OH_TEAL, OH_TEAL_DIM),
-        ]
-        mode_map = {"GREEN": 0, "YELLOW": 1, "RED": 2, "OPEN": 0}
-        active = mode_map.get(mode, 0)
+        self._current_mode = mode
+        label = MODE_LABELS.get(mode, "AVAIL")
+        color = MODE_COLORS.get(mode, COLOR_GREEN)
+        self.update_key_image(KEY_MODE, text=label, color=color)
 
-        for i, (label, color_on, color_off) in enumerate(modes):
-            color = color_on if i == active else color_off
-            self.update_key_image(off + i, text=label, color=color)
+    def cycle_mode(self):
+        """Cycle to next mode. Returns the new mode string."""
+        try:
+            idx = MODE_CYCLE.index(self._current_mode)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + 1) % len(MODE_CYCLE)
+        new_mode = MODE_CYCLE[new_idx]
+        self.set_active_mode(new_mode)
+        return new_mode
 
     # ── Talk key ──────────────────────────────────────────────
 
@@ -224,7 +238,16 @@ class StreamDeckHandler:
         else:
             self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
 
-    # ── Message key ───────────────────────────────────────────
+    def set_talk_locked(self, locked):
+        """Show listening state when peer is talking."""
+        if not self.deck:
+            return
+        if locked:
+            self.update_key_image(KEY_TALK, text="LISTEN", color=OH_TEAL_DIM)
+        else:
+            self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
+
+    # ── Message indicator ────────────────────────────────────
 
     def set_message_indicator(self, has_message):
         if not self.deck:
@@ -233,7 +256,6 @@ class StreamDeckHandler:
             self._start_msg_pulse()
         else:
             self._stop_msg_pulse()
-            self.update_key_image(KEY_MSG, text="", color=COLOR_OFF)
 
     def _start_msg_pulse(self):
         if self._msg_pulse_active:
@@ -251,86 +273,73 @@ class StreamDeckHandler:
     def _pulse_tick(self):
         if not self._msg_pulse_active or not self.deck:
             return
+        # Pulse the logo key with MSG text
         if self._msg_pulse_on:
-            self.update_key_image(KEY_MSG, text="MSG", color=OH_TEAL)
+            self.update_key_image(KEY_LOGO, text="MSG", color=OH_TEAL)
         else:
-            self.update_key_image(KEY_MSG, text="MSG", color=OH_TEAL_DIM)
+            self._set_logo_key()
         self._msg_pulse_on = not self._msg_pulse_on
         self._msg_pulse_timer = threading.Timer(0.6, self._pulse_tick)
         self._msg_pulse_timer.daemon = True
         self._msg_pulse_timer.start()
 
-    # ── Bottom row: team key + user key + (unused key 12) ────
+    # ── Bottom row: team + user (large decks only) ───────────
 
     def set_teams(self, teams, active_team_id=""):
         """Update team data. Refreshes bottom row."""
         self._teams = teams or []
         self._active_team_id = active_team_id
-        # Find index of active team
         self._team_index = 0
         for i, t in enumerate(self._teams):
             if t.get("id") == active_team_id:
                 self._team_index = i
                 break
-        self._render_bottom_row()
+        self._render_row2()
 
     def set_users(self, users, active_user_id=""):
         """Update online users data. Refreshes bottom row."""
         self._users = users or []
         self._active_user_id = active_user_id
-        # Find index of active user
         self._user_index = 0
         for i, u in enumerate(self._users):
             if u.get("id") == active_user_id:
                 self._user_index = i
                 break
-        self._render_bottom_row()
+        self._render_row2()
 
-    def handle_cycle_key(self):
-        """Key 12 — unused now (team and user each have their own key)."""
-        pass
-
-    def handle_slot_key(self, slot):
-        """Key 10 = cycle teams, Key 11 = cycle users."""
-        if not self.is_large:
+    def handle_team_key(self):
+        """Cycle through teams."""
+        if not self._teams:
             return
+        self._team_index = (self._team_index + 1) % len(self._teams)
+        team = self._teams[self._team_index]
+        self._active_team_id = team.get("id", "")
+        self._show_preview(team.get("name", "?"))
+        self._render_row2()
+        self._cancel_auto_select()
+        self._auto_select_timer = threading.Timer(
+            AUTO_SELECT_DELAY, self._auto_select_team
+        )
+        self._auto_select_timer.daemon = True
+        self._auto_select_timer.start()
 
-        if slot == 0:
-            # Cycle teams
-            if not self._teams:
-                return
-            self._team_index = (self._team_index + 1) % len(self._teams)
-            team = self._teams[self._team_index]
-            self._active_team_id = team.get("id", "")
-            self._show_preview(team.get("name", "?"))
-            self._render_bottom_row()
-            # Auto-select after delay
-            self._cancel_auto_select()
-            self._auto_select_timer = threading.Timer(
-                AUTO_SELECT_DELAY, self._auto_select_team
-            )
-            self._auto_select_timer.daemon = True
-            self._auto_select_timer.start()
-
-        elif slot == 1:
-            # Cycle users
-            if not self._users:
-                return
-            self._user_index = (self._user_index + 1) % len(self._users)
-            user = self._users[self._user_index]
-            self._active_user_id = user.get("id", "")
-            self._show_preview(user.get("name", "?"))
-            self._render_bottom_row()
-            # Auto-select after delay
-            self._cancel_auto_select()
-            self._auto_select_timer = threading.Timer(
-                AUTO_SELECT_DELAY, self._auto_select_user
-            )
-            self._auto_select_timer.daemon = True
-            self._auto_select_timer.start()
+    def handle_user_key(self):
+        """Cycle through users."""
+        if not self._users:
+            return
+        self._user_index = (self._user_index + 1) % len(self._users)
+        user = self._users[self._user_index]
+        self._active_user_id = user.get("id", "")
+        self._show_preview(user.get("name", "?"))
+        self._render_row2()
+        self._cancel_auto_select()
+        self._auto_select_timer = threading.Timer(
+            AUTO_SELECT_DELAY, self._auto_select_user
+        )
+        self._auto_select_timer.daemon = True
+        self._auto_select_timer.start()
 
     def _auto_select_team(self):
-        """Commit team selection after delay."""
         if self._team_index < len(self._teams):
             team = self._teams[self._team_index]
             if self.on_team_selected:
@@ -338,7 +347,6 @@ class StreamDeckHandler:
         self._restore_logo()
 
     def _auto_select_user(self):
-        """Commit user selection after delay."""
         if self._user_index < len(self._users):
             user = self._users[self._user_index]
             if self.on_user_selected:
@@ -350,37 +358,37 @@ class StreamDeckHandler:
             self._auto_select_timer.cancel()
             self._auto_select_timer = None
 
-    def _render_bottom_row(self, **_kw):
-        """Draw the bottom row: Key 10 = team, Key 11 = user, Key 12 = blank."""
-        if not self.deck or not self.is_large:
+    def _render_row2(self, **_kw):
+        """Draw row 2: TEAM, USER, WINDOW."""
+        if not self.deck:
             return
 
-        # Key 10: current team
+        # Team key
         if self._teams and self._team_index < len(self._teams):
             team = self._teams[self._team_index]
             name = team.get("name", "?")
             if len(name) > 6:
                 name = name[:5] + "."
             is_active = team.get("id") == self._active_team_id
-            self.update_key_image(SLOT_KEY_A, text=f"TEAM\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
+            self.update_key_image(self.key_team, text=f"TEAM\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
         else:
-            self.update_key_image(SLOT_KEY_A, text="TEAM\n--", color=OH_TEAL_DIM)
+            self.update_key_image(self.key_team, text="TEAM\n--", color=OH_TEAL_DIM)
 
-        # Key 11: current user
+        # User key
         if self._users and self._user_index < len(self._users):
             user = self._users[self._user_index]
             name = user.get("name", "?")
             if len(name) > 6:
                 name = name[:5] + "."
             is_active = user.get("id") == self._active_user_id
-            self.update_key_image(SLOT_KEY_B, text=f"USER\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
+            self.update_key_image(self.key_user, text=f"USER\n{name}", color=OH_TEAL if is_active else OH_TEAL_DIM)
         else:
-            self.update_key_image(SLOT_KEY_B, text="USER\n--", color=OH_TEAL_DIM)
+            self.update_key_image(self.key_user, text="USER\n--", color=OH_TEAL_DIM)
 
-        # Key 12: toggle hint
-        self.update_key_image(CYCLE_KEY, text="TOGGLE\n  <-", color=OH_TEAL_DIM)
+        # Window toggle key
+        self.update_key_image(self.key_window, text="WINDOW", color=OH_TEAL_DIM)
 
-    # ── Compat stubs for main.py ──────────────────────────────
+    # ── Compat stubs ──────────────────────────────────────────
 
     def next_team_page(self):
         pass
