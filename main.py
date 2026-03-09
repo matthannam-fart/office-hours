@@ -67,6 +67,7 @@ class IntercomApp(QObject):
     hotkey_release_signal = Signal()                 # global PTT released
     mic_level_signal = Signal(float)                 # mic audio level 0.0–1.0
     speaker_level_signal = Signal(float)             # speaker audio level 0.0–1.0
+    _deck_input_signal = Signal(int, bool)              # key, state from deck thread
     _deck_team_signal = Signal(str, str)              # team_id, team_name from deck thread
     _deck_user_signal = Signal(str, str)              # user_id, user_name from deck thread
     _teams_loaded_signal = Signal()                   # Supabase teams loaded (internal)
@@ -209,6 +210,7 @@ class IntercomApp(QObject):
         self.hotkey_release_signal.connect(self.on_talk_release)
         self.mic_level_signal.connect(self._on_mic_level)
         self.speaker_level_signal.connect(self.panel.set_speaker_level)
+        self._deck_input_signal.connect(self._handle_deck_input)
         self._deck_team_signal.connect(self._switch_team)
         self._deck_user_signal.connect(self._deck_user_selected)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
@@ -938,12 +940,10 @@ class IntercomApp(QObject):
 
     def handle_deck_input(self, key, state):
         # Stream Deck callbacks come from a background thread.
-        # Dispatch everything to the main/Qt thread to avoid crashes.
-        self.log(f"Deck key {key} {'down' if state else 'up'}")
-        QTimer.singleShot(0, lambda k=key, s=state: self._handle_deck_input(k, s))
+        # Use a signal (not QTimer) to safely dispatch to the Qt main thread.
+        self._deck_input_signal.emit(key, state)
 
     def _handle_deck_input(self, key, state):
-        self.log(f"Deck dispatch key={key} state={state}")
         # Key 0: PTT (hold to talk)
         if key == KEY_TALK:
             if state:
