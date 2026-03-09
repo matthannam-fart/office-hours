@@ -983,11 +983,30 @@ class IntercomApp(QObject):
             self.panel.raise_()
 
     def _show_panel_at_tray(self):
-        """Show the panel anchored below the menu bar icon."""
+        """Show the panel anchored below the menu bar icon.
+        Works even when the app is not in focus by activating the app first.
+        """
+        # Bring the app to the foreground (required on macOS when not focused)
+        import sys
+        if sys.platform == 'darwin':
+            try:
+                from AppKit import NSApplication, NSApplicationActivateIgnoringOtherApps
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except ImportError:
+                pass
+        if self.panel.isVisible():
+            self.panel.raise_()
+            self.panel.activateWindow()
+            return
         geo = self.tray.geometry()
         if geo.isValid() and geo.width() > 0:
             self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
         else:
+            # Fallback: top-right of screen, below menu bar
+            screen = QApplication.primaryScreen().availableGeometry()
+            x = screen.right() - self.panel.width() - 8
+            y = screen.top() + 4
+            self.panel.move(x, y)
             self.panel.show()
             self.panel.raise_()
             self.panel.activateWindow()
