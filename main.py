@@ -1809,6 +1809,12 @@ class IntercomApp(QObject):
         # Disconnect presence first so relay broadcasts our departure
         self.network.disconnect_presence()
         self.network.close()
+        # Close Stream Deck
+        if hasattr(self, 'deck'):
+            try:
+                self.deck.close()
+            except Exception:
+                pass
         self.tray.setVisible(False)
         QApplication.quit()
 
@@ -1822,7 +1828,12 @@ def main():
     _load_fonts()
     app.setFont(QFont(FONT_FAMILY, 13))
     intercom = IntercomApp()
-    sys.exit(app.exec())
+    app.exec()
+    # Use os._exit to skip Python finalization — daemon threads
+    # (PortAudio/cffi) may still be winding down and would SIGSEGV
+    # if Py_FinalizeEx tears down C extensions under them.
+    # All real cleanup is already done in _quit() before we get here.
+    os._exit(0)
 
 
 if __name__ == "__main__":

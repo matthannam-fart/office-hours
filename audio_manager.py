@@ -459,6 +459,10 @@ class AudioManager:
         self.streaming = False
         if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=1.0)
+        try:
+            sd.stop()  # Force-stop any active PortAudio streams
+        except Exception:
+            pass
 
     def _stream_mic(self):
         frame_size = self.active_frame_size
@@ -676,6 +680,10 @@ class AudioManager:
         self.listening = False
         if self.play_thread and self.play_thread.is_alive():
             self.play_thread.join(timeout=1.0)
+        try:
+            sd.stop()
+        except Exception:
+            pass
 
     def restart_listening(self):
         self.stop_listening()
