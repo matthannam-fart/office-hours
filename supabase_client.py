@@ -278,6 +278,35 @@ def get_join_request(request_id: str):
     return None
 
 
+def send_invite_email(to_email: str, team_name: str, invite_code: str, sender_name: str):
+    """Send an invite email via the Supabase Edge Function + Resend."""
+    url = f"{SUPABASE_URL}/functions/v1/send-invite"
+    data = json.dumps({
+        "to": to_email,
+        "team_name": team_name,
+        "invite_code": invite_code,
+        "sender_name": sender_name,
+    }).encode("utf-8")
+    hdrs = {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+    }
+    req = urllib.request.Request(url, data=data, headers=hdrs, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            log.info(f"Invite email sent to {to_email}: {result}")
+            return result
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        log.warning(f"Invite email failed for {to_email}: {e.code} {error_body}")
+        return None
+    except Exception as e:
+        log.warning(f"Invite email request failed: {e}")
+        return None
+
+
 def delete_team(team_id: str):
     """Delete a team and all memberships."""
     # Delete memberships first (cascade may handle this, but be explicit)

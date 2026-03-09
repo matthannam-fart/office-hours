@@ -8,3 +8,4 @@ soundfile
 Pillow
 cryptography
 pynput
+streamdeck

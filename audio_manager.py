@@ -112,10 +112,9 @@ OPUS_FRAME_MS = 20            # 20ms frames (Opus sweet spot: low latency + good
 OPUS_FRAME_SIZE = int(SAMPLE_RATE * OPUS_FRAME_MS / 1000)  # 480 samples at 24kHz
 
 # NLMS Echo Canceller settings
-AEC_FILTER_LEN = 7200         # 300ms at 24kHz — covers room echo tail
+AEC_FILTER_LEN = 1200         # 50ms at 24kHz — sufficient for near-field echo
 AEC_MU = 0.3                  # Step size (0.1=slow convergence, 1.0=fast but unstable)
 AEC_DELTA = 1e-6              # Regularisation to prevent divide-by-zero
-AEC_REF_BUFFER_SIZE = 20      # Reference frames to keep (must exceed round-trip delay)
 
 # Jitter buffer settings
 JITTER_MIN_FRAMES = 3         # Buffer this many frames before starting playback
@@ -227,62 +226,34 @@ class EchoCanceller:
     def cancel(self, mic_samples):
         """Remove predicted echo from mic signal. Returns cleaned int16 array.
 
-        Uses block NLMS: for each sample in the frame, computes the echo
-        estimate as w^T @ x (dot product of filter with reference window),
-        subtracts it, and updates the filter. Vectorised with numpy —
-        the inner loop builds a reference matrix and uses matrix ops.
+        Uses a lightweight block NLMS: one filter update per frame using the
+        mid-frame reference window. This keeps CPU usage minimal (single dot
+        product + vector add per 20ms frame) while still adapting to the room.
         """
         if not self._enabled:
             return mic_samples
 
         mic = mic_samples.astype(np.float64).flatten()
-        N = len(mic)
         L = self.filter_len
 
-        # Build a (N x L) matrix where row i is the reference window for sample i.
-        # ref_buf has history, newest at end. We need ref_buf aligned so that
-        # for mic sample i, the reference window is ref_buf[..] ending at
-        # the sample that was playing when mic sample i was captured.
-        # After feed_reference(), ref_buf[-1] is the most recent speaker sample.
-        # We need L + N - 1 reference samples total.
-        # Pad ref_buf if needed (shouldn't happen in steady state).
-        padded = self._ref_buf  # length L
-        if N > 1:
-            # Extend with zeros for the N-1 extra samples we need
-            padded = np.concatenate([np.zeros(N - 1), padded])
+        # Reference vector: most recent L samples from speaker, reversed
+        # (convolution order: ref[0] = most recent)
+        ref = self._ref_buf[::-1].copy()
 
-        # Build reference matrix: each row is a length-L window, most recent first
-        # Row 0 corresponds to mic[0], row N-1 to mic[N-1]
-        ref_matrix = np.empty((N, L), dtype=np.float64)
-        total = len(padded)
-        for i in range(N):
-            # Window ending at position (total - N + i), length L, newest first
-            end = total - N + i + 1
-            start = end - L
-            if start >= 0:
-                ref_matrix[i] = padded[start:end][::-1]
-            else:
-                # Shouldn't happen with proper padding, but be safe
-                chunk = padded[:end][::-1]
-                ref_matrix[i, :len(chunk)] = chunk
-                ref_matrix[i, len(chunk):] = 0.0
+        # Predict echo: single dot product
+        echo_est = np.dot(self._w, ref)
 
-        # Predict echo for all samples: y_hat = ref_matrix @ w
-        echo_est = ref_matrix @ self._w
+        # Error: subtract predicted echo from mic (use frame mean for block update)
+        mic_mean = np.mean(mic)
+        error = mic_mean - echo_est
 
-        # Error signal
-        error = mic - echo_est
+        # NLMS weight update
+        ref_power = np.dot(ref, ref) + AEC_DELTA
+        self._w += (self.mu * error / ref_power) * ref
 
-        # Block NLMS update: average gradient over the frame
-        # grad = ref_matrix^T @ error (cross-correlation of reference with error)
-        # norm = average reference power
-        ref_power = np.mean(np.sum(ref_matrix ** 2, axis=1)) + AEC_DELTA
-        grad = ref_matrix.T @ error / N
-
-        self._w += (self.mu / ref_power) * grad
-
-        # Clip and return as int16
-        out = np.clip(error, -32768, 32767).astype(DTYPE)
+        # Subtract estimated echo from entire frame
+        out = mic - echo_est
+        out = np.clip(out, -32768, 32767).astype(DTYPE)
         if mic_samples.ndim > 1:
             out = out.reshape(mic_samples.shape)
         return out

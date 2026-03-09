@@ -2642,49 +2642,149 @@ class FloatingPanel(QWidget):
         anim.start()
 
     def _invite_friend_email(self):
-        """Open a mailto: link to invite a friend with the current team's invite code."""
-        import urllib.parse as _up
+        """Show a dialog to enter email address(es) and send invite via Resend."""
         idx = self._team_combo.currentIndex()
         code = ""
         team_name = "Office Hours"
         if idx >= 0:
             code = self._team_combo.itemData(idx, Qt.UserRole + 2) or ""
             team_name = self._team_combo.currentText() or "Office Hours"
-        subject = f"Join {team_name} on Office Hours"
-        body = "Hey!\n\n"
-        body += "I'm using Office Hours — a push-to-talk intercom for our team.\n\n"
-        body += "Here's how to get set up:\n\n"
-        body += "1. Go to https://ohinter.com and download the zip file\n"
-        body += "2. Unzip it and open the folder\n"
-        body += "3. Double-click \"Office Hours\" to launch\n"
-        body += "   - Mac: If macOS blocks it, go to System Settings > Privacy & Security and click \"Open Anyway\"\n"
-        body += "   - Windows: You'll need Python installed first (https://www.python.org/downloads/) — make sure to check \"Add to PATH\"\n"
-        body += "4. The app will install everything it needs on first run (takes a minute or two)\n"
+
+        sender_name = getattr(self, '_display_name', None) or "A teammate"
+
+        # Build dialog
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Send Invite")
+        dlg.setFixedWidth(320)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background: {DARK['BG']}; border: 1px solid {DARK['BORDER']}; border-radius: 10px; }}
+            QLabel {{ color: {DARK['TEXT']}; border: none; }}
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel(f"Invite to {team_name}")
+        title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Enter email address:")
+        subtitle.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
+        layout.addWidget(subtitle)
+
+        email_input = QLineEdit()
+        email_input.setPlaceholderText("friend@example.com")
+        email_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 8px 10px; font-size: 13px;
+                color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['ACCENT']}; }}
+        """)
+        layout.addWidget(email_input)
+
         if code:
-            body += f"5. When it opens, enter your name and use this invite code: {code}\n"
-        body += "\nThat's it — you'll see me online once you're in.\n"
-        import sys as _sys
-        if _sys.platform == 'darwin':
-            # Build email via AppleScript → Mail.app (avoids browser hijacking mailto)
-            import subprocess
-            escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
-            escaped_body = body.replace('\\', '\\\\').replace('"', '\\"')
-            script = (
-                'tell application "Mail"\n'
-                '  set newMsg to make new outgoing message with properties '
-                f'{{subject:"{escaped_subject}", content:"{escaped_body}", visible:true}}\n'
-                '  activate\n'
-                'end tell'
-            )
-            subprocess.Popen(['osascript', '-e', script])
-        elif _sys.platform == 'win32':
-            mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
-            os.startfile(mailto)
-        else:
-            mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl(mailto))
+            code_label = QLabel(f"Code: {code}")
+            code_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
+            layout.addWidget(code_label)
+
+        status_label = QLabel("")
+        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
+        status_label.setVisible(False)
+        layout.addWidget(status_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 6px 14px; font-size: 12px; font-weight: 500;
+                color: {DARK['TEXT_DIM']}; background: transparent;
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        cancel_btn.clicked.connect(dlg.reject)
+
+        send_btn = QPushButton("Send Invite")
+        send_btn.setCursor(Qt.PointingHandCursor)
+        send_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 6px 14px; font-size: 12px; font-weight: 600;
+                color: #fff; background: {DARK['ACCENT']};
+                border: none; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: {DARK['TEAL']}; }}
+        """)
+
+        def _do_send():
+            email = email_input.text().strip()
+            if not email or "@" not in email:
+                status_label.setText("Please enter a valid email address.")
+                status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
+                status_label.setVisible(True)
+                return
+            send_btn.setEnabled(False)
+            send_btn.setText("Sending...")
+            status_label.setVisible(False)
+
+            import threading
+            def _send():
+                from supabase_client import send_invite_email
+                result = send_invite_email(email, team_name, code, sender_name)
+                # Update UI from main thread
+                from PySide6.QtCore import QMetaObject, Qt as QtConst
+                QMetaObject.invokeMethod(
+                    status_label, "setText",
+                    QtConst.ConnectionType.QueuedConnection,
+                    "Sent!" if result else "Failed to send. Try again.",
+                )
+                QMetaObject.invokeMethod(
+                    status_label, "setVisible",
+                    QtConst.ConnectionType.QueuedConnection,
+                    True,
+                )
+                if result:
+                    QMetaObject.invokeMethod(
+                        status_label, "setStyleSheet",
+                        QtConst.ConnectionType.QueuedConnection,
+                        f"font-size: 11px; color: {DARK['ACCENT']}; border: none;",
+                    )
+                    # Close dialog after brief delay
+                    import time
+                    time.sleep(1.0)
+                    QMetaObject.invokeMethod(dlg, "accept", QtConst.ConnectionType.QueuedConnection)
+                else:
+                    QMetaObject.invokeMethod(
+                        status_label, "setStyleSheet",
+                        QtConst.ConnectionType.QueuedConnection,
+                        f"font-size: 11px; color: {DARK['DANGER']}; border: none;",
+                    )
+                    QMetaObject.invokeMethod(
+                        send_btn, "setEnabled",
+                        QtConst.ConnectionType.QueuedConnection,
+                        True,
+                    )
+                    QMetaObject.invokeMethod(
+                        send_btn, "setText",
+                        QtConst.ConnectionType.QueuedConnection,
+                        "Send Invite",
+                    )
+
+            threading.Thread(target=_send, daemon=True).start()
+
+        send_btn.clicked.connect(_do_send)
+        email_input.returnPressed.connect(_do_send)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(send_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec()
 
     def _copy_invite_code(self):
         """Copy the current team's invite code to the clipboard."""
