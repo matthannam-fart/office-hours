@@ -966,13 +966,13 @@ class IntercomApp(QObject):
             self._toggle_panel_visibility()
             return
 
-        # Row 2: TEAM, USER, WINDOW (dynamic keys based on deck columns)
+        # Row 2: TEAM, USER, MORE (dynamic keys based on deck columns)
         if key == self.deck.key_team:
             self.deck.handle_team_key()
         elif key == self.deck.key_user:
             self.deck.handle_user_key()
         elif key == self.deck.key_window:
-            self._toggle_panel_visibility()
+            self._on_tray_click(QSystemTrayIcon.Trigger)
 
     def _toggle_panel_visibility(self):
         """Toggle panel window visibility (must be called on the main thread)."""
