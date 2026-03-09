@@ -9,8 +9,8 @@ from PIL import Image, ImageDraw, ImageFont
 # Optimized for 3x3 minimum (rows map naturally to any size):
 #
 # 3x3 (9 keys):             5x3 (15 keys):
-#   0=TALK 1=MODE 2=LOGO      0=TALK 1=MODE 2=LOGO 3=-- 4=--
-#   3=TEAM 4=USER 5=WINDOW    5=TEAM 6=USER 7=WIN  8=-- 9=--
+#   0=PTT  1=MODE 2=LOGO      0=PTT  1=MODE 2=LOGO 3=-- 4=--
+#   3=TEAM 4=USER 5=MORE      5=TEAM 6=USER 7=MORE 8=-- 9=--
 #   6=--   7=--   8=--       10=--  11=--  12=--  13=-- 14=--
 
 KEY_TALK = 0
@@ -170,12 +170,12 @@ class StreamDeckHandler:
         for k in range(self._key_count):
             self.update_key_image(k, text="", color=COLOR_OFF)
 
-        # Row 1: TALK, MODE, LOGO
-        self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
+        # Row 1: PUSH/TO/TALK, MODE, LOGO
+        self.update_key_image(KEY_TALK, text="PUSH\nTO\nTALK", color=OH_TEAL)
         self.set_active_mode("GREEN")
         self._set_logo_key()
 
-        # Row 2: TEAM, USER, WINDOW
+        # Row 2: TEAM, USER, MORE
         self._render_row2()
 
     # ── Key event routing ─────────────────────────────────────
@@ -236,7 +236,7 @@ class StreamDeckHandler:
         elif active:
             self.update_key_image(KEY_TALK, text="LIVE", color=(255, 0, 0))
         else:
-            self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
+            self.update_key_image(KEY_TALK, text="PUSH\nTO\nTALK", color=OH_TEAL)
 
     def set_talk_locked(self, locked):
         """Show listening state when peer is talking."""
@@ -245,7 +245,7 @@ class StreamDeckHandler:
         if locked:
             self.update_key_image(KEY_TALK, text="LISTEN", color=OH_TEAL_DIM)
         else:
-            self.update_key_image(KEY_TALK, text="TALK", color=OH_TEAL)
+            self.update_key_image(KEY_TALK, text="PUSH\nTO\nTALK", color=OH_TEAL)
 
     # ── Message indicator ────────────────────────────────────
 
@@ -386,7 +386,7 @@ class StreamDeckHandler:
             self.update_key_image(self.key_user, text="USER\n--", color=OH_TEAL_DIM)
 
         # Window toggle key
-        self.update_key_image(self.key_window, text="WINDOW", color=OH_TEAL_DIM)
+        self.update_key_image(self.key_window, text="MORE", color=OH_TEAL_DIM)
 
     # ── Compat stubs ──────────────────────────────────────────
 
