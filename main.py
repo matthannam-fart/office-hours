@@ -6,6 +6,7 @@ import sys
 import os
 import threading
 import time
+import numpy as np
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QPoint
 from PySide6.QtGui import QAction
@@ -1050,6 +1051,23 @@ class IntercomApp(QObject):
             self.panel.hide_message()
             self.audio.play_file(self.incoming_message_path)
 
+    def _save_voicemail_from_buffer(self):
+        """Save buffered audio from a peer who talked while we were busy."""
+        import soundfile as sf
+        try:
+            audio = np.concatenate(self._vm_buffer)
+            fn = os.path.join(_config_dir(), "incoming_message.wav")
+            sf.write(fn, audio, SAMPLE_RATE)
+            self.incoming_message_path = fn
+            self.has_message = True
+            self.log(f"Voicemail received ({len(self._vm_buffer)} chunks)")
+            self.message_received_signal.emit()
+            self.audio.play_notification()
+        except Exception as e:
+            self.log(f"Voicemail save error: {e}")
+        finally:
+            self._vm_buffer = []
+
     def _set_mode(self, new_mode):
         """Set mode directly (used by deck buttons)."""
         if new_mode == self.mode:
@@ -1129,6 +1147,17 @@ class IntercomApp(QObject):
     def handle_audio_stream(self, data):
         if self.mode in (self.MODE_GREEN, self.MODE_OPEN):
             self.audio.play_audio_chunk(data)
+        elif self.mode == self.MODE_YELLOW and self.peer_talking:
+            # Busy mode: buffer incoming audio as a voicemail
+            try:
+                raw = self.audio._decode(data)
+                audio_data = np.frombuffer(raw, dtype=self.audio.DTYPE if hasattr(self.audio, 'DTYPE') else 'int16')
+                if len(audio_data) > 0:
+                    if not hasattr(self, '_vm_buffer'):
+                        self._vm_buffer = []
+                    self._vm_buffer.append(audio_data.copy())
+            except Exception:
+                pass
 
     def handle_network_message(self, msg):
         msg_type = msg.get("type")
@@ -1141,9 +1170,15 @@ class IntercomApp(QObject):
         elif msg_type == "TALK_START":
             self.peer_talking = True
             self.log_signal.emit("Peer is talking...")
+            # Start fresh voicemail buffer if we're busy
+            if self.mode == self.MODE_YELLOW:
+                self._vm_buffer = []
 
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
+            # If we were in busy mode and buffered audio, save as voicemail
+            if self.mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer') and self._vm_buffer:
+                self._save_voicemail_from_buffer()
 
         elif msg_type == "CODEC_OFFER":
             # Peer sent their supported codecs — pick the best common one and reply
