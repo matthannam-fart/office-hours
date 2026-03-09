@@ -20,18 +20,7 @@ echo   ============================================
 echo.
 
 REM ── Step 0: Auto-update ──
-REM Only check once per hour to avoid slowing down every launch
 set "REPO_URL=https://github.com/matthannam-fart/office-hours"
-set "SKIP_UPDATE=0"
-
-if exist ".last_update_check" (
-    for %%F in (.last_update_check) do set "FILE_DATE=%%~tF"
-    REM PowerShell check: was the file modified less than 1 hour ago?
-    powershell -Command "if ((Get-Item '.last_update_check').LastWriteTime -gt (Get-Date).AddHours(-1)) { exit 0 } else { exit 1 }" >nul 2>&1
-    if not errorlevel 1 set "SKIP_UPDATE=1"
-)
-
-if "%SKIP_UPDATE%"=="1" goto :done_update
 
 git --version >nul 2>&1
 if errorlevel 1 goto :no_git
@@ -51,7 +40,7 @@ if errorlevel 1 (
 )
 git stash pop -q >nul 2>&1
 echo.
-goto :save_check_time
+goto :done_update
 
 :no_git
 REM Non-git user — download latest from GitHub via curl + tar
@@ -72,11 +61,11 @@ if exist ".version" (
 REM Compare and update if different
 if "%LATEST_SHA%"=="" (
     echo   . Already up to date (no internet?^).
-    goto :save_check_time
+    goto :done_update
 )
 if "%LATEST_SHA%"=="%LOCAL_SHA%" (
     echo   . Already up to date.
-    goto :save_check_time
+    goto :done_update
 )
 
 echo   New version available - downloading...
@@ -86,7 +75,7 @@ curl -fsSL "%REPO_URL%/archive/refs/heads/main.zip" -o "%TMPDIR%\update.zip" 2>n
 if errorlevel 1 (
     echo   . Could not download update.
     rmdir /s /q "%TMPDIR%" >nul 2>&1
-    goto :save_check_time
+    goto :done_update
 )
 
 REM Extract the zip
@@ -94,14 +83,14 @@ powershell -Command "Expand-Archive -Force '%TMPDIR%\update.zip' '%TMPDIR%'" >nu
 if errorlevel 1 (
     echo   . Could not extract update.
     rmdir /s /q "%TMPDIR%" >nul 2>&1
-    goto :save_check_time
+    goto :done_update
 )
 
 REM Verify extraction produced the expected directory
 if not exist "%TMPDIR%\office-hours-main\main.py" (
     echo   . Could not verify update files.
     rmdir /s /q "%TMPDIR%" >nul 2>&1
-    goto :save_check_time
+    goto :done_update
 )
 
 REM Copy updated files over (preserve runtime/generated files)
@@ -111,7 +100,7 @@ REM Robocopy exit codes 0-7 are success, 8+ are errors
 if errorlevel 8 (
     echo   . Could not copy update files.
     rmdir /s /q "%TMPDIR%" >nul 2>&1
-    goto :save_check_time
+    goto :done_update
 )
 
 REM Save the new version only after successful copy
@@ -119,9 +108,6 @@ echo %LATEST_SHA%> .version
 echo   . Updated to latest version.
 if exist ".deps_ok" del ".deps_ok" >nul 2>&1
 rmdir /s /q "%TMPDIR%" >nul 2>&1
-
-:save_check_time
-echo.> .last_update_check
 
 :done_update
 

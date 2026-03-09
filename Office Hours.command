@@ -14,19 +14,8 @@ echo ""
 xattr -rd com.apple.quarantine "$(dirname "$0")" 2>/dev/null || true
 
 # ── Step 0.5: Auto-update ──
-# Only check once per hour to avoid slowing down every launch
 REPO_URL="https://github.com/matthannam-fart/office-hours"
-SKIP_UPDATE=false
-if [ -f ".last_update_check" ]; then
-    LAST_CHECK=$(cat .last_update_check 2>/dev/null || echo 0)
-    NOW=$(date +%s)
-    ELAPSED=$(( NOW - LAST_CHECK ))
-    if [ "$ELAPSED" -lt 3600 ]; then
-        SKIP_UPDATE=true
-    fi
-fi
-
-if [ "$SKIP_UPDATE" = false ]; then
+{
     if [ -d ".git" ] && command -v git &> /dev/null; then
         echo "  Checking for updates..."
         # Stash any local changes (like downloaded opus.dll) before pulling
@@ -93,8 +82,7 @@ if [ "$SKIP_UPDATE" = false ]; then
         fi
         echo ""
     fi
-    date +%s > .last_update_check
-fi
+}
 
 # ── Step 1: Xcode Command Line Tools ──
 # These provide the C compiler needed by pip to build some dependencies.
