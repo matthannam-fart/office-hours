@@ -72,6 +72,7 @@ class IntercomApp(QObject):
     _show_manage_dialog_signal = Signal(list)             # members list — thread-safe bounce
     _available_teams_signal = Signal(list)                  # lobby teams — thread-safe bounce
     _switch_to_team_signal = Signal()                         # transition from lobby to team view (thread-safe)
+    _show_invite_prompt_signal = Signal(str, str)               # team_name, invite_code — prompt to invite after create
     _join_pending_signal = Signal(str)                          # show "waiting for admin" (thread-safe)
 
     MODE_GREEN = "GREEN"
@@ -211,6 +212,7 @@ class IntercomApp(QObject):
         self._lobby_refresh_timer.setInterval(10_000)  # 10 seconds
         self._lobby_refresh_timer.timeout.connect(self._refresh_lobby_teams)
         self._switch_to_team_signal.connect(self._switch_to_team_view)
+        self._show_invite_prompt_signal.connect(self._show_invite_prompt)
         self._join_pending_signal.connect(lambda name: self.panel.show_join_pending(name))
 
         self.update_deck_display()
@@ -694,14 +696,9 @@ class IntercomApp(QObject):
             self.my_teams = teams or []
             self.log_signal.emit(f"Supabase: {len(self.my_teams)} team(s) loaded")
 
-            # Always load all available teams for the lobby
-            all_teams = supabase_client.get_all_teams() or []
-            my_ids = {t["id"] for t in self.my_teams}
-            available = [t for t in all_teams if t["id"] not in my_ids]
-
-            # Always show the lobby on launch so user picks their team
-            self._teams_loaded_signal.emit()  # Shows lobby (force_lobby mode)
-            self._available_teams_signal.emit([available, self.my_teams])  # Pass both lists
+            # Show team picker — only the user's own teams (no public lobby)
+            self._teams_loaded_signal.emit()
+            self._available_teams_signal.emit([[], self.my_teams])  # No public teams
 
         except Exception as e:
             self.log_signal.emit(f"Supabase sync: {e}")
@@ -1324,12 +1321,9 @@ class IntercomApp(QObject):
         import threading
         def _do_refresh():
             try:
-                all_teams = supabase_client.get_all_teams() or []
                 my_teams = supabase_client.get_my_teams(self.user_id) or []
                 self.my_teams = my_teams
-                my_ids = {t["id"] for t in my_teams}
-                available = [t for t in all_teams if t["id"] not in my_ids]
-                self._available_teams_signal.emit([available, my_teams])
+                self._available_teams_signal.emit([[], my_teams])
             except Exception:
                 pass  # Silently skip — will retry next interval
         threading.Thread(target=_do_refresh, daemon=True).start()
@@ -1393,6 +1387,25 @@ class IntercomApp(QObject):
         self._lobby_refresh_timer.stop()  # Stop polling — user picked a team
         self.panel.set_teams(self.my_teams, self.active_team_id)
 
+    @Slot(str, str)
+    def _show_invite_prompt(self, team_name, invite_code):
+        """After creating a team, ask if the user wants to invite people."""
+        from PySide6.QtWidgets import QMessageBox
+        msg = QMessageBox(self.panel)
+        msg.setWindowTitle("Invite Your Team")
+        msg.setText(f'"{team_name}" is ready!\n\nInvite your teammates?')
+        msg.setInformativeText(f"Invite code: {invite_code}")
+        email_btn = msg.addButton("Send Email Invite", QMessageBox.AcceptRole)
+        copy_btn = msg.addButton("Copy Code", QMessageBox.ActionRole)
+        msg.addButton("Later", QMessageBox.RejectRole)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == email_btn:
+            self.panel._invite_friend_email()
+        elif clicked == copy_btn:
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(invite_code)
+
     @Slot(str)
     def _on_create_team(self, team_name):
         """Create a new team (runs on background thread)."""
@@ -1416,6 +1429,10 @@ class IntercomApp(QObject):
                 self.network.update_presence_team(self.active_team_id)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
+                # Prompt to invite teammates
+                invite_code = result.get("invite_code", "")
+                if invite_code:
+                    self._show_invite_prompt_signal.emit(team_name, invite_code)
             else:
                 self.log_signal.emit(f"Failed to create team: {team_name}")
         threading.Thread(target=_do_create, daemon=True).start()

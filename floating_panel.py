@@ -910,8 +910,8 @@ class FloatingPanel(QWidget):
         layout.addWidget(self._onboarding_name_input)
         layout.addSpacing(10)
 
-        # ── Available Teams (lobby) ──
-        teams_lbl = QLabel("AVAILABLE TEAMS")
+        # ── Your Teams ──
+        teams_lbl = QLabel("YOUR TEAMS")
         teams_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
         layout.addWidget(teams_lbl)
         layout.addSpacing(3)
@@ -1084,53 +1084,10 @@ class FloatingPanel(QWidget):
                 h.addWidget(select_btn)
                 self._lobby_layout.addWidget(row)
 
-        # ── Show other teams (with "Join" button) ──
-        if teams:
-            has_content = True
-            if my_teams:
-                # Add a small divider between sections
-                section_lbl2 = QLabel("OTHER TEAMS")
-                section_lbl2.setStyleSheet(f"font-size: 8px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px; padding: 6px 2px 2px 2px;")
-                self._lobby_layout.addWidget(section_lbl2)
-
-            for team in teams:
-                row = QFrame()
-                row.setStyleSheet(f"""
-                    QFrame {{ background: transparent; border-radius: 4px; }}
-                    QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
-                """)
-                h = QHBoxLayout(row)
-                h.setContentsMargins(6, 3, 6, 3)
-                h.setSpacing(6)
-
-                name_lbl = QLabel(team["name"])
-                name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {DARK['TEXT']};")
-                h.addWidget(name_lbl, 1)
-
-                join_btn = QPushButton("Join")
-                join_btn.setCursor(Qt.PointingHandCursor)
-                join_btn.setFixedSize(50, 24)
-                join_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {DARK['ACCENT']}; color: white; border: none;
-                        border-radius: 4px; font-size: 10px; font-weight: 700;
-                    }}
-                    QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
-                    QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
-                """)
-                team_id = team["id"]
-                team_name = team["name"]
-                admin_id = team.get("created_by", "")
-                join_btn.clicked.connect(
-                    lambda checked=False, tid=team_id, tn=team_name, aid=admin_id, btn=join_btn:
-                        self._on_lobby_join_click(tid, tn, aid, btn)
-                )
-                h.addWidget(join_btn)
-                self._lobby_layout.addWidget(row)
-
         if not has_content:
-            empty = QLabel("No teams yet — create one!")
+            empty = QLabel("No teams yet.\nCreate one or join with an invite code.")
             empty.setAlignment(Qt.AlignCenter)
+            empty.setWordWrap(True)
             empty.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
             self._lobby_layout.addWidget(empty)
 
@@ -2719,11 +2676,19 @@ class FloatingPanel(QWidget):
         if idx >= 0:
             code = self._team_combo.itemData(idx, Qt.UserRole + 2) or ""
             team_name = self._team_combo.currentText() or "Office Hours"
-        subject = f"Join me on Office Hours"
-        body = f"Hey!\n\nI'm using Office Hours — a voice intercom app for teams.\n\n"
+        subject = f"Join {team_name} on Office Hours"
+        body = "Hey!\n\n"
+        body += "I'm using Office Hours — a push-to-talk intercom for our team.\n\n"
+        body += "Here's how to get set up:\n\n"
+        body += "1. Go to https://ohinter.com and download the zip file\n"
+        body += "2. Unzip it and open the folder\n"
+        body += "3. Double-click \"Office Hours\" to launch\n"
+        body += "   - Mac: If macOS blocks it, go to System Settings > Privacy & Security and click \"Open Anyway\"\n"
+        body += "   - Windows: You'll need Python installed first (https://www.python.org/downloads/) — make sure to check \"Add to PATH\"\n"
+        body += "4. The app will install everything it needs on first run (takes a minute or two)\n"
         if code:
-            body += f"Join my team \"{team_name}\" with this invite code: {code}\n\n"
-        body += "Download it here: https://github.com/matthannam-fart/office-hours\n"
+            body += f"5. When it opens, enter your name and use this invite code: {code}\n"
+        body += "\nThat's it — you'll see me online once you're in.\n"
         mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl

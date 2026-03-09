@@ -5,7 +5,6 @@ opuslib
 pyside6
 zeroconf
 soundfile
-streamdeck==0.9.8
 Pillow
 cryptography
 pynput

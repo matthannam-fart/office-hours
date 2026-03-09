@@ -4,7 +4,7 @@ import threading
 import json
 import time
 import struct
-from config import TCP_PORT, UDP_PORT, BUFFER_SIZE, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT, MAX_FRAME_SIZE
+from config import TCP_PORT, UDP_PORT, BUFFER_SIZE, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT, MAX_FRAME_SIZE, RELAY_AUTH_KEY
 
 class NetworkManager:
     def __init__(self, message_callback=None, audio_callback=None, log_callback=None):
@@ -232,7 +232,7 @@ class NetworkManager:
             sock.settimeout(None)
 
             # Send CREATE_ROOM handshake on the local socket
-            self._send_frame_on(sock, json.dumps({"action": "CREATE_ROOM"}).encode('utf-8'))
+            self._send_frame_on(sock, json.dumps({"action": "CREATE_ROOM", "auth_key": RELAY_AUTH_KEY}).encode('utf-8'))
 
             # Read response
             response = self._read_frame_on(sock)
@@ -291,7 +291,8 @@ class NetworkManager:
             # Send JOIN_ROOM handshake on the local socket
             self._send_frame_on(sock, json.dumps({
                 "action": "JOIN_ROOM",
-                "room": self.room_code
+                "room": self.room_code,
+                "auth_key": RELAY_AUTH_KEY
             }).encode('utf-8'))
 
             # Read response — may get "waiting" then "paired", or "paired" directly.
@@ -688,6 +689,7 @@ class NetworkManager:
                 "user_id": user_id,
                 "mode": mode,
                 "team_id": team_id,
+                "auth_key": RELAY_AUTH_KEY,
             }).encode('utf-8')
             self._send_frame_on(self.presence_socket, reg_msg)
 

@@ -37,11 +37,12 @@ echo Starting Office Hours (debug mode)...
 echo ============================================
 echo.
 
-if exist venv (
-    venv\Scripts\python run.py
-) else (
-    python run.py
+if not exist venv (
+    echo   No venv found. Run "Office Hours.bat" first.
+    pause
+    exit /b 1
 )
+venv\Scripts\python run.py
 
 echo.
 echo ============================================

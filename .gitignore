@@ -15,6 +15,11 @@ build/
 # Audio / temp
 *.log
 
+# Runtime marker files (created by install scripts)
+.deps_ok
+.last_update_check
+.version
+
 # Downloaded native libraries (fetched at install time by fetch_opus.py)
 opus.dll
 libopus*.dll

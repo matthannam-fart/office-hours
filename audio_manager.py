@@ -106,12 +106,12 @@ import time
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
 
 # Opus codec settings
-OPUS_BITRATE = 32000          # 32 kbps — excellent voice quality at low bandwidth
+OPUS_BITRATE = 48000          # 48 kbps — clear voice, low bandwidth
 OPUS_FRAME_MS = 20            # 20ms frames (Opus sweet spot: low latency + good quality)
-OPUS_FRAME_SIZE = int(SAMPLE_RATE * OPUS_FRAME_MS / 1000)  # 320 samples at 16kHz
+OPUS_FRAME_SIZE = int(SAMPLE_RATE * OPUS_FRAME_MS / 1000)  # 480 samples at 24kHz
 
 # NLMS Echo Canceller settings
-AEC_FILTER_LEN = 4800         # 300ms at 16kHz — covers room echo tail
+AEC_FILTER_LEN = 7200         # 300ms at 24kHz — covers room echo tail
 AEC_MU = 0.3                  # Step size (0.1=slow convergence, 1.0=fast but unstable)
 AEC_DELTA = 1e-6              # Regularisation to prevent divide-by-zero
 AEC_REF_BUFFER_SIZE = 20      # Reference frames to keep (must exceed round-trip delay)
@@ -227,34 +227,51 @@ class EchoCanceller:
             self._ref_buf[-n:] = ref
 
     def cancel(self, mic_samples):
-        """Remove predicted echo from mic signal. Returns cleaned int16 array."""
+        """Remove predicted echo from mic signal. Returns cleaned int16 array.
+
+        Uses block LMS: predicts echo for the whole frame via convolution,
+        computes mean error, and updates the filter once per block. This is
+        O(N·log N) via FFT instead of O(N·L) per sample, fast enough for
+        real-time at 24 kHz in pure Python/numpy.
+        """
         if not self._enabled:
             return mic_samples
 
         mic = mic_samples.astype(np.float64).flatten()
-        out = np.empty_like(mic)
+        N = len(mic)
+        L = self.filter_len
 
-        for i in range(len(mic)):
-            # Build reference vector (most recent sample first)
-            x = self._ref_buf[::-1]  # Time-reversed for convolution
+        # Build reference matrix: ref_buf already has history, newest at end.
+        # We need the reference aligned so that ref[i] corresponds to mic[i].
+        # Predict echo for the whole block at once via correlation.
+        ref = self._ref_buf[-L:][::-1]  # Filter-length reference, reversed
 
-            # Predict echo: y_hat = w^T * x
-            y_hat = np.dot(self._w, x)
+        # Predict echo: convolve filter with reference (only need N output samples)
+        # Use FFT convolution for speed
+        fft_len = 1
+        while fft_len < L + N:
+            fft_len <<= 1
+        W_f = np.fft.rfft(self._w, fft_len)
+        R_f = np.fft.rfft(self._ref_buf[::-1][:L], fft_len)
+        echo_est = np.fft.irfft(W_f * R_f, fft_len)[:N]
 
-            # Error = mic - predicted echo
-            e = mic[i] - y_hat
-            out[i] = e
+        # Error signal
+        error = mic - echo_est
 
-            # Update filter: w += mu * e * x / (x^T * x + delta)
-            norm = np.dot(x, x) + AEC_DELTA
-            self._w += (self.mu * e / norm) * x
+        # Block filter update: average gradient over the frame
+        # Approximate: use mean-squared reference power for normalisation
+        ref_power = np.dot(self._ref_buf, self._ref_buf) / L + AEC_DELTA
+        mean_error = np.mean(error)
 
-            # Shift reference buffer by 1 sample (simulate time advance)
-            self._ref_buf[:-1] = self._ref_buf[1:]
-            self._ref_buf[-1] = 0.0
+        # Gradient: correlate error with reference
+        E_f = np.fft.rfft(error, fft_len)
+        R_f2 = np.fft.rfft(self._ref_buf[::-1], fft_len)
+        grad = np.fft.irfft(E_f * np.conj(R_f2), fft_len)[:L]
+
+        self._w += (self.mu / ref_power) * grad
 
         # Clip and return as int16
-        out = np.clip(out, -32768, 32767).astype(DTYPE)
+        out = np.clip(error, -32768, 32767).astype(DTYPE)
         if mic_samples.ndim > 1:
             out = out.reshape(mic_samples.shape)
         return out
@@ -285,9 +302,9 @@ class AudioManager:
         self._opus_decoder = None
         self._init_opus()
 
-        # Codec negotiation state — default to µ-law until negotiation completes,
-        # so old clients (pre-Opus) work without any handshake
-        self._active_codec = self.CODEC_ULAW
+        # Codec state — default to best available codec immediately.
+        # Negotiation can downgrade if the peer doesn't support it.
+        self._active_codec = self.CODEC_OPUS if self._opus_encoder else self.CODEC_ULAW
         self._negotiated = False  # True once both sides agree
 
         # Jitter buffer replaces the old raw queue
@@ -369,10 +386,10 @@ class AudioManager:
         return self.CODEC_ULAW
 
     def reset_codec(self):
-        """Reset to safe default (µ-law) for next connection.
-        Stays on µ-law until codec negotiation completes, ensuring
-        backward compatibility with old clients that don't negotiate."""
-        self._active_codec = self.CODEC_ULAW
+        """Reset codec for next connection. Defaults to best available
+        (Opus if supported) so audio quality is maximised even if
+        negotiation messages are delayed or lost."""
+        self._active_codec = self.CODEC_OPUS if self._opus_encoder else self.CODEC_ULAW
         self._negotiated = False
 
     def _encode(self, raw_bytes):
@@ -383,11 +400,19 @@ class AudioManager:
             return audioop.lin2ulaw(raw_bytes, 2)
 
     def _decode(self, data):
-        """Decode compressed bytes back to int16 PCM using the active codec."""
+        """Decode compressed bytes back to int16 PCM using the active codec.
+        Returns silence on failure — never tries the wrong codec, since
+        µ-law will happily decode any bytes into noise."""
         if self._active_codec == self.CODEC_OPUS and self._opus_decoder:
-            return self._opus_decoder.decode(data, OPUS_FRAME_SIZE)
+            try:
+                return self._opus_decoder.decode(data, OPUS_FRAME_SIZE)
+            except Exception:
+                return b'\x00' * OPUS_FRAME_SIZE * 2
         else:
-            return audioop.ulaw2lin(data, 2)
+            try:
+                return audioop.ulaw2lin(data, 2)
+            except Exception:
+                return b'\x00' * CHUNK_SIZE * 2
 
     @property
     def active_frame_size(self):

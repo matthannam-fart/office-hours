@@ -5,10 +5,10 @@ All commands assume you're in `~/office-hours`. If not, run `cd ~/office-hours` 
 ## Day-to-Day
 
 ```bash
-# Launch the app (no git pull, runs local code)
-./start.command
+# Launch the app (auto-updates, installs deps if needed)
+./Office\ Hours.command
 
-# Launch without the script (same thing)
+# Launch without the script (skips updates)
 source venv/bin/activate && python3 main.py
 ```
 
@@ -25,7 +25,7 @@ git add -A && git commit -m "describe what changed" && git push origin main
 
 ```bash
 # One-liner: download latest from GitHub, restart process
-ssh root@165.22.175.71 "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; nohup python3 relay_server.py > relay.log 2>&1 &"
+ssh root@165.22.175.71 "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026' nohup python3 relay_server.py > relay.log 2>&1 &"
 ```
 
 ```bash
@@ -34,6 +34,7 @@ ssh root@165.22.175.71
 cd /root
 curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py
 pkill -f relay_server.py
+export OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026'
 nohup python3 relay_server.py > relay.log 2>&1 &
 exit
 ```
@@ -50,7 +51,7 @@ ssh root@165.22.175.71 "tail -50 /root/relay.log"
 
 ## Update Another Mac
 
-Just run `install_and_run.command` on that Mac — it auto-pulls from GitHub.
+Just run `Office Hours.command` on that Mac — it auto-pulls from GitHub.
 
 ## Git Troubleshooting
 

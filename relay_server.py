@@ -11,6 +11,7 @@ Usage:
     python relay_server.py --port 50002 --cert server_cert.pem --key server_key.pem
 """
 
+import os
 import socket
 import ssl
 import struct
@@ -21,6 +22,17 @@ import random
 import string
 import argparse
 import collections
+
+# ── Auth ────────────────────────────────────────────────────────
+
+RELAY_AUTH_KEY = None  # Set in main() from --auth-key / env var
+
+def check_auth(msg):
+    """Verify the auth_key field in a client's first message.
+    Returns True if auth is disabled (no key set) or key matches."""
+    if not RELAY_AUTH_KEY:
+        return True
+    return msg.get("auth_key") == RELAY_AUTH_KEY
 
 # ── Rate Limiting ───────────────────────────────────────────────
 
@@ -62,26 +74,33 @@ presence = {}          # user_id -> {"name": str, "mode": str, "team_id": str, "
 presence_lock = threading.Lock()
 
 def broadcast_presence():
-    """Send the current user list to all registered clients"""
+    """Send each client only the users that share a team with them.
+    Clients send their team_id on REGISTER/MODE_UPDATE — we use it to
+    filter so no one sees users outside their team."""
     dead_uids = []
     with presence_lock:
-        user_list = []
+        # Build per-team user lists
+        team_users = {}  # team_id -> [user_info, ...]
         for uid, info in presence.items():
-            user_list.append({
+            tid = info.get("team_id", "")
+            entry = {
                 "user_id": uid,
                 "name": info["name"],
                 "mode": info["mode"],
                 "room": info.get("room", ""),
-                "team_id": info.get("team_id", ""),
-            })
+                "team_id": tid,
+            }
+            if tid:
+                team_users.setdefault(tid, []).append(entry)
 
-        msg = json.dumps({"type": "PRESENCE_UPDATE", "users": user_list}).encode('utf-8')
-
+        # Send each client only their team's users
         for uid, info in list(presence.items()):
+            tid = info.get("team_id", "")
+            users_for_client = team_users.get(tid, []) if tid else []
+            msg = json.dumps({"type": "PRESENCE_UPDATE", "users": users_for_client}).encode('utf-8')
             try:
                 send_frame(info["sock"], msg)
             except Exception:
-                # Client disconnected — mark for cleanup
                 dead_uids.append(uid)
 
     # Clean up dead clients outside the broadcast loop
@@ -178,8 +197,11 @@ def handle_presence_client(client_sock, client_addr):
 
                 with presence_lock:
                     target = presence.get(target_id)
+                    # Verify both users are on the same team
+                    caller_team = presence.get(user_id, {}).get("team_id", "")
+                    target_team = target.get("team_id", "") if target else ""
 
-                if target:
+                if target and caller_team and caller_team == target_team:
                     # Pre-create the room so both clients can JOIN_ROOM
                     room_code = generate_room_code()
                     with rooms_lock:
@@ -608,6 +630,19 @@ def handle_client(client_sock, client_addr, udp_sock):
             client_sock.close()
             return
 
+        # Verify auth key on every new connection
+        if not check_auth(msg):
+            client_key = msg.get("auth_key", "(none)")
+            if client_key == "(none)":
+                # Old client without auth support — allow for now, log warning
+                print(f"[Auth] WARNING: No auth key from {client_addr} (old client?)")
+            else:
+                # Wrong key — reject
+                print(f"[Auth] Rejected connection from {client_addr} (bad auth key)")
+                send_json(client_sock, {"status": "error", "message": "Invalid auth key"})
+                client_sock.close()
+                return
+
         action = msg.get("action")
 
         if action == "REGISTER":
@@ -811,7 +846,18 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--cert", type=str, default=None, help="TLS certificate file (PEM)")
     parser.add_argument("--key", type=str, default=None, help="TLS private key file (PEM)")
+    parser.add_argument("--auth-key", type=str,
+                        default=os.environ.get('OFFICEHOURS_RELAY_KEY', 'oh-relay-v1-2026'),
+                        help="Auth key clients must provide (env: OFFICEHOURS_RELAY_KEY)")
     args = parser.parse_args()
+
+    # Auth setup
+    global RELAY_AUTH_KEY
+    RELAY_AUTH_KEY = args.auth_key
+    if RELAY_AUTH_KEY:
+        print(f"[Server] Auth key required for connections")
+    else:
+        print(f"[Server] WARNING: No auth key — relay is open to anyone!")
 
     # TLS setup
     tls_context = None

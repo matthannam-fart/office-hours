@@ -5,10 +5,10 @@ TCP_PORT = int(os.environ.get('TALKBACK_TCP_PORT', 50000))
 UDP_PORT = int(os.environ.get('TALKBACK_UDP_PORT', 50001))
 BUFFER_SIZE = 4096    # Network buffer size
 
-# Audio Configuration (optimised for low-latency voice)
-SAMPLE_RATE = 16000   # Hz — voice-grade, keeps packets small
+# Audio Configuration (optimised for clear, low-latency voice)
+SAMPLE_RATE = 24000   # Hz — super-wideband (clear voice without excess bandwidth)
 CHANNELS = 1          # Mono
-CHUNK_SIZE = 480      # ~30 ms per frame at 16 kHz (good latency/overhead balance)
+CHUNK_SIZE = 480      # 20 ms per frame at 24 kHz
 DTYPE = 'int16'       # Audio data type
 
 # Remote / Relay Configuration
@@ -29,6 +29,11 @@ SUPABASE_ANON_KEY = os.environ.get('OFFICEHOURS_SUPABASE_KEY', 'sb_publishable_5
 # Security Configuration
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB max voicemail file size
 MAX_FRAME_SIZE = 10 * 1024 * 1024  # 10MB max TCP frame size
+
+# Relay authentication — gates access to the relay server.
+# All clients must send this key with their first message.
+# Later this can be replaced with per-user Supabase JWTs.
+RELAY_AUTH_KEY = os.environ.get('OFFICEHOURS_RELAY_KEY', 'oh-relay-v1-2026')
 
 # Application Configuration
 APP_NAME = "Office Hours"
