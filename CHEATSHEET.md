@@ -25,12 +25,12 @@ git add -A && git commit -m "describe what changed" && git push origin main
 
 ```bash
 # One-liner: download latest from GitHub, restart process
-ssh root@165.22.175.71 "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026' nohup python3 relay_server.py > relay.log 2>&1 &"
+ssh root@relay.ohinter.com "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026' nohup python3 relay_server.py > relay.log 2>&1 &"
 ```
 
 ```bash
 # Or step by step:
-ssh root@165.22.175.71
+ssh root@relay.ohinter.com
 cd /root
 curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py
 pkill -f relay_server.py
@@ -43,10 +43,10 @@ exit
 
 ```bash
 # Is it running?
-ssh root@165.22.175.71 "pgrep -a relay"
+ssh root@relay.ohinter.com "pgrep -a relay"
 
 # View recent logs
-ssh root@165.22.175.71 "tail -50 /root/relay.log"
+ssh root@relay.ohinter.com "tail -50 /root/relay.log"
 ```
 
 ## Update Another Mac
