@@ -130,9 +130,9 @@ class FloatingPanel(QWidget):
 
         import sys
         if sys.platform == 'win32':
-            # On Windows: use Qt.Window so taskbar works, skip Qt.Tool
+            # Qt.Tool hides from taskbar; FramelessWindowHint removes title bar
             self.setWindowFlags(
-                Qt.Window |
+                Qt.Tool |
                 Qt.FramelessWindowHint |
                 Qt.WindowStaysOnTopHint
             )

@@ -164,6 +164,14 @@ class IntercomApp(QObject):
         self.tray.setIcon(create_oh_icon(COLORS['GREEN']))
         self.tray.setToolTip("Office Hours")
         self.tray.activated.connect(self._on_tray_click)
+        # Right-click context menu (Windows only — on macOS, setContextMenu
+        # hijacks left-click behavior, so we rely on the activated signal)
+        if sys.platform == 'win32':
+            tray_menu = QMenu()
+            tray_menu.addAction("Show Panel", self._show_panel_at_tray)
+            tray_menu.addSeparator()
+            tray_menu.addAction("Quit Office Hours", self._quit)
+            self.tray.setContextMenu(tray_menu)
         self.tray.setVisible(True)
 
         # ── Floating Panel ─────────────────────────────────────
@@ -314,15 +322,21 @@ class IntercomApp(QObject):
                     # macOS: tray geometry works, anchor below icon
                     self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
                 else:
-                    # Windows: tray geometry often returns (0,0,0,0)
-                    # Position at bottom-right of available screen
+                    # Tray geometry unavailable — use cursor position as anchor
+                    from PySide6.QtGui import QCursor
+                    cursor = QCursor.pos()
                     screen = QApplication.primaryScreen().availableGeometry()
                     if sys.platform == 'win32':
-                        x = screen.right() - self.panel.width() - 8
+                        # Windows: tray is at bottom, position panel above cursor
+                        x = cursor.x() - self.panel.width() // 2
                         y = screen.bottom() - self.panel.height() - 8
                     else:
+                        # Other: position below menu bar area
                         x = screen.right() - self.panel.width() - 8
-                        y = screen.top() + 30
+                        y = screen.top() + 4
+                    # Keep on screen
+                    x = max(screen.left() + 4, min(x, screen.right() - self.panel.width() - 4))
+                    self.panel._notch_x = cursor.x() - x
                     self.panel.move(x, y)
                     self.panel.show()
                     self.panel.raise_()
@@ -1008,10 +1022,16 @@ class IntercomApp(QObject):
         if geo.isValid() and geo.width() > 0:
             self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
         else:
-            # Fallback: top-right of screen, below menu bar
+            # Fallback positioning
             screen = QApplication.primaryScreen().availableGeometry()
-            x = screen.right() - self.panel.width() - 8
-            y = screen.top() + 4
+            if sys.platform == 'win32':
+                # Windows: above taskbar, right-aligned
+                x = screen.right() - self.panel.width() - 8
+                y = screen.bottom() - self.panel.height() - 8
+            else:
+                # macOS: below menu bar, right-aligned
+                x = screen.right() - self.panel.width() - 8
+                y = screen.top() + 4
             self.panel.move(x, y)
             self.panel.show()
         self.panel.raise_()
