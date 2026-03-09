@@ -972,7 +972,7 @@ class IntercomApp(QObject):
         elif key == self.deck.key_user:
             self.deck.handle_user_key()
         elif key == self.deck.key_window:
-            self._on_tray_click(QSystemTrayIcon.Trigger)
+            self._show_panel_at_tray()
 
     def _toggle_panel_visibility(self):
         """Toggle panel window visibility (must be called on the main thread)."""
@@ -981,6 +981,16 @@ class IntercomApp(QObject):
         else:
             self.panel.show()
             self.panel.raise_()
+
+    def _show_panel_at_tray(self):
+        """Show the panel anchored below the menu bar icon."""
+        geo = self.tray.geometry()
+        if geo.isValid() and geo.width() > 0:
+            self.panel.show_at(QPoint(geo.center().x(), geo.bottom()))
+        else:
+            self.panel.show()
+            self.panel.raise_()
+            self.panel.activateWindow()
 
     def on_talk_press(self):
         # Route through intercom system if a target is selected
