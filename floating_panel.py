@@ -2697,7 +2697,7 @@ class FloatingPanel(QWidget):
     def _show_deck_setup_guide(self):
         """Show Stream Deck setup instructions."""
         import sys as _sys
-        dlg = QDialog(self)
+        dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("Stream Deck Setup")
         dlg.setFixedWidth(340)
         dlg.setStyleSheet(f"""
@@ -2842,8 +2842,9 @@ class FloatingPanel(QWidget):
 
         sender_name = getattr(self, '_display_name', None) or "A teammate"
 
-        # Build dialog
-        dlg = QDialog(self)
+        # Build dialog — use explicit flags so it doesn't inherit
+        # the panel's frameless/tool flags which can make it invisible
+        dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("Send Invite")
         dlg.setFixedWidth(320)
         dlg.setStyleSheet(f"""
