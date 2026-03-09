@@ -16,9 +16,8 @@ RELAY_HOST = os.environ.get('TALKBACK_RELAY_HOST', 'relay.ohinter.com')
 RELAY_PORT = int(os.environ.get('TALKBACK_RELAY_PORT', 50002))
 
 # TLS Configuration
-# Set TALKBACK_RELAY_TLS=1 to enable encrypted connections to the relay server
-# (requires TLS certs on the relay — disabled by default for now)
-RELAY_TLS = os.environ.get('TALKBACK_RELAY_TLS', '0').lower() in ('1', 'true', 'yes')
+# Encrypted connections to the relay server (Let's Encrypt cert)
+RELAY_TLS = os.environ.get('TALKBACK_RELAY_TLS', '1').lower() in ('1', 'true', 'yes')
 # Path to custom CA cert (for self-signed relay). Empty = use system trust store (Let's Encrypt)
 RELAY_CA_CERT = os.environ.get('TALKBACK_RELAY_CA_CERT', '')
 
