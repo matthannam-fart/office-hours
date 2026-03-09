@@ -2736,44 +2736,22 @@ class FloatingPanel(QWidget):
             def _send():
                 from supabase_client import send_invite_email
                 result = send_invite_email(email, team_name, code, sender_name)
-                # Update UI from main thread
-                from PySide6.QtCore import QMetaObject, Qt as QtConst
-                QMetaObject.invokeMethod(
-                    status_label, "setText",
-                    QtConst.ConnectionType.QueuedConnection,
-                    "Sent!" if result else "Failed to send. Try again.",
-                )
-                QMetaObject.invokeMethod(
-                    status_label, "setVisible",
-                    QtConst.ConnectionType.QueuedConnection,
-                    True,
-                )
+                # Update UI from main thread via QTimer.singleShot
                 if result:
-                    QMetaObject.invokeMethod(
-                        status_label, "setStyleSheet",
-                        QtConst.ConnectionType.QueuedConnection,
-                        f"font-size: 11px; color: {DARK['ACCENT']}; border: none;",
-                    )
-                    # Close dialog after brief delay
-                    import time
-                    time.sleep(1.0)
-                    QMetaObject.invokeMethod(dlg, "accept", QtConst.ConnectionType.QueuedConnection)
+                    def _on_success():
+                        status_label.setText("Sent!")
+                        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['ACCENT']}; border: none;")
+                        status_label.setVisible(True)
+                        QTimer.singleShot(1000, dlg.accept)
+                    QTimer.singleShot(0, _on_success)
                 else:
-                    QMetaObject.invokeMethod(
-                        status_label, "setStyleSheet",
-                        QtConst.ConnectionType.QueuedConnection,
-                        f"font-size: 11px; color: {DARK['DANGER']}; border: none;",
-                    )
-                    QMetaObject.invokeMethod(
-                        send_btn, "setEnabled",
-                        QtConst.ConnectionType.QueuedConnection,
-                        True,
-                    )
-                    QMetaObject.invokeMethod(
-                        send_btn, "setText",
-                        QtConst.ConnectionType.QueuedConnection,
-                        "Send Invite",
-                    )
+                    def _on_fail():
+                        status_label.setText("Failed to send. Try again.")
+                        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
+                        status_label.setVisible(True)
+                        send_btn.setEnabled(True)
+                        send_btn.setText("Send Invite")
+                    QTimer.singleShot(0, _on_fail)
 
             threading.Thread(target=_send, daemon=True).start()
 

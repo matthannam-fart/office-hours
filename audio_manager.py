@@ -226,34 +226,52 @@ class EchoCanceller:
     def cancel(self, mic_samples):
         """Remove predicted echo from mic signal. Returns cleaned int16 array.
 
-        Uses a lightweight block NLMS: one filter update per frame using the
-        mid-frame reference window. This keeps CPU usage minimal (single dot
-        product + vector add per 20ms frame) while still adapting to the room.
+        Uses a lightweight block NLMS: one filter update per frame using
+        numpy stride tricks to build the reference matrix without copying.
+        Much faster than the old per-sample Python loop.
         """
         if not self._enabled:
             return mic_samples
 
         mic = mic_samples.astype(np.float64).flatten()
+        N = len(mic)
         L = self.filter_len
 
-        # Reference vector: most recent L samples from speaker, reversed
-        # (convolution order: ref[0] = most recent)
-        ref = self._ref_buf[::-1].copy()
+        # We need L + N - 1 reference samples. Pad ref_buf with zeros.
+        padded = np.concatenate([np.zeros(N - 1), self._ref_buf]) if N > 1 else self._ref_buf
+        total = len(padded)
 
-        # Predict echo: single dot product
-        echo_est = np.dot(self._w, ref)
+        # Build reference matrix using stride tricks (zero-copy, very fast)
+        # Each row is a reversed length-L window aligned with the mic sample
+        from numpy.lib.stride_tricks import as_strided
+        # First build a forward Toeplitz-like matrix, then reverse each row
+        # Start index for row i: total - N + i + 1 - L
+        start0 = total - N - L + 1
+        if start0 < 0:
+            # Not enough reference history — pad more
+            padded = np.concatenate([np.zeros(-start0), padded])
+            start0 = 0
 
-        # Error: subtract predicted echo from mic (use frame mean for block update)
-        mic_mean = np.mean(mic)
-        error = mic_mean - echo_est
+        # Contiguous slice that covers all windows
+        block = padded[start0:start0 + N + L - 1]
+        strides = (block.strides[0], block.strides[0])
+        ref_matrix = as_strided(block, shape=(N, L), strides=strides).copy()
+        # Reverse each row (convolution order: newest first)
+        ref_matrix = ref_matrix[:, ::-1]
 
-        # NLMS weight update
-        ref_power = np.dot(ref, ref) + AEC_DELTA
-        self._w += (self.mu * error / ref_power) * ref
+        # Predict echo: matrix @ filter
+        echo_est = ref_matrix @ self._w
 
-        # Subtract estimated echo from entire frame
-        out = mic - echo_est
-        out = np.clip(out, -32768, 32767).astype(DTYPE)
+        # Error signal
+        error = mic - echo_est
+
+        # Block NLMS update
+        ref_power = np.mean(np.sum(ref_matrix ** 2, axis=1)) + AEC_DELTA
+        grad = ref_matrix.T @ error / N
+        self._w += (self.mu / ref_power) * grad
+
+        # Clip and return as int16
+        out = np.clip(error, -32768, 32767).astype(DTYPE)
         if mic_samples.ndim > 1:
             out = out.reshape(mic_samples.shape)
         return out
@@ -490,15 +508,17 @@ class AudioManager:
                 suppress_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # ~0.18 for 15dB
                 target_gain = 1.0 if is_voice else suppress_gain
 
+                # Ramp gain based on frame duration (20ms per frame)
+                frame_sec = frame_len / SAMPLE_RATE
                 if target_gain > self._hotline_gain:
                     # Attack: fast ramp up
-                    attack_samples = max(1, int(SAMPLE_RATE * HOTLINE_ATTACK_MS / 1000))
-                    self._hotline_gain += (1.0 - suppress_gain) * frame_len / attack_samples
+                    attack_sec = max(0.001, HOTLINE_ATTACK_MS / 1000)
+                    self._hotline_gain += (1.0 - suppress_gain) * (frame_sec / attack_sec)
                     self._hotline_gain = min(self._hotline_gain, 1.0)
                 else:
                     # Release: slow ramp down (keeps natural tails)
-                    release_samples = max(1, int(SAMPLE_RATE * HOTLINE_RELEASE_MS / 1000))
-                    self._hotline_gain -= (1.0 - suppress_gain) * frame_len / release_samples
+                    release_sec = max(0.001, HOTLINE_RELEASE_MS / 1000)
+                    self._hotline_gain -= (1.0 - suppress_gain) * (frame_sec / release_sec)
                     self._hotline_gain = max(self._hotline_gain, suppress_gain)
 
                 # Apply gain — never fully silent, always some room tone

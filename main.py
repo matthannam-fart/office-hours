@@ -1074,6 +1074,9 @@ class IntercomApp(QObject):
             return
         old_mode = self.mode
         self.mode = new_mode
+        # Clear voicemail buffer if leaving busy mode
+        if old_mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer'):
+            self._vm_buffer = []
 
         if old_mode == self.MODE_OPEN and self.mode != self.MODE_OPEN:
             self.audio.stop_streaming()
@@ -1151,7 +1154,7 @@ class IntercomApp(QObject):
             # Busy mode: buffer incoming audio as a voicemail
             try:
                 raw = self.audio._decode(data)
-                audio_data = np.frombuffer(raw, dtype=self.audio.DTYPE if hasattr(self.audio, 'DTYPE') else 'int16')
+                audio_data = np.frombuffer(raw, dtype=DTYPE)
                 if len(audio_data) > 0:
                     if not hasattr(self, '_vm_buffer'):
                         self._vm_buffer = []
