@@ -134,7 +134,7 @@ This will outline every widget so you can see what's overlapping.
 | `main.py` | App init, tray icon, panel positioning |
 | `network_manager.py` | Socket binding (port conflicts) |
 | `hotkey_manager.py` | pynput global hotkeys (needs accessibility) |
-| `stream_deck_manager.py` | USB device access (Elgato conflict) |
+| `deck_ws_server.py` | WebSocket bridge for Stream Deck plugin |
 | `config.py` | Network ports, relay server address |
 | `user_settings.py` | Config file paths (`%APPDATA%\OfficeHours`) |
 

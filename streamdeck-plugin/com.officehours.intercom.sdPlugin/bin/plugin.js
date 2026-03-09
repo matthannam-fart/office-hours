@@ -66,7 +66,7 @@ let ohState = {
 let reconnectTimer = null;
 let reconnectDelay = 3000;  // Start at 3s, backoff to 30s max
 
-// Message pulse state (matches stream_deck_manager 0.6s interval)
+// Message pulse state (matches OH app 0.6s interval)
 let msgPulseOn = false;
 let msgPulseTimer = null;
 
@@ -133,13 +133,13 @@ function sendToOH(msg) {
     }
 }
 
-// ── Message pulse (0.6s interval, matches stream_deck_manager) ──
+// ── Message pulse (0.6s interval, matches OH app) ──
 function startMsgPulse() {
     if (msgPulseTimer) return;
     msgPulseOn = true;
     msgPulseTimer = setInterval(() => {
         msgPulseOn = !msgPulseOn;
-        // Pulse the logo key (matches stream_deck_manager KEY_LOGO pulse)
+        // Pulse the logo key
         refreshActionButtons("com.officehours.intercom.logo");
     }, 600);
 }
@@ -269,7 +269,7 @@ function escapeXml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// ── Button refresh (mirrors stream_deck_manager key layout) ─
+// ── Button refresh (mirrors OH app key layout) ─
 function refreshAllButtons() {
     for (const [action, ctxSet] of Object.entries(contexts)) {
         for (const ctx of ctxSet) {

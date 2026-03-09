@@ -123,7 +123,7 @@ supabase_client.py    Supabase REST API (users, teams, join requests)
 relay_server.py       Remote relay server (presence, audio, join request routing)
 discovery_manager.py  LAN peer discovery via Zeroconf/Bonjour
 hotkey_manager.py     Global push-to-talk hotkey listener
-stream_deck_manager.py  Elgato Stream Deck hardware integration
+deck_ws_server.py     WebSocket bridge for Stream Deck Elgato plugin
 user_settings.py      Local config persistence (name, team, hotkey)
 config.py             Ports, relay host, audio settings, logging
 ui_constants.py       Color palette, mode labels, panel dimensions
@@ -133,4 +133,4 @@ generate_certs.py     TLS certificate generation for relay server
 
 ## Stream Deck (Optional)
 
-If an Elgato Stream Deck is connected, hardware keys mirror the on-screen controls with color-coded feedback.
+Works with the Elgato Stream Deck app via a plugin that auto-installs on launch. Open the Stream Deck app and drag actions from the "Office Hours" category onto your deck.
