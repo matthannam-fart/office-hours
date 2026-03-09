@@ -302,6 +302,21 @@ sys.exit(0 if result.returncode == 0 else 1)
     read -p "  Press Enter to continue launching..."
 fi
 
+# ── Step 6.5: Auto-install Stream Deck plugin ──
+SD_PLUGIN_DIR="$HOME/Library/Application Support/com.elgato.StreamDeck/Plugins"
+SD_PLUGIN_NAME="com.officehours.intercom.sdPlugin"
+if [ -d "$SD_PLUGIN_DIR" ] && [ -d "streamdeck-plugin/$SD_PLUGIN_NAME" ]; then
+    # Install or update if our plugin is missing or older than source
+    if [ ! -d "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME" ] || \
+       [ "streamdeck-plugin/$SD_PLUGIN_NAME/manifest.json" -nt "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME/manifest.json" ]; then
+        echo "  Installing Stream Deck plugin..."
+        rm -rf "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME"
+        cp -R "streamdeck-plugin/$SD_PLUGIN_NAME" "$SD_PLUGIN_DIR/$SD_PLUGIN_NAME"
+        echo "  ✓ Stream Deck plugin installed."
+        echo "    Restart the Stream Deck app to activate."
+    fi
+fi
+
 # ── Step 7: Launch ──
 echo ""
 echo "  Starting Office Hours..."

@@ -208,6 +208,18 @@ if errorlevel 1 (
     echo.
 )
 
+REM ── Step 3.7: Auto-install Stream Deck plugin ──
+set "SD_PLUGIN_DIR=%APPDATA%\Elgato\StreamDeck\Plugins"
+set "SD_PLUGIN_NAME=com.officehours.intercom.sdPlugin"
+if exist "%SD_PLUGIN_DIR%" (
+    if exist "streamdeck-plugin\%SD_PLUGIN_NAME%\manifest.json" (
+        echo   Installing Stream Deck plugin...
+        if exist "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" rmdir /s /q "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" >nul 2>&1
+        xcopy "streamdeck-plugin\%SD_PLUGIN_NAME%" "%SD_PLUGIN_DIR%\%SD_PLUGIN_NAME%" /E /I /Q /Y >nul
+        echo   . Stream Deck plugin ready.
+    )
+)
+
 REM ── Step 4: Launch ──
 echo.
 echo   Starting Office Hours...
