@@ -29,7 +29,7 @@ print('Platform:', platform.platform())
 print('Architecture:', platform.architecture())
 
 # Check all required imports
-modules = ['PySide6', 'sounddevice', 'numpy', 'zeroconf', 'cryptography', 'pynput']
+modules = ['PySide6', 'sounddevice', 'numpy', 'zeroconf', 'cryptography', 'pynput', 'opuslib']
 for m in modules:
     try:
         mod = __import__(m)

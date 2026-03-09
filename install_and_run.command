@@ -132,17 +132,23 @@ fi
 
 echo "Using Python: $("$PYTHON" --version)"
 
-# ── Step 3: Check for PortAudio (required by sounddevice) ──
+# ── Step 3: Check for PortAudio and Opus (required by sounddevice and Opus codec) ──
 if command -v brew &> /dev/null; then
     if ! brew list portaudio &> /dev/null 2>&1; then
         echo "Installing PortAudio (audio driver)..."
         brew install portaudio
     fi
+    if ! brew list opus &> /dev/null 2>&1; then
+        echo "Installing Opus (audio codec)..."
+        brew install opus
+    fi
 else
-    echo "Installing Homebrew for PortAudio..."
+    echo "Installing Homebrew for PortAudio and Opus..."
     install_homebrew
     echo "Installing PortAudio (audio driver)..."
     brew install portaudio
+    echo "Installing Opus (audio codec)..."
+    brew install opus
 fi
 
 # ── Step 4: Create venv & install dependencies ──
@@ -162,7 +168,7 @@ if [ ! -d "venv" ]; then
 fi
 
 # Verify dependencies are installed (catches broken/incomplete venvs)
-if ! ./venv/bin/python -c "import sounddevice, numpy, PySide6, zeroconf" 2>/dev/null; then
+if ! ./venv/bin/python -c "import sounddevice, numpy, PySide6, zeroconf, opuslib" 2>/dev/null; then
     echo "Installing dependencies..."
     ./venv/bin/pip install --upgrade pip -q
     ./venv/bin/pip install -r requirements.txt

@@ -69,6 +69,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ── Install Opus codec library ──
+echo.
+echo Setting up Opus audio codec...
+venv\Scripts\python fetch_opus.py
+
 echo.
 echo ============================================
 echo   Install complete!

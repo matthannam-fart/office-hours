@@ -28,6 +28,7 @@ echo.
 REM ── Reinstall deps if needed ──
 if exist venv (
     venv\Scripts\pip install -r requirements.txt -q
+    venv\Scripts\python fetch_opus.py
 )
 
 :run

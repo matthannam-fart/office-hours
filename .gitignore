@@ -14,3 +14,8 @@ build/
 
 # Audio / temp
 *.log
+
+# Downloaded native libraries (fetched at install time by fetch_opus.py)
+opus.dll
+libopus*.dll
+libs/*.dll

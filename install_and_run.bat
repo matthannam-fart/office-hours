@@ -112,7 +112,7 @@ if not exist venv (
 )
 
 REM ── Step 3: Verify dependencies are installed ──
-venv\Scripts\python -c "import sounddevice, numpy, PySide6, zeroconf, cryptography, pynput" >nul 2>&1
+venv\Scripts\python -c "import sounddevice, numpy, PySide6, zeroconf, cryptography, pynput, opuslib" >nul 2>&1
 if errorlevel 1 (
     echo Installing dependencies...
     venv\Scripts\pip install --upgrade pip -q
@@ -130,6 +130,9 @@ if errorlevel 1 (
 ) else (
     echo All dependencies OK.
 )
+
+REM ── Step 3.5: Ensure Opus codec library is available ──
+venv\Scripts\python fetch_opus.py
 
 REM ── Step 4: Launch ──
 echo.

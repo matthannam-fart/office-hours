@@ -431,6 +431,7 @@ class IntercomApp(QObject):
         success = self.network.connect(ip)
         if success:
             self.log(f"Connected — sending call request...")
+            self._send_codec_offer()
             # Send a connection request — callee will show accept/decline
             self.network.send_control("CONNECTION_REQUEST", {
                 "name": self.network.display_name or "Unknown"
@@ -633,6 +634,7 @@ class IntercomApp(QObject):
                 pass  # Best-effort — connection may already be broken
 
         self.audio.stop_streaming()  # Stop any active stream (PTT or hotline)
+        self.audio.reset_codec()  # Reset to default codec for next connection
         self._clear_busy()
         self.peer_talking = False
         self._connected_peer_id = None  # Clear so they reappear in user list
@@ -785,6 +787,7 @@ class IntercomApp(QObject):
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
         if success:
             self.active_room_code = room_code  # Internal tracking only
+            self._send_codec_offer()
 
             # Determine peer name and ID for UI
             if role == "creator":
@@ -1119,6 +1122,11 @@ class IntercomApp(QObject):
     def send_status(self):
         self.network.send_control("STATUS", {"mode": self.mode})
 
+    def _send_codec_offer(self):
+        """Send our supported codecs to the peer for negotiation."""
+        codecs = self.audio.get_supported_codecs()
+        self.network.send_control("CODEC_OFFER", {"codecs": codecs})
+
     # ── Network Callbacks ─────────────────────────────────────────
 
     def handle_audio_stream(self, data):
@@ -1140,10 +1148,24 @@ class IntercomApp(QObject):
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
 
+        elif msg_type == "CODEC_OFFER":
+            # Peer sent their supported codecs — pick the best common one and reply
+            peer_codecs = payload.get("codecs", ["ulaw"])
+            chosen = self.audio.negotiate_codec(peer_codecs)
+            self.network.send_control("CODEC_ACCEPT", {"codec": chosen})
+            self.log_signal.emit(f"Codec: {chosen}")
+
+        elif msg_type == "CODEC_ACCEPT":
+            # Peer accepted our codec offer — activate the chosen codec
+            chosen = payload.get("codec", "ulaw")
+            self.audio.negotiate_codec([chosen])
+            self.log_signal.emit(f"Codec: {chosen}")
+
         elif msg_type == "PEER_CONNECTED":
             ip = payload.get("ip", "unknown")
             self.peer_ip = ip
             self.log_signal.emit(f"Direct connection from {ip}")
+            self._send_codec_offer()
 
         elif msg_type == "CONNECTION_REQUEST":
             requester_name = payload.get("name", "Unknown")
@@ -1170,6 +1192,7 @@ class IntercomApp(QObject):
             # Remote peer ended the call — disconnect our side and restore mode
             self.log_signal.emit("Call ended by peer.")
             self.audio.stop_streaming()
+            self.audio.reset_codec()
             self._clear_busy()
             self.peer_talking = False
             self._connected_peer_id = None

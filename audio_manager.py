@@ -4,16 +4,59 @@ import numpy as np
 import threading
 import queue
 import os
+import sys
+import collections
+
+# Opus codec — high-quality, low-latency voice compression
+try:
+    # opuslib uses ctypes.util.find_library which often fails on macOS/Homebrew
+    # and Windows (DLL not on PATH). Pre-load from known paths.
+    import ctypes, ctypes.util
+    _app_dir = os.path.dirname(os.path.abspath(__file__))
+    if ctypes.util.find_library('opus') is None:
+        _search_paths = []
+        if sys.platform == 'win32':
+            # Windows: check app directory first (bundled DLL), then common locations
+            _search_paths = [
+                os.path.join(_app_dir, 'opus.dll'),
+                os.path.join(_app_dir, 'libopus-0.dll'),
+                os.path.join(_app_dir, 'libopus.dll'),
+                os.path.join(_app_dir, 'libs', 'opus.dll'),
+                os.path.join(_app_dir, 'libs', 'libopus-0.dll'),
+            ]
+        elif sys.platform == 'darwin':
+            _search_paths = [
+                '/opt/homebrew/lib/libopus.dylib',       # macOS ARM Homebrew
+                '/usr/local/lib/libopus.dylib',           # macOS Intel Homebrew
+            ]
+        else:
+            _search_paths = [
+                '/usr/lib/x86_64-linux-gnu/libopus.so.0', # Debian/Ubuntu
+                '/usr/lib/libopus.so.0',                   # Other Linux
+            ]
+        for _opus_path in _search_paths:
+            try:
+                ctypes.CDLL(_opus_path)
+                # Monkey-patch so opuslib finds it
+                ctypes.util.find_library = lambda name, _p=_opus_path: _p if name == 'opus' else None
+                break
+            except OSError:
+                continue
+    import opuslib
+    _HAS_OPUS = True
+except (ImportError, Exception):
+    _HAS_OPUS = False
+
+# µ-law codec — always loaded as fallback (needed even when Opus is primary,
+# because codec negotiation may fall back to µ-law with older peers)
 try:
     import audioop
 except ImportError:
-    # audioop removed in Python 3.13 — try the backport
     try:
         import audioop_lts as audioop
     except ImportError:
         # Pure-Python µ-law fallback (slower but functional)
         import struct
-        # µ-law lookup table (ITU-T G.711) — much faster than per-sample math
         _ULAW_EXP_TABLE = [0,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3,
                            4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
                            5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
@@ -58,82 +101,301 @@ except ImportError:
                         sample = -sample
                     struct.pack_into('<h', result, i * 2, max(-32768, min(32767, sample)))
                 return bytes(result)
-import sys
+
 import time
 from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
 
-# Ducking: how much to attenuate mic when speaker is active (0.3 = 70% reduction)
-DUCK_ATTENUATION = 0.3
-# How long to keep ducking after last incoming audio chunk (seconds)
-DUCK_HOLDOFF = 0.15
+# Opus codec settings
+OPUS_BITRATE = 32000          # 32 kbps — excellent voice quality at low bandwidth
+OPUS_FRAME_MS = 20            # 20ms frames (Opus sweet spot: low latency + good quality)
+OPUS_FRAME_SIZE = int(SAMPLE_RATE * OPUS_FRAME_MS / 1000)  # 320 samples at 16kHz
+
+# NLMS Echo Canceller settings
+AEC_FILTER_LEN = 4800         # 300ms at 16kHz — covers room echo tail
+AEC_MU = 0.3                  # Step size (0.1=slow convergence, 1.0=fast but unstable)
+AEC_DELTA = 1e-6              # Regularisation to prevent divide-by-zero
+AEC_REF_BUFFER_SIZE = 20      # Reference frames to keep (must exceed round-trip delay)
+
+# Jitter buffer settings
+JITTER_MIN_FRAMES = 3         # Buffer this many frames before starting playback
+JITTER_MAX_FRAMES = 15        # Max buffer depth before dropping old frames
 
 # VOX (voice-activated transmit) — adaptive noise gate
-VOX_HOLDOFF = 0.5             # Seconds to keep gate open after last voice frame
-VOX_ATTACK_FRAMES = 2         # Consecutive voice frames to open gate (anti-click)
-VOX_OPEN_RATIO = 3.0          # Open when RMS > noise_floor × this
-VOX_CLOSE_RATIO = 1.5         # Close when RMS < noise_floor × this (hysteresis)
-VOX_NOISE_ADAPT_RATE = 0.05   # How fast noise floor adapts upward (per frame)
-VOX_NOISE_DECAY_RATE = 0.002  # How fast noise floor decays downward (slow — tracks room)
-VOX_NOISE_FLOOR_INIT = 80     # Initial noise floor estimate (int16 RMS)
-VOX_NOISE_FLOOR_MIN = 20      # Minimum noise floor (prevents divide-by-zero in silent rooms)
-VOX_FADE_IN_MS = 10           # Milliseconds to ramp up when gate opens
-VOX_FADE_OUT_MS = 50          # Milliseconds to ramp down when gate closes
-VOX_VOICE_BAND = (300, 3000)  # Hz — voice energy band for spectral check
-VOX_VOICE_RATIO = 0.4         # Fraction of energy that must be in voice band
-VOX_COMFORT_LEVEL = 0.002     # Comfort noise amplitude (fraction of int16 max)
+VOX_HOLDOFF = 0.5
+VOX_ATTACK_FRAMES = 2
+VOX_OPEN_RATIO = 3.0
+VOX_CLOSE_RATIO = 1.5
+VOX_NOISE_ADAPT_RATE = 0.05
+VOX_NOISE_DECAY_RATE = 0.002
+VOX_NOISE_FLOOR_INIT = 80
+VOX_NOISE_FLOOR_MIN = 20
+VOX_FADE_IN_MS = 10
+VOX_FADE_OUT_MS = 50
+VOX_VOICE_BAND = (300, 3000)
+VOX_VOICE_RATIO = 0.4
+VOX_COMFORT_LEVEL = 0.002
 
 def _configure_audio_backend():
     """Configure sounddevice for lowest latency on the current platform."""
     if sys.platform == 'win32':
-        # Prefer WASAPI on Windows for lowest latency
         try:
             hostapis = sd.query_hostapis()
             for i, api in enumerate(hostapis):
                 if 'wasapi' in api['name'].lower():
-                    # WASAPI gives ~10ms latency vs ~40ms for MME/DirectSound
                     sd.default.hostapi = i
                     break
         except Exception:
-            pass  # Fall back to default
+            pass
 
 _configure_audio_backend()
 
+
+class JitterBuffer:
+    """Adaptive jitter buffer that smooths network timing variations.
+
+    Buffers a minimum number of frames before allowing playback to start,
+    then serves frames on demand. Repeats the last frame on underrun instead
+    of playing silence (packet loss concealment). Drops oldest frames when
+    the buffer grows too large to prevent latency buildup.
+    """
+
+    def __init__(self, min_frames=JITTER_MIN_FRAMES, max_frames=JITTER_MAX_FRAMES):
+        self.min_frames = min_frames
+        self.max_frames = max_frames
+        self._buf = collections.deque(maxlen=max_frames)
+        self._primed = False       # Have we buffered enough to start?
+        self._last_frame = None    # For packet loss concealment
+
+    def push(self, frame):
+        """Add a decoded audio frame to the buffer."""
+        if len(self._buf) >= self.max_frames:
+            self._buf.popleft()    # Drop oldest to cap latency
+        self._buf.append(frame)
+        if not self._primed and len(self._buf) >= self.min_frames:
+            self._primed = True
+
+    def pull(self, frame_shape):
+        """Get next frame for playback. Returns None if not yet primed."""
+        if not self._primed:
+            return np.zeros(frame_shape, dtype=DTYPE)
+
+        if self._buf:
+            frame = self._buf.popleft()
+            self._last_frame = frame
+            return frame
+        elif self._last_frame is not None:
+            # Packet loss concealment: repeat last frame with slight fade
+            self._last_frame = (self._last_frame.astype(np.float32) * 0.8).astype(DTYPE)
+            return self._last_frame
+        else:
+            return np.zeros(frame_shape, dtype=DTYPE)
+
+    def reset(self):
+        self._buf.clear()
+        self._primed = False
+        self._last_frame = None
+
+
+class EchoCanceller:
+    """NLMS (Normalised Least Mean Squares) adaptive echo canceller.
+
+    Maintains a model of the acoustic path from speaker to microphone and
+    subtracts the predicted echo from the mic signal in real-time. This
+    replaces the old ducking approach with true full-duplex capability.
+
+    The reference signal (what we're playing to the speaker) is stored in a
+    circular buffer. The adaptive filter learns the room's impulse response
+    and predicts what the mic will pick up, then subtracts it.
+    """
+
+    def __init__(self, filter_len=AEC_FILTER_LEN, mu=AEC_MU, frame_size=None):
+        self.filter_len = filter_len
+        self.mu = mu
+        self._w = np.zeros(filter_len, dtype=np.float64)  # Filter coefficients
+        self._ref_buf = np.zeros(filter_len, dtype=np.float64)  # Reference signal history
+        self._enabled = True
+
+    def feed_reference(self, samples):
+        """Feed speaker output samples as reference for echo prediction."""
+        ref = samples.astype(np.float64).flatten()
+        # Shift reference buffer and append new samples
+        n = len(ref)
+        if n >= self.filter_len:
+            self._ref_buf[:] = ref[-self.filter_len:]
+        else:
+            self._ref_buf[:-n] = self._ref_buf[n:]
+            self._ref_buf[-n:] = ref
+
+    def cancel(self, mic_samples):
+        """Remove predicted echo from mic signal. Returns cleaned int16 array."""
+        if not self._enabled:
+            return mic_samples
+
+        mic = mic_samples.astype(np.float64).flatten()
+        out = np.empty_like(mic)
+
+        for i in range(len(mic)):
+            # Build reference vector (most recent sample first)
+            x = self._ref_buf[::-1]  # Time-reversed for convolution
+
+            # Predict echo: y_hat = w^T * x
+            y_hat = np.dot(self._w, x)
+
+            # Error = mic - predicted echo
+            e = mic[i] - y_hat
+            out[i] = e
+
+            # Update filter: w += mu * e * x / (x^T * x + delta)
+            norm = np.dot(x, x) + AEC_DELTA
+            self._w += (self.mu * e / norm) * x
+
+            # Shift reference buffer by 1 sample (simulate time advance)
+            self._ref_buf[:-1] = self._ref_buf[1:]
+            self._ref_buf[-1] = 0.0
+
+        # Clip and return as int16
+        out = np.clip(out, -32768, 32767).astype(DTYPE)
+        if mic_samples.ndim > 1:
+            out = out.reshape(mic_samples.shape)
+        return out
+
+    def reset(self):
+        self._w[:] = 0
+        self._ref_buf[:] = 0
+
+
 class AudioManager:
+    # Codec identifiers for negotiation
+    CODEC_OPUS = "opus"
+    CODEC_ULAW = "ulaw"
+
     def __init__(self, network_manager, log_callback=None):
         self.network_manager = network_manager
         self.log_callback = log_callback
         self.recording = False
         self.streaming = False
-        self.audio_queue = queue.Queue(maxsize=20)  # Cap queue to prevent latency buildup
         self.input_device = None
         self.output_device = None
 
         # Voicemail / Message
         self.message_buffer = []
 
-        # Echo ducking state
-        self._last_incoming_time = 0.0  # timestamp of last incoming audio
+        # Opus encoder/decoder (created lazily to handle import failure)
+        self._opus_encoder = None
+        self._opus_decoder = None
+        self._init_opus()
+
+        # Codec negotiation state — default to µ-law until negotiation completes,
+        # so old clients (pre-Opus) work without any handshake
+        self._active_codec = self.CODEC_ULAW
+        self._negotiated = False  # True once both sides agree
+
+        # Jitter buffer replaces the old raw queue
+        self._jitter_buf = JitterBuffer()
+
+        # NLMS echo canceller replaces ducking
+        self._aec = EchoCanceller(frame_size=CHUNK_SIZE)
 
         # VOX gate state
-        self._vox_enabled = False         # Toggled on for open-line mode
-        self._vox_open = False            # Gate currently open (transmitting)
-        self._vox_last_voice = 0.0        # Timestamp of last voice-level audio
-        self._vox_attack_count = 0        # Consecutive frames above threshold
-        self._vox_noise_floor = VOX_NOISE_FLOOR_INIT  # Adaptive noise floor (RMS)
-        self._vox_fade_state = 0.0        # 0.0 = fully closed, 1.0 = fully open
-        self._vox_prev_open = False       # Previous frame gate state (for fade detection)
+        self._vox_enabled = False
+        self._vox_open = False
+        self._vox_last_voice = 0.0
+        self._vox_attack_count = 0
+        self._vox_noise_floor = VOX_NOISE_FLOOR_INIT
+        self._vox_fade_state = 0.0
+        self._vox_prev_open = False
 
         # Audio level callbacks (0.0–1.0 range)
-        self.mic_level_callback = None    # Called with mic RMS level
-        self.speaker_level_callback = None  # Called with speaker RMS level
+        self.mic_level_callback = None
+        self.speaker_level_callback = None
 
         # Threading state
         self.listening = False
         self.stream_thread = None
         self.play_thread = None
-
-        # Threading guard
         self._stream_lock = threading.Lock()
+
+    def _init_opus(self):
+        """Initialise Opus encoder/decoder if available."""
+        if _HAS_OPUS:
+            try:
+                self._opus_encoder = opuslib.Encoder(
+                    SAMPLE_RATE, CHANNELS, opuslib.APPLICATION_VOIP
+                )
+                # Set bitrate — opuslib's property setter is buggy, use CTL directly
+                try:
+                    import ctypes
+                    OPUS_SET_BITRATE_REQUEST = 4002
+                    opuslib.api.encoder.encoder_ctl(
+                        self._opus_encoder.encoder_state,
+                        OPUS_SET_BITRATE_REQUEST,
+                        ctypes.c_int32(OPUS_BITRATE)
+                    )
+                except Exception:
+                    pass  # Default VOIP bitrate is fine
+                self._opus_decoder = opuslib.Decoder(SAMPLE_RATE, CHANNELS)
+                print(f"[Audio] Opus codec active: {OPUS_BITRATE//1000}kbps, "
+                      f"{OPUS_FRAME_MS}ms frames")
+            except Exception as e:
+                print(f"[Audio] Opus init failed, falling back to µ-law: {e}")
+                self._opus_encoder = None
+                self._opus_decoder = None
+        else:
+            print("[Audio] opuslib not available, using µ-law codec")
+
+    def get_supported_codecs(self):
+        """Return list of codecs this client supports, best first."""
+        codecs = []
+        if self._opus_encoder:
+            codecs.append(self.CODEC_OPUS)
+        codecs.append(self.CODEC_ULAW)  # Always available as fallback
+        return codecs
+
+    def negotiate_codec(self, peer_codecs):
+        """Choose the best codec both sides support. Call with peer's codec list.
+        Returns the chosen codec name."""
+        my_codecs = self.get_supported_codecs()
+        # Pick the first codec in our preference order that the peer also supports
+        for codec in my_codecs:
+            if codec in peer_codecs:
+                self._active_codec = codec
+                self._negotiated = True
+                self.log(f"[Audio] Codec negotiated: {codec}")
+                return codec
+        # Should never happen since both sides support ulaw
+        self._active_codec = self.CODEC_ULAW
+        self._negotiated = True
+        self.log("[Audio] Codec fallback: ulaw")
+        return self.CODEC_ULAW
+
+    def reset_codec(self):
+        """Reset to safe default (µ-law) for next connection.
+        Stays on µ-law until codec negotiation completes, ensuring
+        backward compatibility with old clients that don't negotiate."""
+        self._active_codec = self.CODEC_ULAW
+        self._negotiated = False
+
+    def _encode(self, raw_bytes):
+        """Encode raw int16 PCM to compressed bytes using the active codec."""
+        if self._active_codec == self.CODEC_OPUS and self._opus_encoder:
+            return self._opus_encoder.encode(raw_bytes, OPUS_FRAME_SIZE)
+        else:
+            return audioop.lin2ulaw(raw_bytes, 2)
+
+    def _decode(self, data):
+        """Decode compressed bytes back to int16 PCM using the active codec."""
+        if self._active_codec == self.CODEC_OPUS and self._opus_decoder:
+            return self._opus_decoder.decode(data, OPUS_FRAME_SIZE)
+        else:
+            return audioop.ulaw2lin(data, 2)
+
+    @property
+    def active_frame_size(self):
+        """Current frame size based on active codec."""
+        if self._active_codec == self.CODEC_OPUS and self._opus_encoder:
+            return OPUS_FRAME_SIZE
+        return CHUNK_SIZE
+
     def log(self, msg):
         if self.log_callback:
             self.log_callback(msg)
@@ -164,10 +426,10 @@ class AudioManager:
         with self._stream_lock:
             if self.streaming:
                 return
-            # Wait for any previous stream thread to fully exit before starting
             if self.stream_thread and self.stream_thread.is_alive():
                 self.stream_thread.join(timeout=2.0)
             self.streaming = True
+            self._aec.reset()
             self.stream_thread = threading.Thread(target=self._stream_mic, daemon=True)
             self.stream_thread.start()
 
@@ -176,106 +438,97 @@ class AudioManager:
         if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=1.0)
 
-    def _is_ducking(self):
-        """Return True if we should attenuate the mic (speaker is active)."""
-        return (time.time() - self._last_incoming_time) < DUCK_HOLDOFF
-
     def _stream_mic(self):
+        frame_size = self.active_frame_size
+
         def callback(indata, frames, time_info, status):
             if status:
                 self.log(str(status))
-            if self.streaming:
-                # Calculate RMS for level meter and VOX
-                rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
+            if not self.streaming:
+                return
 
-                # Report mic level (RMS normalised to 0–1)
-                if self.mic_level_callback:
-                    level = min(1.0, rms / 32768.0 * 10)  # ×10 for visible range
-                    self.mic_level_callback(level)
+            # Calculate RMS for level meter and VOX
+            rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
 
-                # VOX gate: adaptive noise gate with spectral voice detection
-                if self._vox_enabled:
-                    now = time.time()
-                    audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
+            # Report mic level
+            if self.mic_level_callback:
+                level = min(1.0, rms / 32768.0 * 10)
+                self.mic_level_callback(level)
 
-                    # ── Adaptive noise floor ──
-                    if rms < self._vox_noise_floor:
-                        # Audio is quieter than floor — decay slowly
-                        self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_DECAY_RATE
-                    elif not self._vox_open:
-                        # Gate closed and audio above floor — adapt upward faster
-                        self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_ADAPT_RATE
-                    self._vox_noise_floor = max(self._vox_noise_floor, VOX_NOISE_FLOOR_MIN)
+            # VOX gate
+            if self._vox_enabled:
+                now = time.time()
+                audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
 
-                    # ── Thresholds with hysteresis ──
-                    open_thresh = self._vox_noise_floor * VOX_OPEN_RATIO
-                    close_thresh = self._vox_noise_floor * VOX_CLOSE_RATIO
+                # Adaptive noise floor
+                if rms < self._vox_noise_floor:
+                    self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_DECAY_RATE
+                elif not self._vox_open:
+                    self._vox_noise_floor += (rms - self._vox_noise_floor) * VOX_NOISE_ADAPT_RATE
+                self._vox_noise_floor = max(self._vox_noise_floor, VOX_NOISE_FLOOR_MIN)
 
-                    # ── Spectral voice check ──
-                    is_voice = True
-                    if rms > open_thresh:
-                        try:
-                            fft = np.abs(np.fft.rfft(audio_f32))
-                            freqs = np.fft.rfftfreq(len(audio_f32), 1.0 / SAMPLE_RATE)
-                            total_energy = np.sum(fft ** 2)
-                            if total_energy > 0:
-                                voice_mask = (freqs >= VOX_VOICE_BAND[0]) & (freqs <= VOX_VOICE_BAND[1])
-                                voice_energy = np.sum(fft[voice_mask] ** 2)
-                                is_voice = (voice_energy / total_energy) >= VOX_VOICE_RATIO
-                        except Exception:
-                            pass  # If FFT fails, trust RMS alone
+                open_thresh = self._vox_noise_floor * VOX_OPEN_RATIO
+                close_thresh = self._vox_noise_floor * VOX_CLOSE_RATIO
 
-                    # ── Gate logic ──
-                    if rms >= open_thresh and is_voice:
-                        self._vox_attack_count += 1
-                        if self._vox_attack_count >= VOX_ATTACK_FRAMES:
-                            self._vox_open = True
-                            self._vox_last_voice = now
-                    else:
-                        self._vox_attack_count = 0
-                        if self._vox_open and (now - self._vox_last_voice) > VOX_HOLDOFF:
-                            self._vox_open = False
+                # Spectral voice check
+                is_voice = True
+                if rms > open_thresh:
+                    try:
+                        fft = np.abs(np.fft.rfft(audio_f32))
+                        freqs = np.fft.rfftfreq(len(audio_f32), 1.0 / SAMPLE_RATE)
+                        total_energy = np.sum(fft ** 2)
+                        if total_energy > 0:
+                            voice_mask = (freqs >= VOX_VOICE_BAND[0]) & (freqs <= VOX_VOICE_BAND[1])
+                            voice_energy = np.sum(fft[voice_mask] ** 2)
+                            is_voice = (voice_energy / total_energy) >= VOX_VOICE_RATIO
+                    except Exception:
+                        pass
 
-                    # ── Smooth fade ──
-                    frame_len = len(audio_f32)
-                    if self._vox_open and self._vox_fade_state < 1.0:
-                        # Fading in
-                        fade_samples = int(SAMPLE_RATE * VOX_FADE_IN_MS / 1000)
-                        self._vox_fade_state = min(1.0, self._vox_fade_state + frame_len / max(fade_samples, 1))
-                    elif not self._vox_open and self._vox_fade_state > 0.0:
-                        # Fading out
-                        fade_samples = int(SAMPLE_RATE * VOX_FADE_OUT_MS / 1000)
-                        self._vox_fade_state = max(0.0, self._vox_fade_state - frame_len / max(fade_samples, 1))
-
-                    if self._vox_fade_state <= 0.0:
-                        # Gate fully closed — send comfort noise
-                        comfort = np.random.normal(0, VOX_COMFORT_LEVEL * 32768, indata.shape).astype(np.float32)
-                        raw = comfort.astype(DTYPE).tobytes()
-                        compressed = audioop.lin2ulaw(raw, 2)
-                        self.network_manager.send_audio(compressed)
-                        return
-                    elif self._vox_fade_state < 1.0:
-                        # Mid-fade — apply smooth gain
-                        gain = self._vox_fade_state
-                        indata = (indata.astype(np.float32) * gain).astype(DTYPE)
-
-                    self._vox_prev_open = self._vox_open
-
-                # Apply ducking (lighter now: 70% reduction instead of 95%)
-                if self._is_ducking():
-                    ducked = (indata * DUCK_ATTENUATION).astype(DTYPE)
-                    raw = ducked.tobytes()
+                # Gate logic
+                if rms >= open_thresh and is_voice:
+                    self._vox_attack_count += 1
+                    if self._vox_attack_count >= VOX_ATTACK_FRAMES:
+                        self._vox_open = True
+                        self._vox_last_voice = now
                 else:
-                    raw = indata.tobytes()
+                    self._vox_attack_count = 0
+                    if self._vox_open and (now - self._vox_last_voice) > VOX_HOLDOFF:
+                        self._vox_open = False
 
-                # Compress with µ-law: 16-bit → 8-bit (halves bandwidth)
-                compressed = audioop.lin2ulaw(raw, 2)
-                self.network_manager.send_audio(compressed)
+                # Smooth fade
+                frame_len = len(audio_f32)
+                if self._vox_open and self._vox_fade_state < 1.0:
+                    fade_samples = int(SAMPLE_RATE * VOX_FADE_IN_MS / 1000)
+                    self._vox_fade_state = min(1.0, self._vox_fade_state + frame_len / max(fade_samples, 1))
+                elif not self._vox_open and self._vox_fade_state > 0.0:
+                    fade_samples = int(SAMPLE_RATE * VOX_FADE_OUT_MS / 1000)
+                    self._vox_fade_state = max(0.0, self._vox_fade_state - frame_len / max(fade_samples, 1))
+
+                if self._vox_fade_state <= 0.0:
+                    # Gate closed — send comfort noise
+                    comfort = np.random.normal(0, VOX_COMFORT_LEVEL * 32768, indata.shape).astype(np.float32)
+                    raw = comfort.astype(DTYPE).tobytes()
+                    compressed = self._encode(raw)
+                    self.network_manager.send_audio(compressed)
+                    return
+                elif self._vox_fade_state < 1.0:
+                    gain = self._vox_fade_state
+                    indata = (indata.astype(np.float32) * gain).astype(DTYPE)
+
+                self._vox_prev_open = self._vox_open
+
+            # AEC: remove echo from mic signal using speaker reference
+            cleaned = self._aec.cancel(indata)
+            raw = cleaned.tobytes()
+
+            # Encode and send
+            compressed = self._encode(raw)
+            self.network_manager.send_audio(compressed)
 
         try:
             with sd.InputStream(device=self.input_device, samplerate=SAMPLE_RATE,
                                 channels=CHANNELS, dtype=DTYPE, callback=callback,
-                                blocksize=CHUNK_SIZE, latency='low'):
+                                blocksize=frame_size, latency='low'):
                 while self.streaming:
                     sd.sleep(50)
         except Exception as e:
@@ -290,7 +543,6 @@ class AudioManager:
             self._vox_fade_state = 0.0
             self._vox_prev_open = False
         else:
-            # Reset noise floor on enable so it adapts to current room
             self._vox_noise_floor = VOX_NOISE_FLOOR_INIT
             self._vox_fade_state = 0.0
             self._vox_prev_open = False
@@ -312,7 +564,6 @@ class AudioManager:
             from user_settings import _config_dir
             filename = os.path.join(_config_dir(), "outgoing_message.wav")
 
-        # Save to file
         data = np.concatenate(self.message_buffer, axis=0)
         sf.write(filename, data, SAMPLE_RATE)
         return filename
@@ -333,20 +584,19 @@ class AudioManager:
     def start_listening(self):
         """Start output stream for incoming audio"""
         self.listening = True
+        self._jitter_buf.reset()
+        self._aec.reset()
         self.play_thread = threading.Thread(target=self._play_stream, daemon=True)
         self.play_thread.start()
 
     def play_audio_chunk(self, data):
-        """Queue compressed audio chunk for playback"""
+        """Decode compressed audio and push into jitter buffer for playback."""
         try:
-            # Mark that we're playing incoming audio (for ducking)
-            self._last_incoming_time = time.time()
-
-            # Decompress µ-law: 8-bit → 16-bit
-            raw = audioop.ulaw2lin(data, 2)
+            # Decode (Opus or µ-law)
+            raw = self._decode(data)
             audio_data = np.frombuffer(raw, dtype=DTYPE)
             if len(audio_data) % CHANNELS != 0:
-                 return
+                return
 
             audio_data = audio_data.reshape(-1, CHANNELS)
 
@@ -356,52 +606,44 @@ class AudioManager:
                 level = min(1.0, rms / 32768.0 * 10)
                 self.speaker_level_callback(level)
 
-            # Drop oldest chunks if queue is full (prevents latency snowball)
-            if self.audio_queue.full():
-                try:
-                    self.audio_queue.get_nowait()
-                except queue.Empty:
-                    pass
-            self.audio_queue.put_nowait(audio_data)
-        except queue.Full:
-            pass  # Drop frame rather than block
+            # Push into jitter buffer
+            self._jitter_buf.push(audio_data)
+
         except Exception as e:
             print(f"Audio Decode Error: {e}")
 
     def _play_stream(self):
+        frame_size = self.active_frame_size
+
         def callback(outdata, frames, time, status):
             if status:
                 print(status)
             try:
-                data = self.audio_queue.get_nowait()
-                
-                if len(data) > len(outdata):
-                    outdata[:] = data[:len(outdata)]
-                elif len(data) < len(outdata):
-                    outdata[:len(data)] = data
-                    outdata[len(data):] = 0
-                else:
-                    outdata[:] = data
-            except queue.Empty:
-                outdata.fill(0)
+                data = self._jitter_buf.pull(outdata.shape)
+                outdata[:] = data[:len(outdata)] if len(data) >= len(outdata) else np.pad(
+                    data, ((0, len(outdata) - len(data)), (0, 0)), mode='constant'
+                )
+
+                # Feed played audio to AEC as reference signal
+                self._aec.feed_reference(outdata)
             except Exception as e:
                 self.log(f"Play Callback Error: {e}")
                 outdata.fill(0)
 
         try:
-             with sd.OutputStream(device=self.output_device, samplerate=SAMPLE_RATE,
-                                  channels=CHANNELS, dtype=DTYPE, callback=callback,
-                                  blocksize=CHUNK_SIZE, latency='low'):
+            with sd.OutputStream(device=self.output_device, samplerate=SAMPLE_RATE,
+                                 channels=CHANNELS, dtype=DTYPE, callback=callback,
+                                 blocksize=frame_size, latency='low'):
                 while self.listening:
                     sd.sleep(50)
         except Exception as e:
             self.log(f"Audio Stream Error: {e}")
-            
+
     def stop_listening(self):
         self.listening = False
         if self.play_thread and self.play_thread.is_alive():
             self.play_thread.join(timeout=1.0)
-            
+
     def restart_listening(self):
         self.stop_listening()
         self.start_listening()
@@ -422,10 +664,8 @@ class AudioManager:
                 duration = 0.15
                 t1 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
                 t2 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-                # Two-note chime: E5 then G5
                 tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
                 tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
-                # Small gap between notes
                 gap = np.zeros(int(SAMPLE_RATE * 0.05))
                 chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
                 sd.play(chime, SAMPLE_RATE, device=self.output_device)
