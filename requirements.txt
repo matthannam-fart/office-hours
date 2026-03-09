@@ -9,3 +9,4 @@ Pillow
 cryptography
 pynput
 streamdeck
+websockets

@@ -23,3 +23,6 @@ build/
 # Downloaded native libraries (except bundled opus.dll which ships with the app)
 libopus*.dll
 libs/*.dll
+
+# Stream Deck plugin build artifacts
+streamdeck-plugin/**/node_modules/

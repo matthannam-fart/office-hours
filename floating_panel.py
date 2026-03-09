@@ -1951,22 +1951,20 @@ class FloatingPanel(QWidget):
         self._sidebar_team_label.setText(team_name.upper() if team_name else "")
 
     def set_display_name(self, name):
-        """Set the display name shown in the pinned compact bar and sidebar initials."""
+        """Set the display name shown in the pinned compact bar."""
         self._display_name = name
         self._update_pinned_style()
-        # Update sidebar initials
-        if name:
-            parts = name.strip().split()
-            if len(parts) >= 2:
-                initials = parts[0][0].upper() + parts[-1][0].upper()
-            elif parts:
-                initials = parts[0][:2].upper()
-            else:
-                initials = ""
-            self._sidebar_user_initials.setText(initials)
-            self._sidebar_user_initials.setToolTip(name)
-        else:
-            self._sidebar_user_initials.setText("")
+
+    def _peer_initials(self, name):
+        """Return 1–2 character initials for a name."""
+        if not name:
+            return ""
+        parts = name.strip().split()
+        if len(parts) >= 2:
+            return parts[0][0].upper() + parts[-1][0].upper()
+        elif parts:
+            return parts[0][0].upper()
+        return ""
 
     def set_connection(self, connected, peer_name=""):
         """Switch between connected and disconnected states.
@@ -1976,8 +1974,13 @@ class FloatingPanel(QWidget):
         self._disconn_bar.setVisible(False)
         if connected and peer_name:
             self.conn_label.setText(f"Connected to {peer_name}")
+            self._sidebar_user_initials.setText(self._peer_initials(peer_name))
+            self._sidebar_user_initials.setToolTip(peer_name)
         elif connected:
             self.conn_label.setText("Connected")
+        else:
+            self._sidebar_user_initials.setText("")
+            self._sidebar_user_initials.setToolTip("")
 
     def set_users(self, users, selected_user_id=None):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]

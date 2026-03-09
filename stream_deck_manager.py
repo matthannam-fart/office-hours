@@ -98,10 +98,11 @@ class StreamDeckHandler:
             self.deck.open()
         except Exception as e:
             if self._elgato_running:
-                raise RuntimeError(
-                    "Cannot open Stream Deck — the Elgato app is running.\n"
-                    "Please quit the Elgato Stream Deck app and restart Office Hours."
-                ) from e
+                # Elgato app is running — this is fine, the WS plugin bridge
+                # handles Stream Deck communication instead of direct USB.
+                print("Stream Deck: Elgato app is running — using plugin bridge instead.")
+                self.deck = None
+                return
             if sys.platform == 'win32':
                 print(f"Cannot open Stream Deck: {e}")
                 print("Try: quit the Elgato app, or install LibUSB driver via Zadig.")

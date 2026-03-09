@@ -1,0 +1,79 @@
+{
+    "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+    "UUID": "com.officehours.intercom",
+    "Name": "Office Hours",
+    "Version": "1.0.0.0",
+    "Author": "Office Hours",
+    "Description": "Control your Office Hours intercom — push-to-talk, mode switching, team/user selection — right from your Stream Deck.",
+    "Icon": "imgs/plugin-icon",
+    "CategoryIcon": "imgs/category-icon",
+    "CodePath": "bin/plugin.js",
+    "SDKVersion": 2,
+    "Software": {
+        "MinimumVersion": "6.6"
+    },
+    "Nodejs": {
+        "Version": "20",
+        "Debug": "enabled"
+    },
+    "OS": [
+        { "Platform": "mac", "MinimumVersion": "13" },
+        { "Platform": "windows", "MinimumVersion": "10" }
+    ],
+    "Actions": [
+        {
+            "UUID": "com.officehours.intercom.talk",
+            "Name": "Push to Talk",
+            "Icon": "imgs/actions/talk",
+            "Tooltip": "Hold to talk on Office Hours",
+            "States": [
+                { "Image": "imgs/actions/talk", "TitleAlignment": "bottom" }
+            ]
+        },
+        {
+            "UUID": "com.officehours.intercom.mode",
+            "Name": "Status Mode",
+            "Icon": "imgs/actions/mode",
+            "Tooltip": "Cycle availability: Available → Busy → DND",
+            "States": [
+                { "Image": "imgs/actions/mode", "TitleAlignment": "bottom" }
+            ]
+        },
+        {
+            "UUID": "com.officehours.intercom.team",
+            "Name": "Switch Team",
+            "Icon": "imgs/actions/team",
+            "Tooltip": "Cycle through your teams",
+            "States": [
+                { "Image": "imgs/actions/team", "TitleAlignment": "bottom" }
+            ]
+        },
+        {
+            "UUID": "com.officehours.intercom.user",
+            "Name": "Select User",
+            "Icon": "imgs/actions/user",
+            "Tooltip": "Cycle through online users",
+            "States": [
+                { "Image": "imgs/actions/user", "TitleAlignment": "bottom" }
+            ]
+        },
+        {
+            "UUID": "com.officehours.intercom.logo",
+            "Name": "OH Logo / Directory",
+            "Icon": "imgs/actions/logo",
+            "Tooltip": "Shows OH logo, preview names while browsing, and message alerts",
+            "States": [
+                { "Image": "imgs/actions/logo", "TitleAlignment": "bottom" }
+            ]
+        },
+        {
+            "UUID": "com.officehours.intercom.panel",
+            "Name": "Show Panel",
+            "Icon": "imgs/actions/panel",
+            "Tooltip": "Show the Office Hours panel window",
+            "States": [
+                { "Image": "imgs/actions/panel", "TitleAlignment": "bottom" }
+            ]
+        }
+    ]
+}
