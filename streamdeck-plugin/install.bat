@@ -8,11 +8,21 @@ cd /d "%SCRIPT_DIR%"
 
 echo Installing Office Hours Stream Deck plugin...
 
-REM Install Node dependencies
-echo   Installing dependencies...
-cd "%PLUGIN_DIR%\bin"
-call npm install --production
-cd /d "%SCRIPT_DIR%"
+REM Install Node dependencies (only if npm available and node_modules missing)
+if not exist "%PLUGIN_DIR%\bin\node_modules" (
+    where npm >nul 2>&1
+    if not errorlevel 1 (
+        echo   Installing dependencies...
+        cd "%PLUGIN_DIR%\bin"
+        call npm install --production
+        cd /d "%SCRIPT_DIR%"
+    ) else (
+        echo   WARNING: npm not found and node_modules not bundled.
+        echo   The plugin may not work. Install Node.js from https://nodejs.org
+    )
+) else (
+    echo   Dependencies already bundled.
+)
 
 REM Determine install location
 set "DEST=%APPDATA%\Elgato\StreamDeck\Plugins\%PLUGIN_DIR%"
