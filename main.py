@@ -104,6 +104,7 @@ class IntercomApp(QObject):
         self.active_team_id = get_active_team() or ""
         self.active_team_name = get_active_team_name() or ""
         self.my_teams = []  # [{id, name, role}, ...] loaded from Supabase
+        self._team_members = {}  # {user_id: display_name} — all members of active team
         self._pending_join_requests = {}  # request_id -> {team_id, requester_id, requester_name}
 
         # Managers
@@ -466,6 +467,7 @@ class IntercomApp(QObject):
             # Deselected — clear target
             self._intercom_target_id = None
             self._intercom_ptt_held = False
+            self.panel.set_connection(False)
             self.log("Target cleared")
             return
 
@@ -481,6 +483,7 @@ class IntercomApp(QObject):
 
         self._intercom_target_id = user_id
         self.log(f"Target: {target_name}")
+        self.panel.set_connection(True, target_name, target_mode)
         self._broadcast_deck_state()
 
         # Cancel any keep-alive timer from a previous session
@@ -635,7 +638,10 @@ class IntercomApp(QObject):
                 peer_name = self.online_users[self._calling_user_id].get("name", "")
             if not peer_name:
                 peer_name = getattr(self, '_calling_user_name', "Peer")
-            self.panel.set_connection(True, peer_name)
+            peer_mode = ""
+            if hasattr(self, '_calling_user_id') and self._calling_user_id in self.online_users:
+                peer_mode = self.online_users[self._calling_user_id].get("mode", "GREEN")
+            self.panel.set_connection(True, peer_name, peer_mode)
             self._start_open_line_if_ready()
             self._set_busy()
         else:
@@ -837,6 +843,8 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self.panel.set_user_state(self._intercom_target_id, "selected")
             self.panel.hide_outgoing()
+            peer_mode = self.online_users.get(self._intercom_target_id, {}).get("mode", "GREEN")
+            self.panel.set_connection(True, peer_name, peer_mode)
             self.log(f"Ready — {peer_name}")
             return
 
@@ -872,6 +880,11 @@ class IntercomApp(QObject):
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
         self._broadcast_deck_state()
+
+        # Update sidebar peer badge if connected peer's mode changed
+        if self._intercom_target_id and self._intercom_target_id in self.online_users:
+            peer_mode = self.online_users[self._intercom_target_id].get("mode", "GREEN")
+            self.panel.set_peer_mode(peer_mode)
 
         # Auto-select if there's exactly one online user and no current target
         # Only fire once per user to avoid retry loops on connection failures
@@ -1246,6 +1259,28 @@ class IntercomApp(QObject):
         """Direct mode set from sidebar dropdown."""
         self._set_mode(mode)
 
+    def _fetch_team_members(self):
+        """Fetch all members of the active team in background."""
+        if not self.active_team_id:
+            self._team_members = {}
+            return
+        tid = self.active_team_id
+        uid = self.user_id
+        def _fetch():
+            try:
+                members = supabase_client.get_team_members(tid)
+                result = {}
+                for m in members:
+                    mid = m.get("user_id", "")
+                    if mid and mid != uid:  # Exclude self
+                        result[mid] = m.get("display_name", "Unknown")
+                self._team_members = result
+                # Re-filter to merge offline members into the list
+                QTimer.singleShot(0, self._refilter_online_users)
+            except Exception as e:
+                self.log(f"Failed to fetch team members: {e}")
+        threading.Thread(target=_fetch, daemon=True).start()
+
     def _switch_team(self, team_id, team_name):
         """Switch active team (used by deck buttons)."""
         if team_id == self.active_team_id:
@@ -1256,6 +1291,7 @@ class IntercomApp(QObject):
         set_active_team_name(team_name)
         self.log(f"Switched to team: {team_name}")
         self.network.update_presence_team(team_id)
+        self._fetch_team_members()
         self._refilter_online_users()
         self.panel.set_teams(self.my_teams, self.active_team_id)
 
@@ -1479,6 +1515,7 @@ class IntercomApp(QObject):
             self.network.update_presence_team(self.active_team_id)
             self.log(f"Auto-selected team: {self.active_team_name}")
             self.panel.set_teams(self.my_teams, self.active_team_id)
+            self._fetch_team_members()
         else:
             # Multiple teams or none — show lobby so user can pick or create
             self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
@@ -1523,12 +1560,15 @@ class IntercomApp(QObject):
         self.log(f"Switched to team: {self.active_team_name}")
         # Notify relay so presence broadcast includes new team_id
         self.network.update_presence_team(team_id)
-        # Re-filter the user list with existing presence data
+        # Fetch members for the new team and re-filter
+        self._fetch_team_members()
         self._refilter_online_users()
 
     def _refilter_online_users(self):
-        """Re-filter and display online users based on current team."""
+        """Re-filter and display online users based on current team.
+        Appends offline team members (greyed out) after online users."""
         panel_users = []
+        online_ids = set()
         for uid, info in self.online_users.items():
             if self.active_team_id and info.get("team_id", "") != self.active_team_id:
                 continue
@@ -1538,6 +1578,18 @@ class IntercomApp(QObject):
                 'mode': info["mode"],
                 'has_message': False,
             })
+            online_ids.add(uid)
+
+        # Append offline team members
+        for uid, name in self._team_members.items():
+            if uid not in online_ids:
+                panel_users.append({
+                    'id': uid,
+                    'name': name,
+                    'mode': 'OFFLINE',
+                    'has_message': False,
+                })
+
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
         self._broadcast_deck_state()

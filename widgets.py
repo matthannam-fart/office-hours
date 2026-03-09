@@ -206,11 +206,14 @@ class SmallOrb(QWidget):
 
     def __init__(self, color='GREEN', parent=None):
         super().__init__(parent)
-        self._color = QColor(COLORS.get(color, COLORS['GREEN']))
+        self._color = QColor(COLORS.get(color, '#555555') if color != 'OFFLINE' else '#555555')
         self.setFixedSize(16, 16)
 
     def set_color(self, mode):
-        self._color = QColor(COLORS.get(mode, COLORS['GREEN']))
+        if mode == 'OFFLINE':
+            self._color = QColor('#555555')
+        else:
+            self._color = QColor(COLORS.get(mode, COLORS['GREEN']))
         self.update()
 
     def paintEvent(self, event):
@@ -258,10 +261,12 @@ class UserRow(QWidget):
         super().__init__(parent)
         self.user_id = user_id
         self._mode = mode
+        self._offline = (mode == 'OFFLINE')
         self._pressed = False
         self._state = self.STATE_IDLE
-        self.setFixedHeight(50)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(40 if self._offline else 50)
+        if not self._offline:
+            self.setCursor(Qt.PointingHandCursor)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 6, 12, 6)
@@ -273,7 +278,10 @@ class UserRow(QWidget):
 
         # Name
         self.name_label = QLabel(name)
-        self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
+        if self._offline:
+            self.name_label.setStyleSheet(f"font-size: 13px; font-weight: 400; color: {DARK['TEXT_FAINT']}; border: none;")
+        else:
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
         layout.addWidget(self.name_label, 1, Qt.AlignVCenter)
 
         # Message indicator (amber dot)
@@ -376,11 +384,15 @@ class UserRow(QWidget):
         self.msg_dot.setVisible(has_msg)
 
     def mousePressEvent(self, event):
+        if self._offline:
+            return
         if event.button() == Qt.LeftButton:
             self._pressed = True
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._offline:
+            return
         if event.button() == Qt.LeftButton and self._pressed:
             self._pressed = False
             # Single click selects this user as PTT target

@@ -353,48 +353,61 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
-        # ── Info section above orb ──
+        # ── Bottom section: peer → team → status → orb ──
 
-        # Active team name
+        # Connected peer initials (circular badge — color reflects peer mode)
+        # Clickable for quick user switching
+        self._sidebar_peer_initials = QPushButton("")
+        self._sidebar_peer_initials.setFixedSize(38, 38)
+        self._sidebar_peer_initials.setCursor(Qt.PointingHandCursor)
+        self._sidebar_peer_mode = ""  # Track peer mode for color updates
+        self._update_peer_badge_style()
+        self._sidebar_peer_initials.clicked.connect(self._show_quick_switch_menu)
+        peer_container = QHBoxLayout()
+        peer_container.setContentsMargins(0, 0, 0, 2)
+        peer_container.setAlignment(Qt.AlignCenter)
+        peer_container.addWidget(self._sidebar_peer_initials)
+        v.addLayout(peer_container)
+
+        # Active team name (teal)
         self._sidebar_team_label = QLabel("")
         self._sidebar_team_label.setAlignment(Qt.AlignCenter)
         self._sidebar_team_label.setWordWrap(True)
         self._sidebar_team_label.setStyleSheet(f"""
-            font-size: 9px; font-weight: 600; color: {DARK['TEXT_FAINT']};
+            font-size: 9px; font-weight: 700; color: {DARK['TEAL']};
             border: none; padding: 0 4px;
             letter-spacing: 0.5px;
         """)
         self._sidebar_team_label.setFixedWidth(SIDEBAR_W)
         v.addWidget(self._sidebar_team_label)
 
-        # User initials (circular badge — shows local user's initials)
-        self._sidebar_user_initials = QLabel("")
-        self._sidebar_user_initials.setAlignment(Qt.AlignCenter)
-        self._sidebar_user_initials.setFixedSize(36, 36)
-        self._sidebar_user_initials.setStyleSheet(f"""
-            background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-            border-radius: 18px; font-size: 14px; font-weight: 700;
-            color: {DARK['TEXT_DIM']};
+        # ── Combined status frame (button + orb in one bordered box) ──
+        self._sidebar_status_frame = QFrame()
+        self._sidebar_status_frame.setObjectName("statusFrame")
+        self._sidebar_status_frame.setFixedWidth(SIDEBAR_W - 6)
+        self._sidebar_status_frame.setStyleSheet(f"""
+            QFrame#statusFrame {{
+                background: rgba(0, 166, 81, 0.10);
+                border: 1px solid rgba(0, 166, 81, 0.30);
+                border-radius: 8px;
+            }}
         """)
-        user_container = QHBoxLayout()
-        user_container.setContentsMargins(0, 4, 0, 2)
-        user_container.setAlignment(Qt.AlignCenter)
-        user_container.addWidget(self._sidebar_user_initials)
-        v.addLayout(user_container)
+        sf_layout = QVBoxLayout(self._sidebar_status_frame)
+        sf_layout.setContentsMargins(4, 6, 4, 8)
+        sf_layout.setSpacing(4)
+        sf_layout.setAlignment(Qt.AlignCenter)
 
-        # Status dropdown button (shows current mode, click for menu)
+        # Status dropdown button
         self._sidebar_status_btn = QPushButton("Avail\n▾")
         self._sidebar_status_btn.setCursor(Qt.PointingHandCursor)
-        self._sidebar_status_btn.setFixedSize(SIDEBAR_W - 8, 36)
         self._sidebar_status_btn.setStyleSheet(f"""
             QPushButton {{
                 font-size: 9px; font-weight: 600;
-                color: #4cdf80; background: rgba(0, 166, 81, 0.10);
-                border: 1px solid rgba(0, 166, 81, 0.30);
-                border-radius: 6px; padding: 2px 4px;
+                color: #4cdf80; background: transparent;
+                border: none; padding: 0;
                 line-height: 1.1;
             }}
-            QPushButton:hover {{ background: rgba(0, 166, 81, 0.20); }}
+            QPushButton:hover {{ color: #6ef0a0; }}
             QPushButton::menu-indicator {{ width: 0; height: 0; }}
         """)
         # Build the mode selection menu
@@ -410,25 +423,32 @@ class FloatingPanel(QWidget):
             }}
             QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
         """)
+        from PySide6.QtWidgets import QWidgetAction
         for mode_key, label in [("GREEN", "Available"), ("YELLOW", "Busy"), ("RED", "DND")]:
-            action = self._status_menu.addAction(f"● {label}")
             color = COLORS[mode_key]
-            action.setData(mode_key)
-            action.triggered.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
+            item_label = QLabel(f'<span style="color:{color};">●</span> {label}')
+            item_label.setStyleSheet(f"""
+                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
+                border-radius: 4px;
+            """)
+            item_label.setCursor(Qt.PointingHandCursor)
+            wa = QWidgetAction(self._status_menu)
+            wa.setDefaultWidget(item_label)
+            wa.setData(mode_key)
+            wa.triggered.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
+            self._status_menu.addAction(wa)
         self._sidebar_status_btn.setMenu(self._status_menu)
-        status_container = QHBoxLayout()
-        status_container.setContentsMargins(4, 2, 4, 2)
-        status_container.setAlignment(Qt.AlignCenter)
-        status_container.addWidget(self._sidebar_status_btn)
-        v.addLayout(status_container)
+        sf_layout.addWidget(self._sidebar_status_btn, 0, Qt.AlignCenter)
 
-        # Mode orb at bottom of sidebar (large)
-        self._sidebar_orb = GlowingOrb(28)
-        orb_container = QHBoxLayout()
-        orb_container.setContentsMargins(0, 4, 0, 6)
-        orb_container.setAlignment(Qt.AlignCenter)
-        orb_container.addWidget(self._sidebar_orb)
-        v.addLayout(orb_container)
+        # Mode orb inside the frame
+        self._sidebar_orb = GlowingOrb(24)
+        sf_layout.addWidget(self._sidebar_orb, 0, Qt.AlignCenter)
+
+        status_frame_container = QHBoxLayout()
+        status_frame_container.setContentsMargins(3, 2, 3, 6)
+        status_frame_container.setAlignment(Qt.AlignCenter)
+        status_frame_container.addWidget(self._sidebar_status_frame)
+        v.addLayout(status_frame_container)
 
         return sidebar
 
@@ -801,13 +821,20 @@ class FloatingPanel(QWidget):
         self._sidebar_status_btn.setStyleSheet(f"""
             QPushButton {{
                 font-size: 9px; font-weight: 600;
-                color: {text_color}; background: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 6px; padding: 2px 4px;
+                color: {text_color}; background: transparent;
+                border: none; padding: 0;
                 line-height: 1.1;
             }}
-            QPushButton:hover {{ background: {bg_color.replace('0.10', '0.20')}; }}
+            QPushButton:hover {{ color: {text_color}; }}
             QPushButton::menu-indicator {{ width: 0; height: 0; }}
+        """)
+        # Update the surrounding frame to match mode color
+        self._sidebar_status_frame.setStyleSheet(f"""
+            QFrame#statusFrame {{
+                background: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 8px;
+            }}
         """)
 
     def _update_ptt_style(self):
@@ -1967,7 +1994,86 @@ class FloatingPanel(QWidget):
             return parts[0][0].upper()
         return ""
 
-    def set_connection(self, connected, peer_name=""):
+    def _update_peer_badge_style(self, mode=""):
+        """Style the peer initials badge based on peer's mode color."""
+        if not mode:
+            # Empty/hidden state
+            self._sidebar_peer_initials.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: none;
+                    border-radius: 19px; font-size: 15px; font-weight: 800;
+                    color: transparent;
+                }}
+            """)
+            return
+        bg = COLORS.get(mode, COLORS['GREEN'])
+        # Use white text on dark backgrounds (red, green), black on bright (yellow)
+        text_color = "#000" if mode == "YELLOW" else "#fff"
+        self._sidebar_peer_initials.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg}; border: none;
+                border-radius: 19px; font-size: 15px; font-weight: 800;
+                color: {text_color};
+            }}
+            QPushButton:hover {{ background: {bg}; border: 2px solid #fff; }}
+        """)
+
+    def set_peer_mode(self, mode):
+        """Update the connected peer's mode color on the sidebar badge."""
+        self._sidebar_peer_mode = mode
+        if self._sidebar_peer_initials.text():
+            self._update_peer_badge_style(mode)
+
+    def _show_quick_switch_menu(self):
+        """Show a popup menu of online team users for quick switching."""
+        if not self._sidebar_peer_initials.text():
+            return  # No peer connected
+        from PySide6.QtWidgets import QMenu, QWidgetAction
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        # Get online users from the user rows (skip offline and current target)
+        added = 0
+        for uid, row in self._user_rows.items():
+            if row._offline:
+                continue
+            color = COLORS.get(row._mode, COLORS['GREEN'])
+            label = QLabel(f'<span style="color:{color};">●</span> {row.name_label.text()}')
+            label.setStyleSheet(f"padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};")
+            label.setCursor(Qt.PointingHandCursor)
+            wa = QWidgetAction(menu)
+            wa.setDefaultWidget(label)
+            wa.triggered.connect(lambda checked=False, u=uid: self._quick_switch_to(u))
+            menu.addAction(wa)
+            added += 1
+        if added == 0:
+            menu.addAction("No other users online").setEnabled(False)
+        # Show below the badge
+        menu.exec(self._sidebar_peer_initials.mapToGlobal(
+            QPoint(self._sidebar_peer_initials.width() + 4, 0)
+        ))
+
+    def _quick_switch_to(self, user_id):
+        """Quick-switch PTT target from the sidebar popup."""
+        # Deselect current row, select new one
+        for uid, row in self._user_rows.items():
+            if row._state == UserRow.STATE_SELECTED:
+                row.set_state(UserRow.STATE_IDLE)
+        row = self._user_rows.get(user_id)
+        if row:
+            row.set_state(UserRow.STATE_SELECTED)
+        self.user_selected.emit(user_id)
+
+    def set_connection(self, connected, peer_name="", peer_mode=""):
         """Switch between connected and disconnected states.
         Banners are now hidden — connection state is conveyed by row highlights."""
         self._connected = connected
@@ -1975,13 +2081,17 @@ class FloatingPanel(QWidget):
         self._disconn_bar.setVisible(False)
         if connected and peer_name:
             self.conn_label.setText(f"Connected to {peer_name}")
-            self._sidebar_user_initials.setText(self._peer_initials(peer_name))
-            self._sidebar_user_initials.setToolTip(peer_name)
+            self._sidebar_peer_initials.setText(self._peer_initials(peer_name))
+            self._sidebar_peer_initials.setToolTip(peer_name)
+            self._sidebar_peer_mode = peer_mode or "GREEN"
+            self._update_peer_badge_style(self._sidebar_peer_mode)
         elif connected:
             self.conn_label.setText("Connected")
         else:
-            self._sidebar_user_initials.setText("")
-            self._sidebar_user_initials.setToolTip("")
+            self._sidebar_peer_initials.setText("")
+            self._sidebar_peer_initials.setToolTip("")
+            self._sidebar_peer_mode = ""
+            self._update_peer_badge_style("")
 
     def set_users(self, users, selected_user_id=None):
         """Replace the user list. users = [{id, name, mode, has_message}, ...]
@@ -2020,7 +2130,8 @@ class FloatingPanel(QWidget):
             self._user_rows[uid] = row
             self._user_layout.insertWidget(self._user_layout.count() - 1, row)
 
-        self.online_count.setText(str(len(users)))
+        online_count = sum(1 for u in users if u.get('mode') != 'OFFLINE')
+        self.online_count.setText(str(online_count))
 
         # Dynamic panel height based on visible content
         if not self._pinned and not self._is_onboarding:
