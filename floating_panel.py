@@ -382,15 +382,16 @@ class FloatingPanel(QWidget):
         v.addLayout(user_container)
 
         # Status dropdown button (shows current mode, click for menu)
-        self._sidebar_status_btn = QPushButton("Available ▾")
+        self._sidebar_status_btn = QPushButton("Avail\n▾")
         self._sidebar_status_btn.setCursor(Qt.PointingHandCursor)
-        self._sidebar_status_btn.setFixedSize(SIDEBAR_W - 8, 24)
+        self._sidebar_status_btn.setFixedSize(SIDEBAR_W - 8, 36)
         self._sidebar_status_btn.setStyleSheet(f"""
             QPushButton {{
                 font-size: 9px; font-weight: 600;
                 color: #4cdf80; background: rgba(0, 166, 81, 0.10);
                 border: 1px solid rgba(0, 166, 81, 0.30);
                 border-radius: 6px; padding: 2px 4px;
+                line-height: 1.1;
             }}
             QPushButton:hover {{ background: rgba(0, 166, 81, 0.20); }}
             QPushButton::menu-indicator {{ width: 0; height: 0; }}
@@ -792,15 +793,17 @@ class FloatingPanel(QWidget):
         text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
         bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
         border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
-        label = MODE_LABELS.get(mode, 'Available')
+        short_labels = {'GREEN': 'Avail', 'YELLOW': 'Busy', 'RED': 'DND', 'OPEN': 'Open'}
+        label = short_labels.get(mode, 'Avail')
 
-        self._sidebar_status_btn.setText(f"{label} ▾")
+        self._sidebar_status_btn.setText(f"{label}\n▾")
         self._sidebar_status_btn.setStyleSheet(f"""
             QPushButton {{
                 font-size: 9px; font-weight: 600;
                 color: {text_color}; background: {bg_color};
                 border: 1px solid {border_color};
                 border-radius: 6px; padding: 2px 4px;
+                line-height: 1.1;
             }}
             QPushButton:hover {{ background: {bg_color.replace('0.10', '0.20')}; }}
             QPushButton::menu-indicator {{ width: 0; height: 0; }}
