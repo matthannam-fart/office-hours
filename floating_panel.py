@@ -2697,6 +2697,7 @@ class FloatingPanel(QWidget):
     def _show_deck_setup_guide(self):
         """Show Stream Deck setup instructions."""
         import sys as _sys
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
         dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("Stream Deck Setup")
         dlg.setFixedWidth(340)
@@ -2833,6 +2834,7 @@ class FloatingPanel(QWidget):
 
     def _invite_friend_email(self):
         """Show a dialog to enter email address(es) and send invite via Resend."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit
         idx = self._team_combo.currentIndex()
         code = ""
         team_name = "Office Hours"
