@@ -374,12 +374,16 @@ class AudioManager:
             if codec in peer_codecs:
                 self._active_codec = codec
                 self._negotiated = True
-                self.log(f"[Audio] Codec negotiated: {codec}")
+                if codec == self.CODEC_ULAW:
+                    self.log(f"[Audio] ⚠ Using µ-law codec (low quality) — "
+                             f"peer only supports: {peer_codecs}")
+                else:
+                    self.log(f"[Audio] Codec: {codec}")
                 return codec
         # Should never happen since both sides support ulaw
         self._active_codec = self.CODEC_ULAW
         self._negotiated = True
-        self.log("[Audio] Codec fallback: ulaw")
+        self.log("[Audio] ⚠ Codec fallback: µ-law (peer codecs: {peer_codecs})")
         return self.CODEC_ULAW
 
     def reset_codec(self):

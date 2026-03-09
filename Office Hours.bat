@@ -214,6 +214,13 @@ if errorlevel 1 (
 
 REM ── Step 3.6: Ensure Opus codec library is available ──
 venv\Scripts\python fetch_opus.py
+venv\Scripts\python -c "import opuslib; print('  Opus codec: OK')" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   WARNING: Opus codec not available - audio will use lower quality.
+    echo   Try placing opus.dll in: %~dp0
+    echo.
+)
 
 REM ── Step 4: Launch ──
 echo.

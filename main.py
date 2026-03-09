@@ -1271,13 +1271,19 @@ class IntercomApp(QObject):
             peer_codecs = payload.get("codecs", ["ulaw"])
             chosen = self.audio.negotiate_codec(peer_codecs)
             self.network.send_control("CODEC_ACCEPT", {"codec": chosen})
-            self.log_signal.emit(f"Codec: {chosen}")
+            if chosen == "ulaw":
+                self.log_signal.emit(f"⚠ Audio: µ-law (peer missing Opus)")
+            else:
+                self.log_signal.emit(f"Audio: {chosen}")
 
         elif msg_type == "CODEC_ACCEPT":
             # Peer accepted our codec offer — activate the chosen codec
             chosen = payload.get("codec", "ulaw")
             self.audio.negotiate_codec([chosen])
-            self.log_signal.emit(f"Codec: {chosen}")
+            if chosen == "ulaw":
+                self.log_signal.emit(f"⚠ Audio: µ-law (peer missing Opus)")
+            else:
+                self.log_signal.emit(f"Audio: {chosen}")
 
         elif msg_type == "PEER_CONNECTED":
             ip = payload.get("ip", "unknown")
