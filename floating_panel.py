@@ -2669,6 +2669,8 @@ class FloatingPanel(QWidget):
         if _sys.platform == 'darwin':
             import subprocess
             subprocess.Popen(['open', mailto])
+        elif _sys.platform == 'win32':
+            os.startfile(mailto)
         else:
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
