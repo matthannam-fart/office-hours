@@ -2663,14 +2663,25 @@ class FloatingPanel(QWidget):
         if code:
             body += f"5. When it opens, enter your name and use this invite code: {code}\n"
         body += "\nThat's it — you'll see me online once you're in.\n"
-        mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
         import sys as _sys
         if _sys.platform == 'darwin':
+            # Build email via AppleScript → Mail.app (avoids browser hijacking mailto)
             import subprocess
-            subprocess.Popen(['open', mailto])
+            escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
+            escaped_body = body.replace('\\', '\\\\').replace('"', '\\"')
+            script = (
+                'tell application "Mail"\n'
+                '  set newMsg to make new outgoing message with properties '
+                f'{{subject:"{escaped_subject}", content:"{escaped_body}", visible:true}}\n'
+                '  activate\n'
+                'end tell'
+            )
+            subprocess.Popen(['osascript', '-e', script])
         elif _sys.platform == 'win32':
+            mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
             os.startfile(mailto)
         else:
+            mailto = f"mailto:?subject={_up.quote(subject)}&body={_up.quote(body)}"
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
             QDesktopServices.openUrl(QUrl(mailto))
