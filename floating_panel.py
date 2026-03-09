@@ -2544,6 +2544,31 @@ class FloatingPanel(QWidget):
 
         layout.addWidget(_divider())
 
+        # ── STREAM DECK ──
+        layout.addWidget(_section("STREAM DECK"))
+
+        deck_connected = getattr(self, '_deck_connected', False)
+        if deck_connected:
+            deck_name = getattr(self, '_deck_name', 'Stream Deck')
+            deck_btn = QPushButton(f"🎛  {deck_name} — Connected")
+            deck_btn.setStyleSheet(f"""
+                QPushButton {{
+                    padding: 5px 6px; font-size: 11px; font-weight: 500;
+                    color: {DARK['ACCENT']}; background: transparent;
+                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                }}
+            """)
+            deck_btn.setEnabled(False)
+        else:
+            deck_btn = QPushButton("🎛  Not Connected — Setup Guide")
+            deck_btn.setCursor(Qt.PointingHandCursor)
+            deck_btn.setStyleSheet(tile_style)
+            deck_btn.clicked.connect(self._show_deck_setup_guide)
+
+        layout.addWidget(_tile_row(deck_btn))
+
+        layout.addWidget(_divider())
+
         # ── Leave Team + Quit ──
         leave_team_btn = QPushButton("Leave Team")
         leave_team_btn.setCursor(Qt.PointingHandCursor)
@@ -2571,6 +2596,79 @@ class FloatingPanel(QWidget):
 
         layout.addStretch()
         layout.addWidget(_tile_row(leave_team_btn, quit_btn))
+
+    def set_deck_status(self, connected, deck_name="Stream Deck"):
+        """Update Stream Deck connection status (called from main.py)."""
+        self._deck_connected = connected
+        self._deck_name = deck_name
+
+    def _show_deck_setup_guide(self):
+        """Show Stream Deck setup instructions."""
+        import sys as _sys
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Stream Deck Setup")
+        dlg.setFixedWidth(340)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background: {DARK['BG']}; border: 1px solid {DARK['BORDER']}; border-radius: 10px; }}
+            QLabel {{ color: {DARK['TEXT']}; border: none; }}
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Stream Deck Setup")
+        title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
+        layout.addWidget(title)
+
+        if _sys.platform == 'darwin':
+            steps = (
+                "1. Quit the Elgato Stream Deck app\n"
+                "   (it locks the device)\n\n"
+                "2. Install hidapi if you haven't:\n"
+                "   brew install hidapi\n\n"
+                "3. Restart Office Hours\n\n"
+                "Your Stream Deck will be detected\nautomatically on next launch."
+            )
+        elif _sys.platform == 'win32':
+            steps = (
+                "1. Quit the Elgato Stream Deck app\n"
+                "   (it locks the device)\n\n"
+                "2. Install the LibUSB driver:\n"
+                "   a. Download Zadig: zadig.akeo.ie\n"
+                "   b. Options > List All Devices\n"
+                "   c. Select your Stream Deck\n"
+                "   d. Click Install WinUSB\n\n"
+                "3. Restart Office Hours\n\n"
+                "Your Stream Deck will be detected\nautomatically on next launch."
+            )
+        else:
+            steps = (
+                "1. Install libhidapi:\n"
+                "   sudo apt install libhidapi-libusb0\n\n"
+                "2. Add udev rules for Stream Deck\n\n"
+                "3. Restart Office Hours"
+            )
+
+        body = QLabel(steps)
+        body.setWordWrap(True)
+        body.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; line-height: 1.5; border: none;")
+        layout.addWidget(body)
+
+        ok_btn = QPushButton("Got it")
+        ok_btn.setCursor(Qt.PointingHandCursor)
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 6px 14px; font-size: 12px; font-weight: 600;
+                color: #fff; background: {DARK['ACCENT']};
+                border: none; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: {DARK['TEAL']}; }}
+        """)
+        ok_btn.clicked.connect(dlg.accept)
+        layout.addWidget(ok_btn, alignment=Qt.AlignRight)
+
+        dlg.exec()
 
     def _show_hamburger_menu(self):
         """Toggle the inline settings view."""

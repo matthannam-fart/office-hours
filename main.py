@@ -135,9 +135,15 @@ class IntercomApp(QObject):
             if StreamDeckHandler is None:
                 raise ImportError("streamdeck library not available")
             self.deck = StreamDeckHandler(self.handle_deck_input)
+            if self.deck.deck:
+                deck_name = self.deck.deck.deck_type()
+                self.panel.set_deck_status(True, deck_name)
+            else:
+                self.panel.set_deck_status(False)
         except Exception as e:
             self.log(f"Stream Deck: Not connected ({e})")
             self.deck = MockDeck()
+            self.panel.set_deck_status(False)
         self.deck.on_team_selected = lambda tid, tn: self._deck_team_signal.emit(tid, tn)
         self.deck.on_user_selected = lambda uid, un: self._deck_user_signal.emit(uid, un)
 
