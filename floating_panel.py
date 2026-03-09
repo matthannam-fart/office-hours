@@ -378,6 +378,11 @@ class FloatingPanel(QWidget):
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
         # Update section title
         self._section_title.setText(key.upper())
+        # Hide search bar and hotline toggle on pages where they don't apply
+        show_search = key in ("users", "teams")
+        self._search_input.setVisible(show_search)
+        self._hotline_lbl.setVisible(show_search)
+        self.open_toggle.setVisible(show_search)
         # Populate settings when navigating to it
         if key == "settings":
             self._populate_settings()
@@ -2416,9 +2421,9 @@ class FloatingPanel(QWidget):
 
         tile_style = f"""
             QPushButton {{
-                padding: 8px 6px; font-size: 11px; font-weight: 600;
-                color: {DARK['TEXT']}; background: {DARK['BG_RAISED']};
-                border: 1px solid {DARK['BORDER']}; border-radius: 8px;
+                padding: 5px 6px; font-size: 11px; font-weight: 500;
+                color: {DARK['TEXT']}; background: transparent;
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
         """
@@ -2456,21 +2461,14 @@ class FloatingPanel(QWidget):
 
         layout.addWidget(_tile_row(name_btn, theme_btn))
 
-        # ── Row 2: Incognito ── (still useful as full-width conceptually, but pair it)
+        # ── Row 2: Incognito ──
         incognito_text = "👁  Go Incognito" if not self._incognito else "👁‍🗨  Go Visible"
         incognito_btn = QPushButton(incognito_text)
         incognito_btn.setCursor(Qt.PointingHandCursor)
         incognito_btn.setStyleSheet(tile_style)
         incognito_btn.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
 
-        # Placeholder for second column — could add PTT key config later
-        hotkey_btn = QPushButton("⌨  PTT Key")
-        hotkey_btn.setCursor(Qt.PointingHandCursor)
-        hotkey_btn.setStyleSheet(tile_style)
-        hotkey_btn.setEnabled(False)
-        hotkey_btn.setToolTip("Coming soon")
-
-        layout.addWidget(_tile_row(incognito_btn, hotkey_btn))
+        layout.addWidget(_tile_row(incognito_btn))
 
         layout.addWidget(_divider())
 
@@ -2551,9 +2549,9 @@ class FloatingPanel(QWidget):
         leave_team_btn.setCursor(Qt.PointingHandCursor)
         leave_team_btn.setStyleSheet(f"""
             QPushButton {{
-                padding: 8px 6px; font-size: 11px; font-weight: 600;
-                color: {DARK['WARN']}; background: {DARK['BG_RAISED']};
-                border: 1px solid rgba(230,175,0,0.3); border-radius: 8px;
+                padding: 5px 6px; font-size: 11px; font-weight: 500;
+                color: {DARK['WARN']}; background: transparent;
+                border: 1px solid rgba(230,175,0,0.3); border-radius: 6px;
             }}
             QPushButton:hover {{ background: rgba(230,175,0,0.10); }}
         """)
@@ -2563,14 +2561,15 @@ class FloatingPanel(QWidget):
         quit_btn.setCursor(Qt.PointingHandCursor)
         quit_btn.setStyleSheet(f"""
             QPushButton {{
-                padding: 8px 6px; font-size: 11px; font-weight: 600;
-                color: {DARK['DANGER']}; background: {DARK['BG_RAISED']};
-                border: 1px solid rgba(229,57,53,0.3); border-radius: 8px;
+                padding: 5px 6px; font-size: 11px; font-weight: 500;
+                color: {DARK['DANGER']}; background: transparent;
+                border: 1px solid rgba(229,57,53,0.3); border-radius: 6px;
             }}
             QPushButton:hover {{ background: rgba(229,57,53,0.10); }}
         """)
         quit_btn.clicked.connect(self.quit_requested.emit)
 
+        layout.addStretch()
         layout.addWidget(_tile_row(leave_team_btn, quit_btn))
 
     def _show_hamburger_menu(self):
