@@ -706,3 +706,20 @@ class AudioManager:
             except Exception as e:
                 self.log(f"Notification sound error: {e}")
         threading.Thread(target=_play, daemon=True).start()
+
+    def play_talk_ended(self):
+        """Play a gentle descending tone when the other user stops talking."""
+        def _play():
+            try:
+                duration = 0.12
+                t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+                # Gentle descending sweep from E5 to C5
+                freq = np.linspace(659, 523, len(t))
+                # Soft sine with fade-out envelope
+                envelope = np.linspace(0.15, 0.0, len(t))
+                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+                sd.play(tone, SAMPLE_RATE, device=self.output_device)
+                sd.wait()
+            except Exception as e:
+                self.log(f"Talk-ended sound error: {e}")
+        threading.Thread(target=_play, daemon=True).start()

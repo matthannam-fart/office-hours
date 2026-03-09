@@ -1208,6 +1208,7 @@ class IntercomApp(QObject):
             self.peer_talking = False
             self.panel.set_ptt_locked(False)
             self.deck.set_talk_locked(False)
+            self.audio.play_talk_ended()
             # If we were in busy mode and buffered audio, save as voicemail
             if self.mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer') and self._vm_buffer:
                 self._save_voicemail_from_buffer()
