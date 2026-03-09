@@ -283,7 +283,7 @@ class IntercomApp(QObject):
         # On Windows the panel stays visible without pinning, and auto-pin
         # collapses it into the 58px compact bar which is confusing at startup.
         import sys as _sys
-        if _sys.platform != 'win32' and not self.panel.is_pinned() and not self.panel._is_onboarding:
+        if _sys.platform != 'win32' and not self.panel.is_pinned():
             self.panel._toggle_pin()
 
     # ── Tray Icon ─────────────────────────────────────────────────

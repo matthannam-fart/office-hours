@@ -845,32 +845,7 @@ class FloatingPanel(QWidget):
     # ── Onboarding (no teams yet) ────────────────────────────
     def _build_onboarding(self, parent_widget=None):
         """First-launch screen: set your name, browse available teams, or create/join with code."""
-        # Custom frame that paints an "OH" watermark behind the content
-        class WatermarkFrame(QFrame):
-            def paintEvent(self, event):
-                super().paintEvent(event)
-                p = QPainter(self)
-                p.setRenderHint(QPainter.Antialiasing)
-                bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oh_bg.png")
-                if os.path.exists(bg_path):
-                    pm = QPixmap(bg_path)
-                    scaled = pm.scaledToWidth(self.width(), Qt.SmoothTransformation)
-                    y = (self.height() - scaled.height()) // 2
-                    p.setOpacity(0.08)
-                    p.drawPixmap(0, y, scaled)
-                else:
-                    font = QFont(FONT_FAMILY, 160)
-                    font.setWeight(QFont.Black)
-                    p.setFont(font)
-                    color = QColor(DARK['TEAL'])
-                    color.setAlpha(18)
-                    p.setPen(color)
-                    r = self.rect()
-                    r.moveTop(-10)
-                    p.drawText(r, Qt.AlignCenter, "OH")
-                p.end()
-
-        frame = WatermarkFrame(parent_widget)
+        frame = QFrame(parent_widget)
         frame.setStyleSheet(f"background-color: {DARK['BG']}; border: none; border-radius: {PANEL_RADIUS}px;")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(24, 16, 24, 16)
