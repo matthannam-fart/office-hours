@@ -52,19 +52,19 @@ def check_opus():
 
 
 def fetch_windows():
-    """Download opus.dll for Windows."""
+    """Download opus.dll for Windows (usually bundled — this is a fallback)."""
     dll_path = os.path.join(APP_DIR, 'opus.dll')
     if os.path.exists(dll_path):
-        print(f"  opus.dll already exists at {dll_path}")
+        print(f"  ✓ opus.dll bundled with app")
         return True
 
     # Also check libopus-0.dll (common name from MSYS2/vcpkg)
     alt_path = os.path.join(APP_DIR, 'libopus-0.dll')
     if os.path.exists(alt_path):
-        print(f"  libopus-0.dll already exists at {alt_path}")
+        print(f"  ✓ libopus-0.dll found")
         return True
 
-    print("  Downloading Opus codec for Windows...")
+    print("  opus.dll missing — downloading Opus codec...")
 
     tmpdir = tempfile.mkdtemp(prefix='opus_')
     try:

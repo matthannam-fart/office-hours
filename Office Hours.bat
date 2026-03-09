@@ -105,7 +105,7 @@ if not exist "%TMPDIR%\office-hours-main\main.py" (
 )
 
 REM Copy updated files over (preserve runtime/generated files)
-robocopy "%TMPDIR%\office-hours-main" "%~dp0" /E /XD venv .git __pycache__ /XF .version .last_update_check .deps_ok crash.log *.dll >nul 2>&1
+robocopy "%TMPDIR%\office-hours-main" "%~dp0" /E /XD venv .git __pycache__ /XF .version .last_update_check .deps_ok crash.log >nul 2>&1
 
 REM Robocopy exit codes 0-7 are success, 8+ are errors
 if errorlevel 8 (

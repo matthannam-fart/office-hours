@@ -72,7 +72,6 @@ if [ "$SKIP_UPDATE" = false ]; then
                     rsync -a \
                         --exclude='venv' --exclude='.version' --exclude='.last_update_check' \
                         --exclude='.deps_ok' --exclude='crash.log' \
-                        --exclude='*.dll' --exclude='*.dylib' \
                         --exclude='__pycache__' --exclude='.git' \
                         "$EXTRACTED/" "$(pwd)/"
                     if [ $? -eq 0 ]; then

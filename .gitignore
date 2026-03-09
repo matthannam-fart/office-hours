@@ -20,7 +20,6 @@ build/
 .last_update_check
 .version
 
-# Downloaded native libraries (fetched at install time by fetch_opus.py)
-opus.dll
+# Downloaded native libraries (except bundled opus.dll which ships with the app)
 libopus*.dll
 libs/*.dll
