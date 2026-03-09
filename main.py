@@ -939,9 +939,11 @@ class IntercomApp(QObject):
     def handle_deck_input(self, key, state):
         # Stream Deck callbacks come from a background thread.
         # Dispatch everything to the main/Qt thread to avoid crashes.
-        QTimer.singleShot(0, lambda: self._handle_deck_input(key, state))
+        self.log(f"Deck key {key} {'down' if state else 'up'}")
+        QTimer.singleShot(0, lambda k=key, s=state: self._handle_deck_input(k, s))
 
     def _handle_deck_input(self, key, state):
+        self.log(f"Deck dispatch key={key} state={state}")
         # Key 0: PTT (hold to talk)
         if key == KEY_TALK:
             if state:
