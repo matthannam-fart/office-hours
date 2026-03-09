@@ -37,8 +37,9 @@ try:
         for _opus_path in _search_paths:
             try:
                 ctypes.CDLL(_opus_path)
-                # Monkey-patch so opuslib finds it
-                ctypes.util.find_library = lambda name, _p=_opus_path: _p if name == 'opus' else None
+                # Monkey-patch so opuslib finds it, but chain to original for other libs
+                _orig_find_library = ctypes.util.find_library
+                ctypes.util.find_library = lambda name, _p=_opus_path, _o=_orig_find_library: _p if name == 'opus' else _o(name)
                 break
             except OSError:
                 continue
@@ -167,9 +168,8 @@ class JitterBuffer:
         self._last_frame = None    # For packet loss concealment
 
     def push(self, frame):
-        """Add a decoded audio frame to the buffer."""
-        if len(self._buf) >= self.max_frames:
-            self._buf.popleft()    # Drop oldest to cap latency
+        """Add a decoded audio frame to the buffer.
+        deque(maxlen=) auto-drops oldest when full."""
         self._buf.append(frame)
         if not self._primed and len(self._buf) >= self.min_frames:
             self._primed = True
@@ -229,10 +229,10 @@ class EchoCanceller:
     def cancel(self, mic_samples):
         """Remove predicted echo from mic signal. Returns cleaned int16 array.
 
-        Uses block LMS: predicts echo for the whole frame via convolution,
-        computes mean error, and updates the filter once per block. This is
-        O(N·log N) via FFT instead of O(N·L) per sample, fast enough for
-        real-time at 24 kHz in pure Python/numpy.
+        Uses block NLMS: for each sample in the frame, computes the echo
+        estimate as w^T @ x (dot product of filter with reference window),
+        subtracts it, and updates the filter. Vectorised with numpy —
+        the inner loop builds a reference matrix and uses matrix ops.
         """
         if not self._enabled:
             return mic_samples
@@ -241,32 +241,45 @@ class EchoCanceller:
         N = len(mic)
         L = self.filter_len
 
-        # Build reference matrix: ref_buf already has history, newest at end.
-        # We need the reference aligned so that ref[i] corresponds to mic[i].
-        # Predict echo for the whole block at once via correlation.
-        ref = self._ref_buf[-L:][::-1]  # Filter-length reference, reversed
+        # Build a (N x L) matrix where row i is the reference window for sample i.
+        # ref_buf has history, newest at end. We need ref_buf aligned so that
+        # for mic sample i, the reference window is ref_buf[..] ending at
+        # the sample that was playing when mic sample i was captured.
+        # After feed_reference(), ref_buf[-1] is the most recent speaker sample.
+        # We need L + N - 1 reference samples total.
+        # Pad ref_buf if needed (shouldn't happen in steady state).
+        padded = self._ref_buf  # length L
+        if N > 1:
+            # Extend with zeros for the N-1 extra samples we need
+            padded = np.concatenate([np.zeros(N - 1), padded])
 
-        # Predict echo: convolve filter with reference (only need N output samples)
-        # Use FFT convolution for speed
-        fft_len = 1
-        while fft_len < L + N:
-            fft_len <<= 1
-        W_f = np.fft.rfft(self._w, fft_len)
-        R_f = np.fft.rfft(self._ref_buf[::-1][:L], fft_len)
-        echo_est = np.fft.irfft(W_f * R_f, fft_len)[:N]
+        # Build reference matrix: each row is a length-L window, most recent first
+        # Row 0 corresponds to mic[0], row N-1 to mic[N-1]
+        ref_matrix = np.empty((N, L), dtype=np.float64)
+        total = len(padded)
+        for i in range(N):
+            # Window ending at position (total - N + i), length L, newest first
+            end = total - N + i + 1
+            start = end - L
+            if start >= 0:
+                ref_matrix[i] = padded[start:end][::-1]
+            else:
+                # Shouldn't happen with proper padding, but be safe
+                chunk = padded[:end][::-1]
+                ref_matrix[i, :len(chunk)] = chunk
+                ref_matrix[i, len(chunk):] = 0.0
+
+        # Predict echo for all samples: y_hat = ref_matrix @ w
+        echo_est = ref_matrix @ self._w
 
         # Error signal
         error = mic - echo_est
 
-        # Block filter update: average gradient over the frame
-        # Approximate: use mean-squared reference power for normalisation
-        ref_power = np.dot(self._ref_buf, self._ref_buf) / L + AEC_DELTA
-        mean_error = np.mean(error)
-
-        # Gradient: correlate error with reference
-        E_f = np.fft.rfft(error, fft_len)
-        R_f2 = np.fft.rfft(self._ref_buf[::-1], fft_len)
-        grad = np.fft.irfft(E_f * np.conj(R_f2), fft_len)[:L]
+        # Block NLMS update: average gradient over the frame
+        # grad = ref_matrix^T @ error (cross-correlation of reference with error)
+        # norm = average reference power
+        ref_power = np.mean(np.sum(ref_matrix ** 2, axis=1)) + AEC_DELTA
+        grad = ref_matrix.T @ error / N
 
         self._w += (self.mu / ref_power) * grad
 

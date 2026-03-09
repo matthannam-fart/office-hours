@@ -139,9 +139,8 @@ def presence_sweep():
         if dead:
             broadcast_presence()
 
-def handle_presence_client(client_sock, client_addr):
+def handle_presence_client(client_sock, client_addr, user_id=None):
     """Handle a presence connection: register, then listen for updates"""
-    user_id = None
     print(f"[Presence] New connection from {client_addr}")
 
     try:
@@ -632,16 +631,10 @@ def handle_client(client_sock, client_addr, udp_sock):
 
         # Verify auth key on every new connection
         if not check_auth(msg):
-            client_key = msg.get("auth_key", "(none)")
-            if client_key == "(none)":
-                # Old client without auth support — allow for now, log warning
-                print(f"[Auth] WARNING: No auth key from {client_addr} (old client?)")
-            else:
-                # Wrong key — reject
-                print(f"[Auth] Rejected connection from {client_addr} (bad auth key)")
-                send_json(client_sock, {"status": "error", "message": "Invalid auth key"})
-                client_sock.close()
-                return
+            print(f"[Auth] Rejected connection from {client_addr} (bad or missing auth key)")
+            send_json(client_sock, {"status": "error", "message": "Invalid auth key. Please update the app."})
+            client_sock.close()
+            return
 
         action = msg.get("action")
 
@@ -666,8 +659,8 @@ def handle_client(client_sock, client_addr, udp_sock):
             send_json(client_sock, {"status": "registered", "user_id": user_id})
             broadcast_presence()
 
-            # Continue handling presence messages
-            handle_presence_client(client_sock, client_addr)
+            # Continue handling presence messages (pass user_id for cleanup)
+            handle_presence_client(client_sock, client_addr, user_id)
             # Note: handle_presence_client will handle cleanup
             return
 
