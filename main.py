@@ -249,7 +249,6 @@ class IntercomApp(QObject):
 
         # On Windows, auto-show panel at startup since the tray icon
         # often gets hidden in the overflow area and users can't find the app
-        import sys
         if sys.platform == 'win32':
             QTimer.singleShot(500, self._auto_show_panel_windows)
 
@@ -304,8 +303,7 @@ class IntercomApp(QObject):
         # Auto-pin so the panel doesn't vanish on focus loss (macOS only).
         # On Windows the panel stays visible without pinning, and auto-pin
         # collapses it into the 58px compact bar which is confusing at startup.
-        import sys as _sys
-        if _sys.platform != 'win32' and not self.panel.is_pinned():
+        if sys.platform != 'win32' and not self.panel.is_pinned():
             self.panel._toggle_pin()
 
     # ── Tray Icon ─────────────────────────────────────────────────
