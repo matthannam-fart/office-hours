@@ -3,6 +3,14 @@ chcp 65001 >nul 2>&1
 REM Office Hours - Windows
 REM Double-click this file to launch
 
+REM Ensure the window stays open no matter what happens
+REM (even on crashes, errors, or early exits)
+if "%OH_WRAPPED%"=="" (
+    set "OH_WRAPPED=1"
+    cmd /k "%~f0" %*
+    exit /b
+)
+
 cd /d "%~dp0"
 
 echo.
@@ -121,7 +129,7 @@ if errorlevel 1 (
     echo   Then run this script again.
     echo.
     pause
-    exit /b 1
+    goto :eof
 )
 
 echo   Using Python:
