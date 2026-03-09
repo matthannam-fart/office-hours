@@ -62,23 +62,33 @@ if [ "$SKIP_UPDATE" = false ]; then
         if [ -n "$LATEST_SHA" ] && [ "$LATEST_SHA" != "$LOCAL_SHA" ]; then
             echo "  New version available — downloading..."
             TMPDIR_UP=$(mktemp -d)
+            UPDATE_OK=false
             if curl -fsSL "${REPO_URL}/archive/refs/heads/main.zip" -o "$TMPDIR_UP/update.zip" 2>/dev/null; then
                 unzip -qo "$TMPDIR_UP/update.zip" -d "$TMPDIR_UP"
-                # Only copy source files, preserve all runtime/generated files
-                rsync -a \
-                    --exclude='venv' --exclude='.version' --exclude='.last_update_check' \
-                    --exclude='.deps_ok' --exclude='crash.log' \
-                    --exclude='*.dll' --exclude='*.dylib' \
-                    --exclude='__pycache__' --exclude='.git' \
-                    "$TMPDIR_UP/office-hours-main/" "$(pwd)/"
+                # Verify the extracted directory exists and has main.py
+                EXTRACTED="$TMPDIR_UP/office-hours-main"
+                if [ -f "$EXTRACTED/main.py" ]; then
+                    # Only copy source files, preserve all runtime/generated files
+                    rsync -a \
+                        --exclude='venv' --exclude='.version' --exclude='.last_update_check' \
+                        --exclude='.deps_ok' --exclude='crash.log' \
+                        --exclude='*.dll' --exclude='*.dylib' \
+                        --exclude='__pycache__' --exclude='.git' \
+                        "$EXTRACTED/" "$(pwd)/"
+                    if [ $? -eq 0 ]; then
+                        UPDATE_OK=true
+                    fi
+                fi
+            fi
+            rm -rf "$TMPDIR_UP"
+            if [ "$UPDATE_OK" = true ]; then
                 echo "$LATEST_SHA" > .version
                 echo "  ✓ Updated to latest version."
                 xattr -rd com.apple.quarantine "$(pwd)" 2>/dev/null || true
                 rm -f .deps_ok
             else
-                echo "  ✓ Already up to date (no internet?)."
+                echo "  ✓ Already up to date (download failed?)."
             fi
-            rm -rf "$TMPDIR_UP"
         else
             echo "  ✓ Already up to date."
         fi
