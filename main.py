@@ -975,8 +975,13 @@ class IntercomApp(QObject):
         """Bring the app to the foreground (needed on macOS for background actions)."""
         if sys.platform == 'darwin':
             try:
-                from AppKit import NSApplication
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+                ns_app = NSApplication.sharedApplication()
+                # Menu-bar-only apps default to Prohibited policy which blocks
+                # window activation.  Temporarily switch to Accessory so macOS
+                # allows us to show and raise windows.
+                ns_app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                ns_app.activateIgnoringOtherApps_(True)
             except ImportError:
                 pass
 
@@ -1007,8 +1012,8 @@ class IntercomApp(QObject):
             y = screen.top() + 4
             self.panel.move(x, y)
             self.panel.show()
-            self.panel.raise_()
-            self.panel.activateWindow()
+        self.panel.raise_()
+        self.panel.activateWindow()
 
     def on_talk_press(self):
         # Route through intercom system if a target is selected
