@@ -102,6 +102,7 @@ class FloatingPanel(QWidget):
     join_request_accepted = Signal(str)        # request_id — admin accepted a join request
     join_request_declined = Signal(str, str)   # request_id, requester_id — admin declined
     team_selected_from_lobby = Signal(str, str)  # team_id, team_name — user picked existing team
+    deck_guide_dismissed = Signal()               # user clicked "don't show again" on deck guide
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2698,12 +2699,12 @@ class FloatingPanel(QWidget):
         self._deck_name = deck_name
 
     def _show_deck_setup_guide(self):
-        """Show Stream Deck setup instructions."""
-        import sys as _sys
+        """Show Stream Deck setup instructions for the Elgato plugin."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+        from PySide6.QtGui import QPixmap, QImage
         dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("Stream Deck Setup")
-        dlg.setFixedWidth(340)
+        dlg.setFixedWidth(380)
         dlg.setStyleSheet(f"""
             QDialog {{ background: {DARK['BG']}; border: 1px solid {DARK['BORDER']}; border-radius: 10px; }}
             QLabel {{ color: {DARK['TEXT']}; border: none; }}
@@ -2711,45 +2712,48 @@ class FloatingPanel(QWidget):
 
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
-        title = QLabel("Stream Deck Setup")
-        title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
+        title = QLabel("🎛  Stream Deck Setup")
+        title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
         layout.addWidget(title)
 
-        if _sys.platform == 'darwin':
-            steps = (
-                "1. Quit the Elgato Stream Deck app\n"
-                "   (it locks the device)\n\n"
-                "2. Install hidapi if you haven't:\n"
-                "   brew install hidapi\n\n"
-                "3. Restart Office Hours\n\n"
-                "Your Stream Deck will be detected\nautomatically on next launch."
-            )
-        elif _sys.platform == 'win32':
-            steps = (
-                "1. Quit the Elgato Stream Deck app\n"
-                "   (it locks the device)\n\n"
-                "2. Install the LibUSB driver:\n"
-                "   a. Download Zadig: zadig.akeo.ie\n"
-                "   b. Options > List All Devices\n"
-                "   c. Select your Stream Deck\n"
-                "   d. Click Install WinUSB\n\n"
-                "3. Restart Office Hours\n\n"
-                "Your Stream Deck will be detected\nautomatically on next launch."
-            )
-        else:
-            steps = (
-                "1. Install libhidapi:\n"
-                "   sudo apt install libhidapi-libusb0\n\n"
-                "2. Add udev rules for Stream Deck\n\n"
-                "3. Restart Office Hours"
-            )
+        subtitle = QLabel(
+            "Office Hours works with the Elgato Stream Deck app.\n"
+            "The plugin is already installed — just add the actions:"
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; border: none;")
+        layout.addWidget(subtitle)
 
-        body = QLabel(steps)
-        body.setWordWrap(True)
-        body.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; line-height: 1.5; border: none;")
-        layout.addWidget(body)
+        steps = QLabel(
+            "1. Open the Stream Deck app\n\n"
+            "2. In the right sidebar, scroll to find\n"
+            "   \"Office Hours\" under Custom\n\n"
+            "3. Drag these actions onto your deck:\n\n"
+            "   • Push to Talk — hold to talk\n"
+            "   • Status Mode — cycle availability\n"
+            "   • OH Logo — shows status & previews\n"
+            "   • Switch Team — cycle teams\n"
+            "   • Select User — cycle users\n"
+            "   • Show Panel — open the OH window\n\n"
+            "Suggested layout (top row):\n"
+            "   PTT  |  Mode  |  Logo"
+        )
+        steps.setWordWrap(True)
+        steps.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT_DIM']}; line-height: 1.4; border: none;")
+        layout.addWidget(steps)
+
+        # "Don't show again" + OK buttons
+        from PySide6.QtWidgets import QHBoxLayout, QCheckBox
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        dismiss_cb = QCheckBox("Don't show again")
+        dismiss_cb.setStyleSheet(f"color: {DARK['TEXT_DIM']}; font-size: 11px; border: none;")
+        btn_row.addWidget(dismiss_cb)
+
+        btn_row.addStretch()
 
         ok_btn = QPushButton("Got it")
         ok_btn.setCursor(Qt.PointingHandCursor)
@@ -2762,9 +2766,14 @@ class FloatingPanel(QWidget):
             QPushButton:hover {{ background: {DARK['TEAL']}; }}
         """)
         ok_btn.clicked.connect(dlg.accept)
-        layout.addWidget(ok_btn, alignment=Qt.AlignRight)
+        btn_row.addWidget(ok_btn)
+
+        layout.addLayout(btn_row)
 
         dlg.exec()
+
+        if dismiss_cb.isChecked():
+            self.deck_guide_dismissed.emit()
 
     def _show_hamburger_menu(self):
         """Toggle the inline settings view."""

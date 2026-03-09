@@ -24,7 +24,8 @@ from discovery_manager import DiscoveryManager
 from user_settings import (get_display_name, set_display_name, get_user_id,
                           get_ptt_hotkey, _config_dir,
                           get_active_team, set_active_team,
-                          get_active_team_name, set_active_team_name)
+                          get_active_team_name, set_active_team_name,
+                          get_deck_guide_dismissed, set_deck_guide_dismissed)
 import supabase_client
 from hotkey_manager import HotkeyManager
 from floating_panel import FloatingPanel, create_oh_icon
@@ -270,6 +271,22 @@ class IntercomApp(QObject):
         if sys.platform == 'win32':
             QTimer.singleShot(500, self._auto_show_panel_windows)
 
+        # Auto-show Stream Deck setup guide if Elgato app is installed
+        if not get_deck_guide_dismissed():
+            QTimer.singleShot(3000, self._maybe_show_deck_guide)
+
+    def _maybe_show_deck_guide(self):
+        """Show the Stream Deck setup guide if the Elgato app is installed."""
+        sd_dir = ""
+        if sys.platform == 'darwin':
+            sd_dir = os.path.expanduser(
+                "~/Library/Application Support/com.elgato.StreamDeck/Plugins")
+        elif sys.platform == 'win32':
+            sd_dir = os.path.join(
+                os.environ.get('APPDATA', ''), 'Elgato', 'StreamDeck', 'Plugins')
+        if sd_dir and os.path.isdir(sd_dir):
+            self.panel._show_deck_setup_guide()
+
     # ── Panel Signal Wiring ───────────────────────────────────────
     def _connect_panel_signals(self):
         self.panel.mode_cycle_requested.connect(self.cycle_mode)
@@ -304,6 +321,7 @@ class IntercomApp(QObject):
         self.panel.join_request_accepted.connect(self._on_approve_join)
         self.panel.join_request_declined.connect(self._on_decline_join)
         self.panel.team_selected_from_lobby.connect(self._on_team_selected_from_lobby)
+        self.panel.deck_guide_dismissed.connect(lambda: set_deck_guide_dismissed(True))
 
     # ── Windows Auto-Show ───────────────────────────────────────
     def _auto_show_panel_windows(self):

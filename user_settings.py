@@ -114,6 +114,18 @@ def set_active_team_name(name):
     settings["active_team_name"] = name
     save_settings(settings)
 
+# ── Stream Deck Guide ────────────────────────────────────────
+
+def get_deck_guide_dismissed():
+    """Check if user dismissed the Stream Deck setup guide."""
+    return load_settings().get("deck_guide_dismissed", False)
+
+def set_deck_guide_dismissed(dismissed=True):
+    """Mark the Stream Deck setup guide as dismissed."""
+    settings = load_settings()
+    settings["deck_guide_dismissed"] = dismissed
+    save_settings(settings)
+
 # ── Trusted Peers (TOFU) ─────────────────────────────────────
 
 def get_trusted_peers():
