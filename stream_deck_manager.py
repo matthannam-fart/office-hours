@@ -498,5 +498,9 @@ class StreamDeckHandler:
         self._stop_msg_pulse()
         self._cancel_auto_select()
         if self.deck:
-            self.deck.reset()
-            self.deck.close()
+            try:
+                self.deck.set_brightness(0)
+                self.deck.reset()
+                self.deck.close()
+            except Exception as e:
+                print(f"Stream Deck close error: {e}")

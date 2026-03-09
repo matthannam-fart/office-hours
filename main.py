@@ -1840,12 +1840,10 @@ class IntercomApp(QObject):
         # Disconnect presence first so relay broadcasts our departure
         self.network.disconnect_presence()
         self.network.close()
-        # Close Stream Deck
+        # Close Stream Deck (blank keys and release device)
         if hasattr(self, 'deck'):
-            try:
-                self.deck.close()
-            except Exception:
-                pass
+            self.log("Closing Stream Deck...")
+            self.deck.close()
         self.tray.setVisible(False)
         QApplication.quit()
 
