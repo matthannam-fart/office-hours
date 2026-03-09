@@ -960,10 +960,8 @@ class IntercomApp(QObject):
             self._set_mode(new_mode)
             return
 
-        # Key 2: OH logo — toggle panel window
-        if key == KEY_LOGO:
-            self._toggle_panel_visibility()
-            return
+        # Key 2: OH logo — reserved for team/user preview display
+        # (handled by stream_deck_manager during TEAM/USER cycling)
 
         # Row 2: TEAM, USER, MORE (dynamic keys based on deck columns)
         if key == self.deck.key_team:
