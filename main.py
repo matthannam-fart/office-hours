@@ -314,7 +314,6 @@ class IntercomApp(QObject):
                 else:
                     # Windows: tray geometry often returns (0,0,0,0)
                     # Position at bottom-right of available screen
-                    import sys
                     screen = QApplication.primaryScreen().availableGeometry()
                     if sys.platform == 'win32':
                         x = screen.right() - self.panel.width() - 8
@@ -974,26 +973,28 @@ class IntercomApp(QObject):
         elif key == self.deck.key_window:
             self._show_panel_at_tray()
 
+    def _activate_app(self):
+        """Bring the app to the foreground (needed on macOS for background actions)."""
+        if sys.platform == 'darwin':
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except ImportError:
+                pass
+
     def _toggle_panel_visibility(self):
         """Toggle panel window visibility (must be called on the main thread)."""
         if self.panel.isVisible():
             self.panel.hide()
         else:
+            self._activate_app()
             self.panel.show()
             self.panel.raise_()
+            self.panel.activateWindow()
 
     def _show_panel_at_tray(self):
-        """Show the panel anchored below the menu bar icon.
-        Works even when the app is not in focus by activating the app first.
-        """
-        # Bring the app to the foreground (required on macOS when not focused)
-        import sys
-        if sys.platform == 'darwin':
-            try:
-                from AppKit import NSApplication, NSApplicationActivateIgnoringOtherApps
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-            except ImportError:
-                pass
+        """Show the panel anchored below the menu bar icon."""
+        self._activate_app()
         if self.panel.isVisible():
             self.panel.raise_()
             self.panel.activateWindow()
