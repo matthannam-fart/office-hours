@@ -702,6 +702,7 @@ class NetworkManager:
                     self._presence_auto_reconnect = True
                     self._log(f"Presence registered as {display_name}" + (" (TLS)" if RELAY_TLS else ""))
                     threading.Thread(target=self._listen_presence, daemon=True).start()
+                    threading.Thread(target=self._presence_heartbeat, daemon=True).start()
                     return True
 
             self._log("Presence registration failed")
@@ -914,6 +915,18 @@ class NetworkManager:
             backoff = min(backoff * 2, max_backoff)
         if not self.presence_connected:
             self._log("Presence reconnection gave up")
+
+    def _presence_heartbeat(self):
+        """Send periodic PING to relay so it can detect dead clients quickly."""
+        while self.running and self.presence_connected:
+            time.sleep(30)
+            if not self.presence_connected or not self.presence_socket:
+                break
+            try:
+                ping = json.dumps({"action": "PING"}).encode('utf-8')
+                self._send_frame_on(self.presence_socket, ping)
+            except Exception:
+                break  # Socket dead, _listen_presence will handle reconnect
 
     def disconnect_presence(self):
         """Disconnect from the presence server (intentional — no auto-reconnect)"""

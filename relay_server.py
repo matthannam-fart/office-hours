@@ -118,17 +118,22 @@ def broadcast_presence():
         broadcast_presence()
 
 def presence_sweep():
-    """Periodically check for and remove stale presence entries."""
+    """Periodically remove clients that haven't sent a PING recently."""
     while True:
         time.sleep(30)
+        now = time.time()
         with presence_lock:
             dead = []
             for uid, info in presence.items():
-                try:
-                    # Test if socket is still alive
-                    info["sock"].getpeername()
-                except Exception:
+                last_ping = info.get("last_ping", info.get("registered_at", now))
+                # No ping in 90 seconds = dead (clients ping every 30s, allow 3 missed)
+                if now - last_ping > 90:
                     dead.append(uid)
+                else:
+                    try:
+                        info["sock"].getpeername()
+                    except Exception:
+                        dead.append(uid)
             for uid in dead:
                 print(f"[Sweep] Removing dead client: {uid} ({presence[uid].get('name', '?')})")
                 try:
@@ -145,7 +150,7 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
 
     try:
         # Set socket timeout so dead connections are detected
-        client_sock.settimeout(300)  # 5 minute timeout
+        client_sock.settimeout(90)  # 90s timeout (clients ping every 30s)
         while True:
             frame = recv_frame(client_sock)
             if frame is None:
@@ -170,12 +175,21 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                         "mode": mode,
                         "team_id": team_id,
                         "sock": client_sock,
-                        "addr": client_addr
+                        "addr": client_addr,
+                        "registered_at": time.time(),
+                        "last_ping": time.time(),
                     }
 
                 print(f"[Presence] Registered: {name} ({user_id})")
                 send_json(client_sock, {"status": "registered", "user_id": user_id})
                 broadcast_presence()
+
+            elif action == "PING":
+                with presence_lock:
+                    if user_id and user_id in presence:
+                        presence[user_id]["last_ping"] = time.time()
+                # Send PONG back so client knows connection is alive
+                send_json(client_sock, {"type": "PONG"})
 
             elif action == "MODE_UPDATE":
                 mode = msg.get("mode", "GREEN")
