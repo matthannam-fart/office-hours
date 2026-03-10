@@ -1166,19 +1166,17 @@ class FloatingPanel(QWidget):
     # Mode color maps (shared by PTT bar and sidebar status)
     _MODE_TEXT_COLORS = {
         'GREEN': '#4cdf80', 'YELLOW': '#f0c040',
-        'RED': '#f06060', 'OPEN': '#4cd8d8'
+        'RED': '#f06060',
     }
     _MODE_BG_COLORS = {
         'GREEN': 'rgba(0, 166, 81, 0.10)',
         'YELLOW': 'rgba(230, 175, 0, 0.10)',
         'RED': 'rgba(229, 57, 53, 0.10)',
-        'OPEN': 'rgba(42, 191, 191, 0.10)',
     }
     _MODE_BORDER_COLORS = {
         'GREEN': 'rgba(0, 166, 81, 0.30)',
         'YELLOW': 'rgba(230, 175, 0, 0.30)',
         'RED': 'rgba(229, 57, 53, 0.30)',
-        'OPEN': 'rgba(42, 191, 191, 0.30)',
     }
 
     def _update_mode_btn(self):
@@ -1187,7 +1185,7 @@ class FloatingPanel(QWidget):
         text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
         bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
         border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
-        short_labels = {'GREEN': 'Avail', 'YELLOW': 'Busy', 'RED': 'DND', 'OPEN': 'Open'}
+        short_labels = {'GREEN': 'Avail', 'YELLOW': 'Busy', 'RED': 'DND'}
         label = short_labels.get(mode, 'Avail')
 
         self._sidebar_status_btn.setText(f"{label}\n▾")
@@ -1695,7 +1693,7 @@ class FloatingPanel(QWidget):
         v.setSpacing(6)
 
         top = QHBoxLayout()
-        orb = SmallOrb('OPEN')  # Teal orb
+        orb = SmallOrb('GREEN')  # Status orb for join requests
         top.addWidget(orb)
 
         info = QVBoxLayout()
@@ -3832,7 +3830,7 @@ if __name__ == '__main__':
     def on_hotline_toggle(is_on):
         panel.set_hotline(is_on)
         if is_on:
-            tray.setIcon(create_oh_icon(COLORS['OPEN']))
+            tray.setIcon(create_oh_icon(COLORS['GREEN']))
         else:
             tray.setIcon(create_oh_icon(COLORS[modes[mode_idx[0]]]))
 

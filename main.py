@@ -58,8 +58,7 @@ class IntercomApp(QObject):
     MODE_GREEN = "GREEN"
     MODE_YELLOW = "YELLOW"
     MODE_RED = "RED"
-    MODE_OPEN = "OPEN"
-    MODE_LABELS = {"GREEN": "Available", "YELLOW": "Busy", "RED": "DND", "OPEN": "Open"}
+    MODE_LABELS = {"GREEN": "Available", "YELLOW": "Busy", "RED": "DND"}
 
     def __init__(self):
         super().__init__()
@@ -339,10 +338,10 @@ class IntercomApp(QObject):
     def _on_hotline_toggle(self, is_on):
         if is_on:
             old_mode = self.mode
-            self.mode = self.MODE_OPEN
+            self.mode = self.MODE_GREEN
             self.panel.set_hotline(True)
-            self.panel.set_mode(self.MODE_OPEN)
-            self.tray.setIcon(create_oh_icon(COLORS['OPEN']))
+            self.panel.set_mode(self.MODE_GREEN)
+            self.tray.setIcon(create_oh_icon(COLORS['GREEN']))
             self.audio.set_hotline(True)  # Always-on with soft noise suppression
             if self.network.connected:
                 self.audio.start_streaming()
@@ -661,7 +660,7 @@ class IntercomApp(QObject):
     def _set_busy(self):
         if self._pre_call_mode is None:
             self._pre_call_mode = self.mode  # Save mode before call
-        self.network.update_presence_mode("BUSY", self.active_room_code or "")
+        self.network.update_presence_mode("YELLOW", self.active_room_code or "")
 
     def _clear_busy(self):
         self.active_room_code = None
@@ -674,7 +673,7 @@ class IntercomApp(QObject):
         self.network.update_presence_mode(self.mode)
 
     def _start_open_line_if_ready(self):
-        if self.mode == self.MODE_OPEN and self.network.connected:
+        if self.mode == self.MODE_GREEN and self.network.connected:
             self.audio.start_streaming()
             self.log("Hotline active — streaming...")
 
@@ -1156,7 +1155,7 @@ class IntercomApp(QObject):
         self.network.send_control("TALK_START", {})
         self.panel.set_ptt_active(True)
 
-        if self.remote_mode in (self.MODE_GREEN, self.MODE_OPEN, self.MODE_YELLOW):
+        if self.remote_mode in (self.MODE_GREEN, self.MODE_GREEN, self.MODE_YELLOW):
             self.log("Streaming Audio...")
             self.audio.start_streaming()
         elif self.remote_mode == self.MODE_RED:
@@ -1245,7 +1244,7 @@ class IntercomApp(QObject):
         if old_mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer'):
             self._vm_buffer = []
 
-        if old_mode == self.MODE_OPEN and self.mode != self.MODE_OPEN:
+        if old_mode == self.MODE_GREEN and self.mode != self.MODE_GREEN:
             self.audio.stop_streaming()
             self.panel.set_hotline(False)
 
@@ -1335,7 +1334,7 @@ class IntercomApp(QObject):
     # ── Network Callbacks ─────────────────────────────────────────
 
     def handle_audio_stream(self, data):
-        if self.mode in (self.MODE_GREEN, self.MODE_OPEN):
+        if self.mode in (self.MODE_GREEN, self.MODE_GREEN):
             self.audio.play_audio_chunk(data)
         elif self.mode == self.MODE_YELLOW and self.peer_talking:
             # Busy mode: buffer incoming audio as a voicemail

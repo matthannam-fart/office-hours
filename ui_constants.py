@@ -8,8 +8,6 @@ COLORS = {
     'GREEN':  '#00a651',
     'YELLOW': '#e6af00',
     'RED':    '#e22a1a',
-    'OPEN':   '#2ABFBF',
-    'BUSY':   '#ff9800',
     'INCOGNITO': '#555555',
 }
 
@@ -17,8 +15,6 @@ MODE_LABELS = {
     'GREEN':  'Available',
     'YELLOW': 'Busy',
     'RED':    'DND',
-    'OPEN':   'Open',
-    'BUSY':   'In Call',
 }
 
 RADIO_STATIONS = {
