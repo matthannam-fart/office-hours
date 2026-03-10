@@ -387,24 +387,14 @@ class IntercomApp(QObject):
         target_mode = target.get("mode", "GREEN")
         target_room = target.get("room", "")
 
-        # RED (DND): record voice message, no connection attempt
+        # RED (DND): completely unavailable, no contact allowed
         if target_mode == self.MODE_RED:
-            self._record_message_for(user_id, target_name)
-            return
-
-        # BUSY: try to join their existing room
-        if target_mode == "BUSY" and target_room:
-            self.log(f"Joining {target_name}'s call...")
-            self._calling_user_id = user_id
-            self.panel.show_outgoing(target_name)
-            threading.Thread(
-                target=self._join_relay_room, args=(target_room, "joiner"), daemon=True
-            ).start()
+            self.log(f"{target_name} is in Do Not Disturb")
             return
 
         # GREEN, YELLOW, OPEN: initiate connection
-        # Green targets will auto-accept on their end
-        # Yellow targets will see accept/decline banner
+        # Green targets auto-accept on their end
+        # Yellow (Busy) targets auto-accept silently; audio is buffered as voicemail
         self.log(f"Calling {target_name}...")
         self._calling_user_id = user_id
         self._calling_user_name = target_name
@@ -419,16 +409,6 @@ class IntercomApp(QObject):
         else:
             self.log("Connecting via relay...")
             self.network.connect_to_user(user_id)
-
-    def _record_message_for(self, user_id, target_name):
-        """Start recording a voice message for a DND user."""
-        self.log(f"Recording message for {target_name}...")
-        self.panel.set_ptt_active(True)
-        self.audio.start_recording_message()
-        # Message will be completed on PTT release or via a timer
-        # Store target so we know who to deliver to
-        self._message_target_id = user_id
-        self._message_target_name = target_name
 
     def _find_lan_ip(self, target_name):
         """Find a peer's LAN IP from Zeroconf-discovered peers by matching name."""
@@ -509,18 +489,27 @@ class IntercomApp(QObject):
             self._intercom_connected = True
 
     def _on_intercom_press(self, user_id):
-        """PTT pressed — start streaming to selected target."""
+        """PTT pressed — start streaming to selected target.
+        Yellow (Busy) targets auto-accept and buffer audio as voicemail on their end."""
         if not self._intercom_target_id:
             return
         self._intercom_ptt_held = True
         target = self.online_users.get(self._intercom_target_id, {})
         target_name = target.get("name", "Unknown")
+        target_mode = target.get("mode", "GREEN")
+
+        # DND: block entirely
+        if target_mode == self.MODE_RED:
+            self.log(f"{target_name} is in Do Not Disturb")
+            self._intercom_ptt_held = False
+            return
 
         if self.network.connected and self._connected_peer_id == self._intercom_target_id:
             self._intercom_connected = True
             self._start_intercom_stream(self._intercom_target_id, target_name)
         else:
             # Not yet connected — connect and stream once ready
+            # Busy targets auto-accept silently; their client buffers as voicemail
             self._on_user_selected(self._intercom_target_id)
 
     def _start_intercom_stream(self, user_id, target_name):
@@ -877,6 +866,17 @@ class IntercomApp(QObject):
                 'has_message': False  # TODO: track per-user messages
             })
 
+        # Append offline team members
+        online_ids = {u['id'] for u in panel_users}
+        for uid, name in self._team_members.items():
+            if uid not in online_ids:
+                panel_users.append({
+                    'id': uid,
+                    'name': name,
+                    'mode': 'OFFLINE',
+                    'has_message': False,
+                })
+
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
         self._broadcast_deck_state()
@@ -888,8 +888,9 @@ class IntercomApp(QObject):
 
         # Auto-select if there's exactly one online user and no current target
         # Only fire once per user to avoid retry loops on connection failures
-        if len(panel_users) == 1 and not self._intercom_target_id:
-            only_user = panel_users[0]
+        online_count = sum(1 for u in panel_users if u.get('mode') != 'OFFLINE')
+        if online_count == 1 and not self._intercom_target_id:
+            only_user = next(u for u in panel_users if u.get('mode') != 'OFFLINE')
             uid = only_user['id']
             if only_user.get('mode') != self.MODE_RED and uid != getattr(self, '_auto_select_attempted', ''):
                 self._auto_select_attempted = uid
@@ -906,6 +907,12 @@ class IntercomApp(QObject):
         # Green mode: auto-accept (intercom behavior)
         if self.mode == self.MODE_GREEN:
             self.log(f"Auto-accepting from {from_name} (green mode)")
+            self._on_accept_call()
+            return
+
+        # Yellow (Busy): auto-accept silently so caller can leave voicemail
+        if self.mode == self.MODE_YELLOW:
+            self.log(f"Auto-accepting voicemail from {from_name} (busy mode)")
             self._on_accept_call()
             return
 
@@ -998,7 +1005,7 @@ class IntercomApp(QObject):
 
     def _ws_cycle_user(self):
         """Cycle through users for WS plugin (mirrors plugin)."""
-        users = self._last_panel_users
+        users = [u for u in self._last_panel_users if u.get("mode") != "OFFLINE"]
         if not users:
             return
         self._ws_user_index = (self._ws_user_index + 1) % len(users)
@@ -1023,7 +1030,7 @@ class IntercomApp(QObject):
 
     def _ws_auto_select_user(self):
         """Auto-confirm user selection after browse timeout."""
-        users = self._last_panel_users
+        users = [u for u in self._last_panel_users if u.get("mode") != "OFFLINE"]
         if self._ws_user_index < len(users):
             user = users[self._ws_user_index]
             self._on_user_selected(user.get("id", ""))
@@ -1052,6 +1059,8 @@ class IntercomApp(QObject):
 
         users = []
         for u in getattr(self, '_last_panel_users', []):
+            if u.get("mode") == "OFFLINE":
+                continue  # Don't send offline members to Stream Deck
             users.append({"id": u.get("id", ""), "name": u.get("name", ""), "mode": u.get("mode", "GREEN")})
 
         self.deck_ws.broadcast_state({
@@ -1082,6 +1091,13 @@ class IntercomApp(QObject):
                 ns_app.activateIgnoringOtherApps_(True)
             except ImportError:
                 pass
+        elif sys.platform == 'win32':
+            try:
+                import ctypes
+                hwnd = int(self.panel.winId())
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass  # Fall through to Qt raise_/activateWindow below
 
     def _toggle_panel_visibility(self):
         """Toggle panel window visibility (must be called on the main thread)."""
@@ -1140,12 +1156,9 @@ class IntercomApp(QObject):
         self.network.send_control("TALK_START", {})
         self.panel.set_ptt_active(True)
 
-        if self.remote_mode in (self.MODE_GREEN, self.MODE_OPEN):
+        if self.remote_mode in (self.MODE_GREEN, self.MODE_OPEN, self.MODE_YELLOW):
             self.log("Streaming Audio...")
             self.audio.start_streaming()
-        elif self.remote_mode == self.MODE_YELLOW:
-            self.log("Recording Message...")
-            self.audio.start_recording_message()
         elif self.remote_mode == self.MODE_RED:
             self.log("Peer is unavailable (DND).")
 
@@ -1216,7 +1229,7 @@ class IntercomApp(QObject):
             self.has_message = True
             self.log(f"Voicemail received ({len(self._vm_buffer)} chunks)")
             self.message_received_signal.emit()
-            self.audio.play_notification()
+            self.update_deck_display()  # Flash message icon on Stream Deck
         except Exception as e:
             self.log(f"Voicemail save error: {e}")
         finally:
@@ -1266,19 +1279,22 @@ class IntercomApp(QObject):
             return
         tid = self.active_team_id
         uid = self.user_id
+        print(f"[TeamMembers] Starting fetch for team {tid}, user {uid}")
         def _fetch():
             try:
                 members = supabase_client.get_team_members(tid)
+                print(f"[TeamMembers] Raw response: {len(members)} members")
                 result = {}
                 for m in members:
                     mid = m.get("user_id", "")
                     if mid and mid != uid:  # Exclude self
                         result[mid] = m.get("display_name", "Unknown")
                 self._team_members = result
+                print(f"[TeamMembers] Fetched {len(result)} members (excl self): {list(result.values())}")
                 # Re-filter to merge offline members into the list
                 QTimer.singleShot(0, self._refilter_online_users)
             except Exception as e:
-                self.log(f"Failed to fetch team members: {e}")
+                print(f"[TeamMembers] ERROR: {e}")
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _switch_team(self, team_id, team_name):
@@ -1505,21 +1521,13 @@ class IntercomApp(QObject):
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded.
         Auto-selects if the user has exactly one team; otherwise shows lobby."""
-        if len(self.my_teams) == 1:
-            # Only one team — skip the lobby and go straight in
-            t = self.my_teams[0]
-            self.active_team_id = t["id"]
-            self.active_team_name = t["name"]
-            set_active_team(self.active_team_id)
-            set_active_team_name(self.active_team_name)
-            self.network.update_presence_team(self.active_team_id)
-            self.log(f"Auto-selected team: {self.active_team_name}")
-            self.panel.set_teams(self.my_teams, self.active_team_id)
+        # Always show welcome page — let user pick their team
+        self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
+        self._lobby_refresh_timer.start()
+
+        # Pre-fetch team members so offline users are ready when team is selected
+        if self.active_team_id:
             self._fetch_team_members()
-        else:
-            # Multiple teams or none — show lobby so user can pick or create
-            self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
-            self._lobby_refresh_timer.start()  # Start polling for new teams
 
     @Slot(list)
     def _set_available_teams(self, data):
@@ -1590,6 +1598,9 @@ class IntercomApp(QObject):
                     'has_message': False,
                 })
 
+        online_count = len(online_ids)
+        offline_count = len(panel_users) - online_count
+        print(f"[Refilter] {online_count} online, {offline_count} offline, {len(self._team_members)} team members cached")
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
         self._broadcast_deck_state()
@@ -1770,6 +1781,10 @@ class IntercomApp(QObject):
 
         # Update presence with the chosen team
         self.network.update_presence_team(team_id)
+
+        # Fetch team members (includes offline) and refresh user list
+        self._fetch_team_members()
+        self._refilter_online_users()
 
         # Transition from lobby to normal team view
         self.panel.set_teams(self.my_teams, self.active_team_id)

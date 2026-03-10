@@ -45,7 +45,9 @@ class DiscoveryManager:
             print(f"Failed to register service: {e}")
             if sys.platform == 'win32':
                 print("  Hint: Windows Firewall may be blocking mDNS (port 5353).")
-                print("  Try: Allow Python through Windows Firewall, or use invite codes.")
+                print("  Fix: Settings > Windows Security > Firewall > Allow an app")
+                print("       → add Python (or the Office Hours .exe) for Private networks.")
+                print("  Or: Use invite codes to connect without LAN discovery.")
 
     def start_browsing(self):
         self.browser = ServiceBrowser(self.zeroconf, self.service_type, handlers=[self._on_service_state_change])

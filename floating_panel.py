@@ -200,14 +200,15 @@ class FloatingPanel(QWidget):
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.setSpacing(0)
 
-        # ── LEFT: Sidebar ─────────────────────────────────────
+        # ── LEFT: Sidebar (favorites bar — hidden until team is active) ──
         self._sidebar = self._build_sidebar()
+        self._sidebar.setVisible(False)
         frame_layout.addWidget(self._sidebar)
 
         # ── RIGHT: Content area ───────────────────────────────
         content_frame = QFrame()
         content_frame.setObjectName("content_frame")
-        content_frame.setStyleSheet(f"border-left: 1px solid {DARK['BORDER']};")
+        content_frame.setStyleSheet("border: none;")
         self._content_layout = QVBoxLayout(content_frame)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
@@ -237,14 +238,18 @@ class FloatingPanel(QWidget):
         self._disconn_bar.setVisible(False)
         self._content_layout.addWidget(self._disconn_bar)
 
-        # ── Content header (search + section title) ───────────
+        # ── Content header (team name + hamburger menu) ───────
         self._content_header = self._build_content_header()
         self._content_layout.addWidget(self._content_header)
 
         # ── Stacked content pages ─────────────────────────────
         self._content_stack = QStackedWidget()
 
-        # Page 0: Users
+        # Page 0: Welcome (no team selected)
+        self._welcome_page = self._build_welcome_page()
+        self._content_stack.addWidget(self._welcome_page)
+
+        # Page 1: Users (team active — default view)
         self._users_page = QWidget()
         users_v = QVBoxLayout(self._users_page)
         users_v.setContentsMargins(0, 0, 0, 0)
@@ -253,15 +258,15 @@ class FloatingPanel(QWidget):
         users_v.addWidget(self._user_section, 1)
         self._content_stack.addWidget(self._users_page)
 
-        # Page 1: Teams
+        # Page 2: Teams (team management / switching)
         self._teams_page = self._build_teams_page()
         self._content_stack.addWidget(self._teams_page)
 
-        # Page 2: Radio
+        # Page 3: Radio
         self._radio_page = self._build_radio_page()
         self._content_stack.addWidget(self._radio_page)
 
-        # Page 3: Settings
+        # Page 4: Settings
         self._settings_view = self._build_settings_view()
         self._content_stack.addWidget(self._settings_view)
 
@@ -284,19 +289,20 @@ class FloatingPanel(QWidget):
         # Legacy compat: _header reference (used by _toggle_pin etc.)
         self._header = self._sidebar
         # Team bar reference (used by set_teams, _auto_resize, etc.)
-        self._team_bar = QWidget()  # Dummy — teams now in teams_page
+        self._team_bar = QWidget()  # Dummy
         self._team_bar.setVisible(False)
 
         # Store layout refs
         self._root = self._content_layout
         self._content_frame = content_frame
 
-        # Default to Users page
-        self._active_nav = "teams"
-        self._switch_page("teams")
+        # Default to welcome page
+        self._active_nav = "welcome"
+        self._switch_page("welcome")
 
     # ── Sidebar ─────────────────────────────────────────────────────
     def _build_sidebar(self):
+        """Slim favorites sidebar — user avatar initials for quick PTT target selection."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(SIDEBAR_W)
@@ -311,56 +317,26 @@ class FloatingPanel(QWidget):
 
         v = QVBoxLayout(sidebar)
         v.setContentsMargins(0, 8, 0, 8)
-        v.setSpacing(2)
+        v.setSpacing(4)
 
-        # Navigation buttons — Team first (entry point)
-        self._nav_teams = NavButton("teams", "📁", "LOBBY")
-        self._nav_teams.clicked.connect(self._on_nav_clicked)
-        v.addWidget(self._nav_teams)
-
-        self._nav_users = NavButton("users", "👥", "USERS")
-        self._nav_users.clicked.connect(self._on_nav_clicked)
-        v.addWidget(self._nav_users)
-
-        self._nav_radio = NavButton("radio", "📻", "RADIO")
-        self._nav_radio.clicked.connect(self._on_nav_clicked)
-        v.addWidget(self._nav_radio)
-
-        self._nav_settings = NavButton("settings", "", "")
-        # Use a QPixmap gear icon instead of emoji (emojis don't scale on macOS)
-        gear_pixmap = QPixmap(36, 36)
-        gear_pixmap.fill(QColor(0, 0, 0, 0))
-        gp = QPainter(gear_pixmap)
-        gp.setRenderHint(QPainter.Antialiasing)
-        gf = QFont()
-        gf.setPixelSize(34)
-        gp.setFont(gf)
-        gp.setPen(QColor(DARK['TEXT_DIM']))
-        gp.drawText(QRect(0, 0, 36, 36), Qt.AlignCenter, "⚙")
-        gp.end()
-        self._nav_settings._icon.setPixmap(gear_pixmap)
-        self._nav_settings._icon.setFixedSize(36, 36)
-        self._nav_settings.setFixedSize(56, 56)
-        self._nav_settings.clicked.connect(self._on_nav_clicked)
-        v.addWidget(self._nav_settings)
-
-        self._nav_buttons = {
-            "teams": self._nav_teams,
-            "users": self._nav_users,
-            "radio": self._nav_radio,
-            "settings": self._nav_settings,
-        }
+        # ── Favorite user avatars (populated dynamically) ──
+        self._fav_container = QWidget()
+        self._fav_layout = QVBoxLayout(self._fav_container)
+        self._fav_layout.setContentsMargins(4, 4, 4, 4)
+        self._fav_layout.setSpacing(6)
+        self._fav_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._fav_buttons = {}  # uid -> QPushButton
+        v.addWidget(self._fav_container, 1)
 
         v.addStretch()
 
-        # ── Bottom section: peer → team → status → orb ──
+        # ── Bottom section: peer badge → team label → status frame ──
 
         # Connected peer initials (circular badge — color reflects peer mode)
-        # Clickable for quick user switching
         self._sidebar_peer_initials = QPushButton("")
         self._sidebar_peer_initials.setFixedSize(38, 38)
         self._sidebar_peer_initials.setCursor(Qt.PointingHandCursor)
-        self._sidebar_peer_mode = ""  # Track peer mode for color updates
+        self._sidebar_peer_mode = ""
         self._update_peer_badge_style()
         self._sidebar_peer_initials.clicked.connect(self._show_quick_switch_menu)
         peer_container = QHBoxLayout()
@@ -381,7 +357,7 @@ class FloatingPanel(QWidget):
         self._sidebar_team_label.setFixedWidth(SIDEBAR_W)
         v.addWidget(self._sidebar_team_label)
 
-        # ── Combined status frame (button + orb in one bordered box) ──
+        # ── Combined status frame (button + orb) ──
         self._sidebar_status_frame = QFrame()
         self._sidebar_status_frame.setObjectName("statusFrame")
         self._sidebar_status_frame.setFixedWidth(SIDEBAR_W - 6)
@@ -450,37 +426,105 @@ class FloatingPanel(QWidget):
         status_frame_container.addWidget(self._sidebar_status_frame)
         v.addLayout(status_frame_container)
 
+        # Legacy nav buttons dict (empty — nav removed)
+        self._nav_buttons = {}
+
         return sidebar
 
+    def _update_favorites(self, users):
+        """Update the sidebar favorites with user initials from the user list."""
+        # Clear existing
+        for btn in self._fav_buttons.values():
+            btn.deleteLater()
+        self._fav_buttons = {}
+
+        for u in users:
+            if u.get('mode') == 'OFFLINE':
+                continue
+            uid = u.get('id', '')
+            name = u.get('name', '?')
+            mode = u.get('mode', 'GREEN')
+            initials = self._peer_initials(name)
+            if not initials:
+                continue
+            btn = QPushButton(initials)
+            btn.setFixedSize(36, 36)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(name)
+            color = COLORS.get(mode, COLORS['GREEN'])
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {color}; color: white; border: none;
+                    border-radius: 18px; font-size: 12px; font-weight: 800;
+                }}
+                QPushButton:hover {{ border: 2px solid {DARK['TEXT']}; }}
+            """)
+            btn.clicked.connect(lambda checked=False, u_id=uid: self.user_selected.emit(u_id))
+            self._fav_layout.addWidget(btn, 0, Qt.AlignCenter)
+            self._fav_buttons[uid] = btn
+
     def _on_nav_clicked(self, key):
-        """Handle sidebar nav button clicks."""
+        """Handle sidebar nav button clicks (legacy compat)."""
         self._switch_page(key)
 
     def _switch_page(self, key):
         """Switch the content area to show the selected page."""
         self._active_nav = key
-        # Update nav button states
-        for k, btn in self._nav_buttons.items():
-            btn.set_selected(k == key)
-        # Switch stacked widget
-        page_map = {"users": 0, "teams": 1, "radio": 2, "settings": 3}
+        # Page map: welcome=0, users=1, teams=2, radio=3, settings=4
+        page_map = {"welcome": 0, "users": 1, "teams": 2, "radio": 3, "settings": 4}
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
-        # Update section title
-        self._section_title.setText(key.upper())
-        # Hide search bar and hotline toggle on pages where they don't apply
-        show_search = key in ("users", "teams")
-        self._hotline_lbl.setVisible(show_search)
-        self.open_toggle.setVisible(show_search)
+
+        is_welcome = (key == "welcome")
+        has_team = bool(getattr(self, '_active_team_name_cache', ''))
+        settings_from_welcome = (key == "settings" and getattr(self, '_settings_back_page', '') == "welcome")
+        show_sidebar = key in ("users", "teams", "radio", "settings") and not settings_from_welcome
+
+        # Sidebar: visible only when a team is active (not from welcome)
+        self._sidebar.setVisible(show_sidebar)
+        if hasattr(self, '_content_frame'):
+            self._content_frame.setStyleSheet(
+                f"border-left: 1px solid {DARK['BORDER']};" if show_sidebar else "border: none;"
+            )
+
+        # Hide status bar and header on welcome/settings
+        self._status_bar.setVisible(show_sidebar)
+        self._content_header.setVisible(show_sidebar and key != "settings")
+
+        # Panel width
+        if is_welcome:
+            self.setFixedWidth(260)
+        elif settings_from_welcome:
+            self.setFixedWidth(260)
+        else:
+            self.setFixedWidth(PANEL_W)
+
+        # Header elements
+        if key == "users":
+            team_name = getattr(self, '_active_team_name_cache', 'Team')
+            self._section_title.setText(f"{team_name} ▾")
+            self._hamburger_btn.setText("⚙")
+            self._hamburger_btn.setVisible(True)
+        elif key == "settings":
+            self._section_title.setText("Settings")
+            self._hamburger_btn.setText("←")
+            self._hamburger_btn.setVisible(True)
+        elif key == "teams":
+            self._section_title.setText("Teams")
+            self._hamburger_btn.setText("←")
+            self._hamburger_btn.setVisible(True)
+        elif key == "radio":
+            self._section_title.setText("Radio")
+            self._hamburger_btn.setText("←")
+            self._hamburger_btn.setVisible(True)
+
         # Populate settings when navigating to it
         if key == "settings":
             self._populate_settings()
-        # Auto-play radio when navigating to it
-        if key == "radio":
-            self.start_radio_on_nav()
         self._auto_resize()
 
     # ── Content Header (search + section title) ───────────────────
     def _build_content_header(self):
+        """Header bar: clickable team name (dropdown) + hamburger menu button."""
         header = QFrame()
         header.setStyleSheet("border: none;")
 
@@ -488,30 +532,359 @@ class FloatingPanel(QWidget):
         v.setContentsMargins(12, 10, 12, 0)
         v.setSpacing(8)
 
-        # Section title with accent underline
         title_row = QHBoxLayout()
-        title_row.setContentsMargins(2, 4, 0, 0)
-        self._section_title = QLabel("USERS")
-        self._section_title.setStyleSheet(f"""
-            font-size: 16px; font-weight: 800; color: {DARK['TEXT']};
-            letter-spacing: 1px; border: none; padding-bottom: 4px;
-            border-bottom: 2px solid {DARK['ACCENT']};
-        """)
-        title_row.addWidget(self._section_title)
+        title_row.setContentsMargins(0, 4, 0, 0)
+
         title_row.addStretch()
 
-        # Hotline toggle (moved from old header)
+        # Team name button — clickable dropdown to switch teams
+        self._section_title = QPushButton("TEAM ▾")
+        self._section_title.setCursor(Qt.PointingHandCursor)
+        self._section_title.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 13px; font-weight: 700; color: {DARK['TEXT']};
+                letter-spacing: 0.5px; border: none;
+                background: {DARK['BG_RAISED']}; border-radius: 6px;
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._section_title.clicked.connect(self._on_title_clicked)
+        title_row.addWidget(self._section_title)
+
+        # Hidden compat ref (some code checks this)
+        self._team_dropdown_btn = self._section_title
+
+        # Room code button — always visible, copies invite code
+        self._room_code_btn = QPushButton("ROOM CODE")
+        self._room_code_btn.setCursor(Qt.PointingHandCursor)
+        self._room_code_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 9px; font-weight: 700; color: {DARK['TEXT_DIM']};
+                background: transparent; border: 1px solid {DARK['BORDER']};
+                border-radius: 4px; padding: 3px 8px; letter-spacing: 0.5px;
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        self._room_code_btn.clicked.connect(lambda: (self._copy_invite_code(), self._show_copied_toast()))
+        title_row.addWidget(self._room_code_btn)
+
+        title_row.addStretch()
+
+        # Hotline toggle (only visible during active calls)
         self._hotline_lbl = QLabel("Hotline")
         self._hotline_lbl.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; font-weight: 500; border: none;")
+        self._hotline_lbl.setVisible(False)
         title_row.addWidget(self._hotline_lbl)
 
         self.open_toggle = ToggleSwitch()
         self.open_toggle.toggled.connect(self.hotline_toggled.emit)
+        self.open_toggle.setVisible(False)
         title_row.addWidget(self.open_toggle)
+
+        # Settings gear button — toggles settings page
+        self._hamburger_btn = QPushButton("⚙")
+        self._hamburger_btn.setFixedSize(36, 36)
+        self._hamburger_btn.setCursor(Qt.PointingHandCursor)
+        self._hamburger_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 24px; color: {DARK['TEXT']};
+                background: transparent; border: none;
+            }}
+            QPushButton:hover {{ color: {DARK['TEAL']}; }}
+        """)
+        self._hamburger_btn.clicked.connect(self._toggle_settings)
+        self._hamburger_btn.setVisible(False)
+        title_row.addWidget(self._hamburger_btn)
 
         v.addLayout(title_row)
 
         return header
+
+    def _on_title_clicked(self):
+        """Title button click — team dropdown on users page, back on sub-pages."""
+        if self._active_nav == "users":
+            self._show_team_dropdown()
+        else:
+            self._switch_page("users")
+
+    def _show_team_dropdown(self):
+        """Show dropdown menu to switch teams or go back to teams list."""
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+        """)
+
+        # List all teams from the hidden combo
+        for i in range(self._team_combo.count()):
+            team_name = self._team_combo.itemText(i)
+            team_id = self._team_combo.itemData(i)
+            is_active = (i == self._team_combo.currentIndex())
+            action = menu.addAction(f"{'✓ ' if is_active else '   '}{team_name}")
+            action.triggered.connect(
+                lambda checked=False, tid=team_id, tn=team_name:
+                    self._on_team_page_select(tid, tn)
+            )
+
+        menu.addSeparator()
+        menu.addAction("Manage Teams...").triggered.connect(
+            lambda: self._switch_page("teams")
+        )
+
+        menu.exec(self._team_dropdown_btn.mapToGlobal(
+            QPoint(0, self._team_dropdown_btn.height() + 4)
+        ))
+
+    def _toggle_settings(self):
+        """Gear/back button: on users/welcome opens settings, on settings goes back."""
+        if self._active_nav == "settings":
+            # Go back to where we came from
+            back_to = getattr(self, '_settings_back_page', 'users')
+            self._switch_page(back_to)
+        else:
+            self._settings_back_page = self._active_nav
+            self._switch_page("settings")
+
+    # ── Welcome Page (no team selected) ──────────────────────────
+    def _build_welcome_page(self):
+        """Welcome screen: OH logo, greeting, team list."""
+        page = QWidget()
+        page.setStyleSheet("border: none;")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(24, 16, 24, 16)
+        v.setSpacing(0)
+
+        # Gear icon top-right
+        gear_row = QHBoxLayout()
+        gear_row.setContentsMargins(0, 0, 0, 0)
+        gear_row.addStretch()
+        self._welcome_gear = QPushButton("⚙")
+        self._welcome_gear.setFixedSize(36, 36)
+        self._welcome_gear.setCursor(Qt.PointingHandCursor)
+        self._welcome_gear.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 24px; color: {DARK['TEXT']};
+                background: transparent; border: none;
+            }}
+            QPushButton:hover {{ color: {DARK['TEAL']}; }}
+        """)
+        self._welcome_gear.clicked.connect(self._toggle_settings)
+        gear_row.addWidget(self._welcome_gear)
+        v.addLayout(gear_row)
+
+        # OH Logo from file
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
+        if os.path.exists(logo_path):
+            logo_px = QPixmap(logo_path).scaledToHeight(40, Qt.SmoothTransformation)
+            logo.setPixmap(logo_px)
+        v.addWidget(logo)
+        v.addSpacing(6)
+
+        # Welcome text
+        welcome = QLabel("Welcome to Office Hours")
+        welcome.setAlignment(Qt.AlignCenter)
+        welcome.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {DARK['TEXT_DIM']};")
+        v.addWidget(welcome)
+        v.addSpacing(14)
+
+        # TEAMS label
+        teams_hdr = QLabel("TEAMS")
+        teams_hdr.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;")
+        v.addWidget(teams_hdr)
+        v.addSpacing(6)
+
+        # Scrollable team list
+        team_scroll = QScrollArea()
+        team_scroll.setWidgetResizable(True)
+        team_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        team_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        team_scroll.setFixedHeight(80)
+        team_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: 1px solid {DARK['BORDER']}; border-radius: 6px; background: {DARK['BG_RAISED']}; }}
+            QScrollBar:vertical {{ width: 4px; background: transparent; }}
+            QScrollBar::handle:vertical {{ background: {DARK['BORDER']}; border-radius: 2px; min-height: 20px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+
+        self._welcome_team_container = QWidget()
+        self._welcome_team_layout = QVBoxLayout(self._welcome_team_container)
+        self._welcome_team_layout.setContentsMargins(6, 4, 6, 4)
+        self._welcome_team_layout.setSpacing(2)
+
+        self._welcome_empty = QLabel("Loading teams...")
+        self._welcome_empty.setAlignment(Qt.AlignCenter)
+        self._welcome_empty.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
+        self._welcome_team_layout.addWidget(self._welcome_empty)
+        self._welcome_team_layout.addStretch()
+
+        team_scroll.setWidget(self._welcome_team_container)
+        v.addWidget(team_scroll)
+        v.addSpacing(10)
+
+        # Start a Team button (OH teal)
+        create_btn = QPushButton("+ Start a Team")
+        create_btn.setCursor(Qt.PointingHandCursor)
+        create_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['TEAL']}; color: white;
+                border: none; border-radius: 6px;
+                padding: 8px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: #5c9a91; }}
+        """)
+        create_btn.clicked.connect(self._on_create_team_click)
+        v.addWidget(create_btn)
+        v.addSpacing(6)
+
+        # Divider
+        divider_row = QHBoxLayout()
+        divider_row.setContentsMargins(0, 0, 0, 0)
+        line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet(f"color: {DARK['BORDER']};")
+        line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet(f"color: {DARK['BORDER']};")
+        or_lbl = QLabel("or join with code")
+        or_lbl.setStyleSheet(f"color: {DARK['TEXT_FAINT']}; font-size: 10px;")
+        or_lbl.setAlignment(Qt.AlignCenter)
+        divider_row.addWidget(line_l, 1)
+        divider_row.addWidget(or_lbl)
+        divider_row.addWidget(line_r, 1)
+        v.addLayout(divider_row)
+        v.addSpacing(6)
+
+        # Invite code row
+        code_row = QHBoxLayout()
+        code_row.setSpacing(6)
+        self._welcome_code_input = QLineEdit()
+        self._welcome_code_input.setPlaceholderText("OH-XXXXX")
+        self._welcome_code_input.setAlignment(Qt.AlignCenter)
+        self._welcome_code_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 6px 8px; font-size: 12px;
+                font-weight: 600; letter-spacing: 2px; color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        self._welcome_code_input.setMaxLength(10)
+        code_row.addWidget(self._welcome_code_input, 1)
+
+        join_btn = QPushButton("Join")
+        join_btn.setCursor(Qt.PointingHandCursor)
+        join_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['ACCENT']}; color: white; border: none;
+                border-radius: 6px; padding: 6px 14px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {DARK['ACCENT_DIM']}; }}
+        """)
+        join_btn.clicked.connect(self._on_welcome_join_click)
+        code_row.addWidget(join_btn)
+        v.addLayout(code_row)
+
+        v.addSpacing(8)
+
+        return page
+
+    def _on_welcome_join_click(self):
+        """Join button clicked on welcome page."""
+        code = self._welcome_code_input.text().strip()
+        if code:
+            self.join_code_requested.emit(code)
+
+    def _populate_welcome_teams(self, teams, my_teams=None, active_team_id=""):
+        """Populate the welcome page team list."""
+        # Clear existing
+        while self._welcome_team_layout.count() > 0:
+            item = self._welcome_team_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        all_teams = []
+        if my_teams:
+            for t in my_teams:
+                all_teams.append((t, True))
+        if teams:
+            my_ids = {t['id'] for t in (my_teams or [])}
+            for t in teams:
+                if t['id'] not in my_ids:
+                    all_teams.append((t, False))
+
+        if not all_teams:
+            empty = QLabel("No teams yet — start one!")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; padding: 16px;")
+            self._welcome_team_layout.addWidget(empty)
+            self._welcome_team_layout.addStretch()
+            return
+
+        for team, is_member in all_teams:
+            row = QFrame()
+            row.setStyleSheet(f"""
+                QFrame {{
+                    background: transparent; border: none; border-radius: 4px;
+                }}
+                QFrame:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(6, 4, 6, 4)
+            h.setSpacing(6)
+
+            name = QLabel(team.get("name", "Team"))
+            name.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {DARK['TEXT']}; border: none;")
+            h.addWidget(name, 1)
+
+            if is_member:
+                select_btn = QPushButton("Select")
+                select_btn.setCursor(Qt.PointingHandCursor)
+                select_btn.setFixedSize(50, 22)
+                select_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {COLORS['GREEN']}; color: white; border: none;
+                        border-radius: 4px; font-size: 10px; font-weight: 700;
+                    }}
+                    QPushButton:hover {{ background: #2bbd6e; }}
+                """)
+                tid = team["id"]
+                tn = team.get("name", "")
+                select_btn.clicked.connect(
+                    lambda checked=False, t_id=tid, t_name=tn:
+                        self.team_selected_from_lobby.emit(t_id, t_name)
+                )
+                h.addWidget(select_btn)
+            else:
+                join_btn = QPushButton("Join")
+                join_btn.setCursor(Qt.PointingHandCursor)
+                join_btn.setFixedSize(40, 22)
+                join_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {DARK['BG_RAISED']}; color: {DARK['TEXT_DIM']};
+                        border: 1px solid {DARK['BORDER']}; border-radius: 4px;
+                        font-size: 10px; font-weight: 600;
+                    }}
+                    QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+                """)
+                tid = team["id"]
+                tn = team.get("name", "")
+                admin_id = team.get("created_by", "")
+                join_btn.clicked.connect(
+                    lambda checked=False, t_id=tid, t_name=tn, a_id=admin_id:
+                        self.request_to_join.emit(t_id, t_name, a_id)
+                )
+                h.addWidget(join_btn)
+
+            self._welcome_team_layout.addWidget(row)
+
+        self._welcome_team_layout.addStretch()
 
     # ── Teams Page ────────────────────────────────────────────────
     def _build_teams_page(self):
@@ -1220,6 +1593,9 @@ class FloatingPanel(QWidget):
 
         self._lobby_layout.addStretch()
 
+        # Also populate the welcome page team list
+        self._populate_welcome_teams(teams, my_teams=my_teams, active_team_id=active_team_id)
+
     def _on_lobby_select_click(self, team_id, team_name):
         """User clicked 'Select' on one of their own teams in the lobby."""
         if not self._get_onboarding_name():
@@ -1438,20 +1814,20 @@ class FloatingPanel(QWidget):
     def set_teams(self, teams, active_team_id="", force_lobby=False):
         """Update the team dropdown with available teams.
         teams: [{id, name, invite_code, role}, ...]
-        If no teams or force_lobby, show onboarding/lobby instead.
+        If no teams or force_lobby, show welcome page instead.
         """
         has_teams = bool(teams)
 
         if force_lobby or not has_teams:
-            # Show lobby (onboarding) — overlays entire panel
-            self._onboarding.setVisible(True)
-            self._onboarding.raise_()
-            self._onboarding.setGeometry(self._frame.rect())
+            # Show welcome page (no team selected)
             self._is_onboarding = True
-            self.setFixedHeight(500)
+            self._onboarding.setVisible(False)  # Don't use old overlay
+            # Populate welcome team list with user's teams
+            self._populate_welcome_teams([], my_teams=teams)
+            self._switch_page("welcome")
             return
 
-        # Transition to normal sidebar UI (after user selected a team)
+        # Transition to team-active UI
         self._onboarding.setVisible(False)
         self._is_onboarding = False
         self.setMinimumHeight(0)
@@ -1462,7 +1838,6 @@ class FloatingPanel(QWidget):
         active_index = 0
         for i, team in enumerate(teams):
             self._team_combo.addItem(team["name"], team["id"])
-            # Store the role as UserRole + 1, invite_code as UserRole + 2
             self._team_combo.setItemData(i, team.get("role", "member"), Qt.UserRole + 1)
             self._team_combo.setItemData(i, team.get("invite_code", ""), Qt.UserRole + 2)
             if team["id"] == active_team_id:
@@ -1470,20 +1845,20 @@ class FloatingPanel(QWidget):
         self._team_combo.setCurrentIndex(active_index)
         self._team_combo.blockSignals(False)
 
-        # Refresh the visual team list on the lobby page
+        # Refresh the visual team list on the teams management page
         self._refresh_teams_list(teams, active_team_id)
 
-        # Update sidebar team label
+        # Cache active team name for header display
         active_name = ""
         for t in teams:
             if t["id"] == active_team_id:
                 active_name = t["name"]
                 break
+        self._active_team_name_cache = active_name
         self.set_sidebar_team(active_name)
 
-        # Single team auto-selected → go straight to Users
-        # Multiple teams or manual browse → stay on Teams
-        if active_team_id and len(teams) == 1:
+        # Go to users page (team is active)
+        if active_team_id:
             self._switch_page("users")
         else:
             self._switch_page("teams")
@@ -2133,6 +2508,9 @@ class FloatingPanel(QWidget):
         online_count = sum(1 for u in users if u.get('mode') != 'OFFLINE')
         self.online_count.setText(str(online_count))
 
+        # Update sidebar favorites
+        self._update_favorites(users)
+
         # Dynamic panel height based on visible content
         if not self._pinned and not self._is_onboarding:
             self._auto_resize()
@@ -2205,6 +2583,9 @@ class FloatingPanel(QWidget):
         self._call_peer_name = caller_name
         if not self._is_open_line:
             self.ptt_btn.setText(f"●  Talking to {caller_name}")
+        # Show hotline toggle during active calls
+        self._hotline_lbl.setVisible(True)
+        self.open_toggle.setVisible(True)
         self._resize_panel()
 
     def hide_call(self):
@@ -2216,6 +2597,9 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setText("●  Hotline")
         else:
             self.ptt_btn.setText("●  Hold to Talk")
+        # Hide hotline toggle when not in a call
+        self._hotline_lbl.setVisible(False)
+        self.open_toggle.setVisible(False)
         self._resize_panel()
 
     def set_ptt_active(self, active):
@@ -2478,6 +2862,7 @@ class FloatingPanel(QWidget):
             self._radio_audio_out = QAudioOutput(self)
             self._radio_audio_out.setVolume(self._radio_volume.value() / 100.0)
             self._radio_player.setAudioOutput(self._radio_audio_out)
+            self._radio_player.errorOccurred.connect(self._on_radio_error)
 
         self._radio_player.stop()
         # Channel 1 and 2 have separate stream URLs
@@ -2485,8 +2870,14 @@ class FloatingPanel(QWidget):
             "https://stream-relay-geo.ntslive.net/stream?client=NTSRadio",
             "https://stream-relay-geo.ntslive.net/stream2?client=NTSRadio",
         ]
+        print(f"[Radio] Starting stream: {urls[self._radio_channel]}")
         self._radio_player.setSource(QUrl(urls[self._radio_channel]))
         self._radio_player.play()
+
+    def _on_radio_error(self, error, message=""):
+        """Handle media player errors — reset state so user can retry."""
+        print(f"[Radio] Error: {error} — {message}")
+        self._stop_radio()
 
     def _on_radio_volume(self, val):
         if self._radio_audio_out:
@@ -2556,8 +2947,27 @@ class FloatingPanel(QWidget):
         view.setStyleSheet("border: none;")
 
         v = QVBoxLayout(view)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(0, 8, 0, 8)
         v.setSpacing(0)
+
+        # ── Header: back button ──
+        header = QHBoxLayout()
+        header.setContentsMargins(12, 4, 12, 4)
+
+        self._settings_back_btn = QPushButton("←")
+        self._settings_back_btn.setFixedSize(32, 32)
+        self._settings_back_btn.setCursor(Qt.PointingHandCursor)
+        self._settings_back_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 18px; color: {DARK['TEXT_DIM']};
+                background: transparent; border: none;
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT']}; }}
+        """)
+        self._settings_back_btn.clicked.connect(self._toggle_settings)
+        header.addWidget(self._settings_back_btn)
+        header.addStretch()
+        v.addLayout(header)
 
         # ── Scrollable settings items ──
         scroll = QScrollArea()
@@ -2573,17 +2983,17 @@ class FloatingPanel(QWidget):
 
         container = QWidget()
         self._settings_layout = QVBoxLayout(container)
-        self._settings_layout.setContentsMargins(8, 6, 8, 6)
-        self._settings_layout.setSpacing(2)
+        self._settings_layout.setContentsMargins(8, 0, 8, 8)
+        self._settings_layout.setSpacing(0)
 
         scroll.setWidget(container)
-        scroll.setMinimumHeight(250)  # Ensure settings view gets enough vertical space
+        scroll.setMinimumHeight(250)
         v.addWidget(scroll, 1)
 
         return view
 
     def _populate_settings(self):
-        """Rebuild the settings items (called each time settings opens so state is fresh)."""
+        """Rebuild settings — movie credits style: labels left, values right."""
         layout = self._settings_layout
 
         # Clear existing items
@@ -2592,47 +3002,19 @@ class FloatingPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        row_style = f"""
-            QPushButton {{
-                text-align: left; padding: 8px 12px; font-size: 13px;
-                font-weight: 500; color: {DARK['TEXT']}; background: transparent;
-                border: none; border-radius: 8px;
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-        """
-        section_style = f"font-size: 10px; font-weight: 700; color: {DARK['TEXT_FAINT']}; padding: 4px 12px 2px 12px; text-transform: uppercase; letter-spacing: 1px;"
-
-        combo_style = f"""
-            QComboBox {{
-                font-size: 11px; padding: 3px 6px;
-                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-                background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-            }}
-            QComboBox QAbstractItemView {{
-                background: {DARK['BG_RAISED']}; color: {DARK['TEXT']};
-                border: 1px solid {DARK['BORDER']};
-                selection-background-color: {DARK['BG_HOVER']};
+        label_style = f"""
+            QLabel {{
+                font-size: 11px; font-weight: 600; color: {DARK['TEXT_DIM']};
+                text-transform: uppercase; border: none; padding: 4px 0;
             }}
         """
-
-        def _divider():
-            d = QFrame()
-            d.setFixedHeight(1)
-            d.setStyleSheet(f"background: {DARK['BORDER']}; margin: 4px 12px;")
-            return d
-
-        def _section(title):
-            lbl = QLabel(title)
-            lbl.setStyleSheet(section_style)
-            return lbl
-
-        tile_style = f"""
+        value_style = f"""
             QPushButton {{
-                padding: 5px 6px; font-size: 11px; font-weight: 500;
-                color: {DARK['TEXT']}; background: transparent;
-                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                text-align: right; padding: 4px 0; font-size: 12px;
+                font-weight: 600; color: {DARK['TEXT']};
+                background: transparent; border: none; border-radius: 4px;
             }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
+            QPushButton:hover {{ color: {DARK['TEAL']}; }}
         """
         menu_style = f"""
             QMenu {{
@@ -2643,45 +3025,70 @@ class FloatingPanel(QWidget):
             QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
         """
 
-        def _tile_row(*buttons):
-            """Create a horizontal row of equally-sized tile buttons."""
+        def _label(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(label_style)
+            return lbl
+
+        def _value(text):
+            btn = QPushButton(text)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(value_style)
+            return btn
+
+        def _credit(label_text, value_widget):
+            """One movie-credits row: label left, value right."""
             row = QWidget()
             h = QHBoxLayout(row)
-            h.setContentsMargins(4, 0, 4, 0)
-            h.setSpacing(6)
-            for btn in buttons:
-                h.addWidget(btn, 1)
+            h.setContentsMargins(14, 0, 14, 0)
+            h.setSpacing(8)
+            h.addWidget(_label(label_text))
+            h.addStretch()
+            h.addWidget(value_widget)
             return row
 
-        # ── Row 1: Name + Theme ──
+        def _spacer(h=6):
+            s = QWidget()
+            s.setFixedHeight(h)
+            return s
+
+        # ── OH Logo ──
+        import os
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setStyleSheet("border: none;")
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
+        if os.path.exists(logo_path):
+            logo_px = QPixmap(logo_path).scaledToHeight(32, Qt.SmoothTransformation)
+            logo.setPixmap(logo_px)
+        layout.addWidget(logo)
+
+        subtitle = QLabel("Settings")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {DARK['TEXT_DIM']}; border: none; padding: 0 0 8px 0;")
+        layout.addWidget(subtitle)
+
+        # ── Name ──
         display_name = getattr(self, '_display_name', None) or 'Not set'
-        name_btn = QPushButton(f"👤  {display_name}")
-        name_btn.setCursor(Qt.PointingHandCursor)
-        name_btn.setStyleSheet(tile_style)
-        name_btn.clicked.connect(lambda: (self._change_name_dialog(), self._populate_settings()))
+        name_val = _value(display_name)
+        name_val.clicked.connect(lambda: (self._change_name_dialog(), self._populate_settings()))
+        layout.addWidget(_credit("Name", name_val))
 
-        theme_text = "☀  Light Mode" if self._dark_mode else "🌙  Dark Mode"
-        theme_btn = QPushButton(theme_text)
-        theme_btn.setCursor(Qt.PointingHandCursor)
-        theme_btn.setStyleSheet(tile_style)
-        theme_btn.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
+        # ── Theme ──
+        theme_text = "Light" if self._dark_mode else "Dark"
+        theme_val = _value(theme_text)
+        theme_val.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
+        layout.addWidget(_credit("Theme", theme_val))
 
-        layout.addWidget(_tile_row(name_btn, theme_btn))
+        # ── Incognito ──
+        incognito_text = "On" if self._incognito else "Off"
+        incognito_val = _value(incognito_text)
+        incognito_val.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
+        layout.addWidget(_credit("Incognito", incognito_val))
 
-        # ── Row 2: Incognito ──
-        incognito_text = "👁  Go Incognito" if not self._incognito else "👁‍🗨  Go Visible"
-        incognito_btn = QPushButton(incognito_text)
-        incognito_btn.setCursor(Qt.PointingHandCursor)
-        incognito_btn.setStyleSheet(tile_style)
-        incognito_btn.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
+        layout.addWidget(_spacer(8))
 
-        layout.addWidget(_tile_row(incognito_btn))
-
-        layout.addWidget(_divider())
-
-        # ── AUDIO: Input + Output ──
-        layout.addWidget(_section("AUDIO"))
-
+        # ── Audio In ──
         try:
             import sounddevice as sd
             devices = sd.query_devices()
@@ -2704,105 +3111,97 @@ class FloatingPanel(QWidget):
                     if current_out == i:
                         current_out_name = short_name
 
-            in_btn = QPushButton(f"🎤  {current_in_name}")
-            in_btn.setCursor(Qt.PointingHandCursor)
-            in_btn.setStyleSheet(tile_style)
-            in_menu = QMenu(in_btn)
+            in_val = _value(current_in_name + "  ▾")
+            in_menu = QMenu(in_val)
             in_menu.setStyleSheet(menu_style)
             for name, idx in input_devices:
                 action = in_menu.addAction(name)
                 action.triggered.connect(
                     lambda checked=False, i=idx: (self._on_input_device_changed(i), self._populate_settings())
                 )
-            in_btn.setMenu(in_menu)
+            in_val.setMenu(in_menu)
+            layout.addWidget(_credit("Audio In", in_val))
 
-            out_btn = QPushButton(f"🔊  {current_out_name}")
-            out_btn.setCursor(Qt.PointingHandCursor)
-            out_btn.setStyleSheet(tile_style)
-            out_menu = QMenu(out_btn)
+            out_val = _value(current_out_name + "  ▾")
+            out_menu = QMenu(out_val)
             out_menu.setStyleSheet(menu_style)
             for name, idx in output_devices:
                 action = out_menu.addAction(name)
                 action.triggered.connect(
                     lambda checked=False, i=idx: (self._on_output_device_changed(i), self._populate_settings())
                 )
-            out_btn.setMenu(out_menu)
-
-            layout.addWidget(_tile_row(in_btn, out_btn))
+            out_val.setMenu(out_menu)
+            layout.addWidget(_credit("Audio Out", out_val))
         except Exception as e:
             print(f"Audio device settings error: {e}")
 
-        layout.addWidget(_divider())
+        layout.addWidget(_spacer(8))
 
-        # ── TEAM: Copy Code + Invite a Friend ──
-        layout.addWidget(_section("TEAM"))
+        # ── Send Invite ──
+        invite_val = _value("Send")
+        invite_val.clicked.connect(self._invite_friend_email)
+        layout.addWidget(_credit("Invite", invite_val))
 
-        copy_code_btn = QPushButton("📋  Copy Code")
-        copy_code_btn.setCursor(Qt.PointingHandCursor)
-        copy_code_btn.setStyleSheet(tile_style)
-        copy_code_btn.clicked.connect(lambda: (self._copy_invite_code(), self._show_copied_toast()))
+        # ── Radio ──
+        is_playing = getattr(self, '_radio_playing', False)
+        play_text = "Stop" if is_playing else "Play"
+        play_color = DARK['DANGER'] if is_playing else DARK['ACCENT']
+        radio_val = _value(play_text)
+        radio_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {play_color}"))
+        radio_val.clicked.connect(lambda: (self._toggle_radio(), self._populate_settings()))
+        layout.addWidget(_credit("Radio", radio_val))
 
-        invite_btn = QPushButton("✉  Invite a Friend")
-        invite_btn.setCursor(Qt.PointingHandCursor)
-        invite_btn.setStyleSheet(tile_style)
-        invite_btn.clicked.connect(self._invite_friend_email)
+        # ── Volume ──
+        vol_slider = QSlider(Qt.Horizontal)
+        vol_slider.setRange(0, 100)
+        vol_slider.setValue(self._radio_volume.value() if hasattr(self, '_radio_volume') else 20)
+        vol_slider.setFixedWidth(100)
+        vol_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 3px; background: {DARK['BORDER']}; border-radius: 1px;
+            }}
+            QSlider::handle:horizontal {{
+                width: 10px; height: 10px; margin: -4px 0;
+                background: {DARK['TEXT_DIM']}; border-radius: 5px;
+            }}
+            QSlider::handle:horizontal:hover {{ background: {DARK['TEXT']}; }}
+            QSlider::sub-page:horizontal {{ background: {DARK['ACCENT_DIM']}; border-radius: 1px; }}
+        """)
+        vol_slider.valueChanged.connect(self._on_radio_volume)
+        vol_slider.valueChanged.connect(lambda v: self._radio_volume.setValue(v) if hasattr(self, '_radio_volume') else None)
+        layout.addWidget(_credit("Volume", vol_slider))
 
-        layout.addWidget(_tile_row(copy_code_btn, invite_btn))
+        layout.addWidget(_spacer(8))
 
-        layout.addWidget(_divider())
-
-        # ── STREAM DECK ──
-        layout.addWidget(_section("STREAM DECK"))
-
+        # ── Plug Ins ──
         deck_connected = getattr(self, '_deck_connected', False)
         if deck_connected:
-            deck_name = getattr(self, '_deck_name', 'Stream Deck')
-            deck_btn = QPushButton(f"🎛  {deck_name} — Connected")
-            deck_btn.setStyleSheet(f"""
-                QPushButton {{
-                    padding: 5px 6px; font-size: 11px; font-weight: 500;
-                    color: {DARK['ACCENT']}; background: transparent;
-                    border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-                }}
-            """)
-            deck_btn.setEnabled(False)
+            deck_val = _value("Connected")
+            deck_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['ACCENT']}"))
+            deck_val.setEnabled(False)
         else:
-            deck_btn = QPushButton("🎛  Not Connected — Setup Guide")
-            deck_btn.setCursor(Qt.PointingHandCursor)
-            deck_btn.setStyleSheet(tile_style)
-            deck_btn.clicked.connect(self._show_deck_setup_guide)
+            deck_val = _value("Setup")
+            deck_val.clicked.connect(self._show_deck_setup_guide)
+        layout.addWidget(_credit("Plug Ins", deck_val))
 
-        layout.addWidget(_tile_row(deck_btn))
-
-        layout.addWidget(_divider())
-
-        # ── Leave Team + Quit ──
-        leave_team_btn = QPushButton("Leave Team")
-        leave_team_btn.setCursor(Qt.PointingHandCursor)
-        leave_team_btn.setStyleSheet(f"""
-            QPushButton {{
-                padding: 5px 6px; font-size: 11px; font-weight: 500;
-                color: {DARK['WARN']}; background: transparent;
-                border: 1px solid rgba(230,175,0,0.3); border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: rgba(230,175,0,0.10); }}
-        """)
-        leave_team_btn.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
-
-        quit_btn = QPushButton("Quit OH")
-        quit_btn.setCursor(Qt.PointingHandCursor)
-        quit_btn.setStyleSheet(f"""
-            QPushButton {{
-                padding: 5px 6px; font-size: 11px; font-weight: 500;
-                color: {DARK['DANGER']}; background: transparent;
-                border: 1px solid rgba(229,57,53,0.3); border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: rgba(229,57,53,0.10); }}
-        """)
-        quit_btn.clicked.connect(self.quit_requested.emit)
-
+        # ── Leave Team | Quit ──
         layout.addStretch()
-        layout.addWidget(_tile_row(leave_team_btn, quit_btn))
+
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {DARK['BORDER_LT']}; margin: 0 14px;")
+        layout.addWidget(divider)
+        layout.addWidget(_spacer(4))
+
+        leave_val = _value("Leave")
+        leave_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['WARN']}"))
+        leave_val.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
+        layout.addWidget(_credit("Team", leave_val))
+
+        quit_val = _value("Quit")
+        quit_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['DANGER']}"))
+        quit_val.clicked.connect(self.quit_requested.emit)
+        layout.addWidget(_credit("Office Hours", quit_val))
 
     def set_deck_status(self, connected, deck_name="Stream Deck"):
         """Update Stream Deck connection status (called from main.py)."""
@@ -2880,6 +3279,23 @@ class FloatingPanel(QWidget):
         btn_row.addWidget(ok_btn)
 
         layout.addLayout(btn_row)
+
+        # Position near the app panel
+        panel_geo = self.geometry()
+        dlg.adjustSize()
+        dlg_w = dlg.width()
+        dlg_h = dlg.height()
+        x = panel_geo.x() + panel_geo.width() + 8
+        y = panel_geo.y()
+        from PySide6.QtWidgets import QApplication
+        screen = QApplication.screenAt(panel_geo.center())
+        if screen:
+            screen_geo = screen.availableGeometry()
+            if x + dlg_w > screen_geo.right():
+                x = panel_geo.x() - dlg_w - 8
+            if y + dlg_h > screen_geo.bottom():
+                y = screen_geo.bottom() - dlg_h
+        dlg.move(x, y)
 
         dlg.exec()
 
@@ -3037,8 +3453,9 @@ class FloatingPanel(QWidget):
             QPushButton:hover {{ background: {DARK['TEAL']}; }}
         """)
 
-        def _do_send():
+        def _do_send(checked=False):
             email = email_input.text().strip()
+            print(f"[Invite] _do_send called, email={email!r}")
             if not email or "@" not in email:
                 status_label.setText("Please enter a valid email address.")
                 status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
@@ -3050,24 +3467,35 @@ class FloatingPanel(QWidget):
 
             import threading
             def _send():
-                from supabase_client import send_invite_email
-                result = send_invite_email(email, team_name, code, sender_name)
+                try:
+                    print(f"[Invite] Calling send_invite_email({email!r}, {team_name!r})")
+                    from supabase_client import send_invite_email
+                    result = send_invite_email(email, team_name, code, sender_name)
+                    print(f"[Invite] Result: {result}")
+                except Exception as e:
+                    print(f"[Invite] Exception: {e}")
+                    result = None
                 # Update UI from main thread via QTimer.singleShot
                 if result:
-                    def _on_success():
+                    QTimer.singleShot(0, lambda: _on_result(True))
+                else:
+                    QTimer.singleShot(0, lambda: _on_result(False))
+
+            def _on_result(success):
+                try:
+                    if success:
                         status_label.setText("Sent!")
                         status_label.setStyleSheet(f"font-size: 11px; color: {DARK['ACCENT']}; border: none;")
                         status_label.setVisible(True)
                         QTimer.singleShot(1000, dlg.accept)
-                    QTimer.singleShot(0, _on_success)
-                else:
-                    def _on_fail():
+                    else:
                         status_label.setText("Failed to send. Try again.")
                         status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
                         status_label.setVisible(True)
                         send_btn.setEnabled(True)
                         send_btn.setText("Send Invite")
-                    QTimer.singleShot(0, _on_fail)
+                except RuntimeError:
+                    pass  # Dialog already closed
 
             threading.Thread(target=_send, daemon=True).start()
 
@@ -3233,13 +3661,17 @@ class FloatingPanel(QWidget):
 
     # ── Size Management ─────────────────────────────────────────
     # Fixed panel height — consistent across all pages
-    PANEL_H = 520
+    PANEL_H = 460
+    WELCOME_H = 380
 
     def _auto_resize(self):
         """Set panel to a fixed height so it stays consistent across pages."""
-        if self._pinned or self._is_onboarding:
+        if self._pinned:
             return
-        self.setFixedHeight(self.PANEL_H)
+        if self._active_nav == "welcome":
+            self.setFixedHeight(self.WELCOME_H)
+        else:
+            self.setFixedHeight(self.PANEL_H)
 
     def _resize_panel(self):
         """Resize the panel, but skip during onboarding (height is locked)."""

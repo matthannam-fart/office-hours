@@ -4,6 +4,24 @@ import sys
 import uuid
 import hashlib
 
+
+def _win_restrict_file(filepath):
+    """Restrict file access to current user only on Windows (equivalent of chmod 600)."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import subprocess
+        # Remove inherited permissions and grant only current user full control
+        username = os.environ.get('USERNAME', '')
+        if username:
+            subprocess.run(
+                ['icacls', filepath, '/inheritance:r',
+                 '/grant:r', f'{username}:(F)'],
+                capture_output=True, timeout=10
+            )
+    except Exception:
+        pass  # Non-critical — best effort
+
 def _config_dir():
     """Return platform-appropriate config directory for Office Hours."""
     if sys.platform == 'win32':
@@ -192,7 +210,9 @@ def ensure_lan_cert():
                     format=serialization.PrivateFormat.PKCS8,
                     encryption_algorithm=serialization.NoEncryption()
                 ))
-            if sys.platform != 'win32':
+            if sys.platform == 'win32':
+                _win_restrict_file(KEY_FILE)
+            else:
                 os.chmod(KEY_FILE, 0o600)
 
             with open(CERT_FILE, 'wb') as f:
@@ -204,6 +224,7 @@ def ensure_lan_cert():
             if sys.platform == 'win32':
                 # No openssl CLI on Windows typically; cryptography is required
                 print("cryptography package required on Windows for LAN TLS")
+                print("  Install with: pip install cryptography")
                 return None, None
             # Fallback: use openssl command line (macOS/Linux)
             import subprocess
@@ -214,8 +235,7 @@ def ensure_lan_cert():
                 '-days', '3650', '-nodes',
                 '-subj', '/CN=Office Hours LAN'
             ], check=True, capture_output=True)
-            if sys.platform != 'win32':
-                os.chmod(KEY_FILE, 0o600)
+            os.chmod(KEY_FILE, 0o600)
             return CERT_FILE, KEY_FILE
 
     except Exception as e:

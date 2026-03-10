@@ -100,6 +100,8 @@ def fetch_windows():
                 print(f"  ✓ Installed opus.dll from NuGet")
                 return True
 
+        print("  NuGet strategy failed.")
+
         # Strategy 2: Try MSYS2 package (needs modern tar with zstd)
         print("  Trying MSYS2 package...")
         pkg_file = os.path.join(tmpdir, 'opus.pkg.tar.zst')
@@ -122,6 +124,8 @@ def fetch_windows():
                             shutil.copy2(src, dll_path)
                             print(f"  ✓ Installed {f} from MSYS2")
                             return True
+
+        print("  MSYS2 strategy failed.")
 
         # Strategy 3: Direct download of a known good build via PowerShell
         print("  Trying direct download...")

@@ -26,7 +26,7 @@ RADIO_STATIONS = {
 }
 
 # Panel dimensions
-PANEL_W = 340
+PANEL_W = 310
 SIDEBAR_W = 56
 PANEL_RADIUS = 14
 

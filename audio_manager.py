@@ -138,12 +138,24 @@ def _configure_audio_backend():
     if sys.platform == 'win32':
         try:
             hostapis = sd.query_hostapis()
+            wasapi_idx = None
             for i, api in enumerate(hostapis):
                 if 'wasapi' in api['name'].lower():
-                    sd.default.hostapi = i
+                    wasapi_idx = i
                     break
-        except Exception:
-            pass
+            if wasapi_idx is not None:
+                sd.default.hostapi = wasapi_idx
+                # Verify WASAPI works with a quick device query
+                try:
+                    sd.query_devices()
+                    print(f"Audio: Using WASAPI (host API {wasapi_idx})")
+                except Exception as e:
+                    sd.default.hostapi = 0
+                    print(f"Audio: WASAPI failed ({e}), using default host API")
+            else:
+                print("Audio: WASAPI not found, using default host API")
+        except Exception as e:
+            print(f"Audio: Could not configure backend ({e}), using defaults")
 
 _configure_audio_backend()
 
