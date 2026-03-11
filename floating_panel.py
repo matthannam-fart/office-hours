@@ -3121,6 +3121,12 @@ class FloatingPanel(QWidget):
         if error == 0:
             return
         print(f"[Radio] Error {error}: {message}")
+        # TLS renegotiation / transient network errors fire while the stream
+        # is still playing fine.  Only tear down if the player truly stopped.
+        from PySide6.QtMultimedia import QMediaPlayer as _QMP
+        if self._radio_player and self._radio_player.playbackState() == _QMP.PlayingState:
+            print("[Radio] Ignoring transient error — stream still playing")
+            return
         self._stop_radio()
         self._reset_sidebar_radio_btn()
 
