@@ -147,8 +147,12 @@ class IntercomApp(QObject):
         self.tray.setToolTip("Office Hours")
         self.tray.activated.connect(self._on_tray_click)
         self._tray_menu = QMenu()
-        self.tray.setContextMenu(self._tray_menu)
         self._rebuild_tray_menu()
+        # On macOS, setContextMenu hijacks ALL clicks, so we don't set it.
+        # Instead we show the menu manually via _on_tray_click.
+        # On Windows, setContextMenu is fine for right-click only.
+        if sys.platform == 'win32':
+            self.tray.setContextMenu(self._tray_menu)
         self.tray.setVisible(True)
 
         # ── Floating Panel ─────────────────────────────────────
@@ -296,7 +300,20 @@ class IntercomApp(QObject):
 
     # ── Tray Icon ─────────────────────────────────────────────────
     def _on_tray_click(self, reason):
+        if reason == QSystemTrayIcon.Context:
+            # Right-click — show context menu (Windows path; macOS uses below)
+            self._show_tray_menu()
+            return
+
         if reason == QSystemTrayIcon.Trigger:
+            # On macOS without setContextMenu, check if right mouse button is held
+            if sys.platform == 'darwin':
+                from PySide6.QtGui import QCursor
+                buttons = QApplication.mouseButtons()
+                if buttons & Qt.RightButton:
+                    self._show_tray_menu()
+                    return
+
             if self.panel.isVisible() and self.panel.is_pinned():
                 # Clicking tray while pinned = unpin and show full panel
                 self.panel._toggle_pin()
@@ -327,6 +344,12 @@ class IntercomApp(QObject):
                     self.panel.show()
                     self.panel.raise_()
                     self.panel.activateWindow()
+
+    def _show_tray_menu(self):
+        """Show tray context menu at cursor position."""
+        from PySide6.QtGui import QCursor
+        self._rebuild_tray_menu()
+        self._tray_menu.popup(QCursor.pos())
 
     def _update_tray_icon(self):
         color = COLORS.get(self.mode, COLORS['GREEN'])
