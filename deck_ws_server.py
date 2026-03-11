@@ -57,8 +57,31 @@ class DeckWSServer:
             )
 
     def stop(self):
+        """Broadcast offline state, close all clients, then stop the server."""
         if self._loop and not self._loop.is_closed():
+            # Tell the plugin we're going offline
+            offline = json.dumps({"type": "app_quit"})
+            self._loop.call_soon_threadsafe(
+                asyncio.ensure_future,
+                self._shutdown(offline)
+            )
+            # Give it a moment to flush
+            import time
+            time.sleep(0.2)
             self._loop.call_soon_threadsafe(self._loop.stop)
+
+    async def _shutdown(self, message):
+        """Send final message and close all client connections."""
+        for ws in list(self._clients):
+            try:
+                await ws.send(message)
+                await ws.close()
+            except Exception:
+                pass
+        self._clients.clear()
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
 
     @property
     def client_count(self):

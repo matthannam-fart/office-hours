@@ -90,6 +90,12 @@ function connectToOH() {
     ohWs.on("message", (data) => {
         try {
             const msg = JSON.parse(data.toString());
+            if (msg.type === "app_quit") {
+                log("Office Hours app quit");
+                stopMsgPulse();
+                showDisconnected();
+                return;
+            }
             if (msg.type === "state") {
                 const oldMsg = ohState.message;
                 Object.assign(ohState, msg);
