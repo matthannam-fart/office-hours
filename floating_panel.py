@@ -482,6 +482,19 @@ class FloatingPanel(QWidget):
                     QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
                 """)
 
+    def _reset_sidebar_radio_btn(self):
+        """Reset sidebar radio button to 'off' style."""
+        self._sidebar_radio_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 18px; font-size: 18px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._sidebar_radio_btn.setToolTip("Radio")
+        if hasattr(self, '_radio_vol_popup') and self._radio_vol_popup:
+            self._radio_vol_popup.hide()
+
     def _sidebar_radio_toggle(self):
         """Toggle NTS radio from sidebar button. Show/hide volume popup."""
         self._toggle_radio()
@@ -3081,7 +3094,12 @@ class FloatingPanel(QWidget):
         """Create a fresh media player and start the stream."""
         # Destroy old player to avoid stale state after stop/error
         if self._radio_player:
+            try:
+                self._radio_player.errorOccurred.disconnect(self._on_radio_error)
+            except RuntimeError:
+                pass
             self._radio_player.stop()
+            self._radio_player.setSource(QUrl())  # Clear source before delete
             self._radio_player.deleteLater()
             self._radio_player = None
         if self._radio_audio_out:
@@ -3104,8 +3122,12 @@ class FloatingPanel(QWidget):
 
     def _on_radio_error(self, error, message=""):
         """Handle media player errors — reset state so user can retry."""
-        print(f"[Radio] Error: {error} — {message}")
+        # QMediaPlayer emits error 0 (NoError) on normal operations — ignore it
+        if error == 0:
+            return
+        print(f"[Radio] Error {error}: {message}")
         self._stop_radio()
+        self._reset_sidebar_radio_btn()
 
     def _on_radio_volume(self, val):
         if self._radio_audio_out:
