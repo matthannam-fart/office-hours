@@ -195,7 +195,7 @@ class IntercomApp(QObject):
         self.hotkey_press_signal.connect(self.on_talk_press)
         self.hotkey_release_signal.connect(self.on_talk_release)
         self.mic_level_signal.connect(self._on_mic_level)
-        self.speaker_level_signal.connect(self.panel.set_speaker_level)
+        self.speaker_level_signal.connect(self._on_speaker_level)
         self._ws_command_signal.connect(self._handle_ws_command)
         self._teams_loaded_signal.connect(self._on_teams_loaded)
         self._join_request_signal.connect(self._show_join_request)
@@ -549,6 +549,12 @@ class IntercomApp(QObject):
         self.panel.set_mic_level(level)
         if self._intercom_target_id and self._intercom_streaming:
             self.panel.set_user_eq_level(self._intercom_target_id, level)
+
+    def _on_speaker_level(self, level):
+        """Route speaker level to call banner and connected peer's row EQ."""
+        self.panel.set_speaker_level(level)
+        if self._connected_peer_id:
+            self.panel.set_user_eq_level(self._connected_peer_id, level)
 
     def _intercom_keepalive_expired(self):
         """30 seconds idle — disconnect."""
@@ -1373,7 +1379,10 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_START":
             self.peer_talking = True
+            peer_id = self._connected_peer_id
             QTimer.singleShot(0, lambda: self.panel.set_ptt_locked(True))
+            if peer_id:
+                QTimer.singleShot(0, lambda: self.panel.set_user_state(peer_id, "live"))
             self._broadcast_deck_state()
             self.log_signal.emit("Peer is talking...")
             # Start fresh voicemail buffer if we're busy
@@ -1382,7 +1391,10 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
+            peer_id = self._connected_peer_id
             QTimer.singleShot(0, lambda: self.panel.set_ptt_locked(False))
+            if peer_id:
+                QTimer.singleShot(0, lambda: self.panel.set_user_state(peer_id, "selected"))
             self._broadcast_deck_state()
             self.audio.play_talk_ended()
             # If we were in busy mode and buffered audio, save as voicemail

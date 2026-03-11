@@ -1251,6 +1251,30 @@ class FloatingPanel(QWidget):
 
         v.addLayout(btn_row)
 
+        # VU meters row (hidden until connected)
+        self._vu_row = QWidget()
+        vu_h = QHBoxLayout(self._vu_row)
+        vu_h.setContentsMargins(4, 0, 4, 0)
+        vu_h.setSpacing(4)
+
+        mic_lbl = QLabel("MIC")
+        mic_lbl.setStyleSheet(f"font-size: 8px; font-weight: 700; color: {DARK['ACCENT']}; border: none; letter-spacing: 0.5px;")
+        vu_h.addWidget(mic_lbl)
+        self._ptt_mic_meter = UnicodeEQ(num_bars=6, color=DARK['ACCENT'])
+        vu_h.addWidget(self._ptt_mic_meter)
+
+        vu_h.addSpacing(8)
+
+        rcv_lbl = QLabel("RCV")
+        rcv_lbl.setStyleSheet(f"font-size: 8px; font-weight: 700; color: {DARK['INFO']}; border: none; letter-spacing: 0.5px;")
+        vu_h.addWidget(rcv_lbl)
+        self._ptt_spk_meter = UnicodeEQ(num_bars=6, color=DARK['INFO'])
+        vu_h.addWidget(self._ptt_spk_meter)
+
+        vu_h.addStretch()
+        self._vu_row.setVisible(False)
+        v.addWidget(self._vu_row)
+
         # Hotline mode label below PTT
         self.ptt_mode_label = QLabel("Hotline — open mic, same-room feel.")
         self.ptt_mode_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
@@ -2322,10 +2346,14 @@ class FloatingPanel(QWidget):
     def set_mic_level(self, level):
         """Update mic level meter (0.0–1.0)."""
         self.mic_meter.set_level(level)
+        if hasattr(self, '_ptt_mic_meter'):
+            self._ptt_mic_meter.set_level(level)
 
     def set_speaker_level(self, level):
         """Update speaker level meter (0.0–1.0)."""
         self.speaker_meter.set_level(level)
+        if hasattr(self, '_ptt_spk_meter'):
+            self._ptt_spk_meter.set_level(level)
 
     # ── Pinned Compact ────────────────────────────────────────────
     def _build_message_banner(self):
