@@ -41,7 +41,7 @@ FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         'commercial-type-2507-JRGALW-desktop')
 FONT_FAMILY = 'Focal'
 # Fallback chain for systems without the bundled font
-FONT_FALLBACK = 'SF Pro Display, -apple-system, Helvetica Neue, Arial'
+FONT_FALLBACK = 'Segoe UI, SF Pro Display, -apple-system, Helvetica Neue, Arial'
 
 def _load_fonts():
     """Load bundled Focal font family into Qt.
@@ -1642,7 +1642,7 @@ class FloatingPanel(QWidget):
         code_row = QHBoxLayout()
         code_row.setSpacing(6)
         self._invite_input = QLineEdit()
-        self._invite_input.setPlaceholderText("OH-XXXXX")
+        self._invite_input.setPlaceholderText("Enter code")
         self._invite_input.setAlignment(Qt.AlignCenter)
         self._invite_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1653,6 +1653,7 @@ class FloatingPanel(QWidget):
             QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
         """)
         self._invite_input.setMaxLength(10)
+        self._invite_input.textChanged.connect(self._format_invite_code)
         code_row.addWidget(self._invite_input, 1)
 
         join_btn = QPushButton("Join")
@@ -1922,6 +1923,32 @@ class FloatingPanel(QWidget):
     def set_onboarding_name(self, name):
         """Pre-fill the onboarding name field (e.g. if user already has a saved name)."""
         self._onboarding_name_input.setText(name)
+
+    def _format_invite_code(self, text):
+        """Auto-capitalize and prepend OH- as the user types."""
+        # Block re-entrant calls while we update the text
+        self._invite_input.blockSignals(True)
+        cursor_pos = self._invite_input.cursorPosition()
+
+        # Strip whitespace and uppercase
+        raw = text.strip().upper()
+        # Remove any existing OH- prefix so we can re-add it cleanly
+        if raw.startswith("OH-"):
+            raw = raw[3:]
+        elif raw.startswith("OH"):
+            raw = raw[2:]
+        # Remove dashes from the code portion
+        raw = raw.replace("-", "")
+        # Rebuild with OH- prefix if user has typed anything
+        if raw:
+            formatted = f"OH-{raw}"
+        else:
+            formatted = ""
+
+        self._invite_input.setText(formatted)
+        # Keep cursor in a reasonable spot
+        self._invite_input.setCursorPosition(min(cursor_pos + (len(formatted) - len(text)), len(formatted)))
+        self._invite_input.blockSignals(False)
 
     def _on_join_code_click(self):
         """User submitted an invite code."""
