@@ -365,7 +365,7 @@ class FloatingPanel(QWidget):
         self._sidebar_mail_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                border-radius: 18px; font-size: 18px; color: {DARK['WARN']};
+                border-radius: 18px; font-size: 22px; color: {DARK['WARN']};
             }}
             QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
         """)
@@ -2467,7 +2467,7 @@ class FloatingPanel(QWidget):
             self._sidebar_mail_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; border: none;
-                    border-radius: 19px; font-size: 20px; color: {DARK['WARN']};
+                    border-radius: 18px; font-size: 22px; color: {DARK['WARN']};
                 }}
                 QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
             """)
@@ -2475,7 +2475,7 @@ class FloatingPanel(QWidget):
             self._sidebar_mail_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; border: none;
-                    border-radius: 19px; font-size: 20px; color: {DARK['TEXT_FAINT']};
+                    border-radius: 18px; font-size: 22px; color: {DARK['TEXT_FAINT']};
                 }}
                 QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
             """)

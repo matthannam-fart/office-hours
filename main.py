@@ -1291,6 +1291,8 @@ class IntercomApp(QObject):
                     print(f"[Message] Play error: {e}")
             self._playing_message = False
             self.incoming_message_path = None
+            self.has_message = False
+            QTimer.singleShot(0, self._broadcast_deck_state)
 
         threading.Thread(target=_play_all, daemon=True).start()
 
