@@ -1373,7 +1373,7 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_START":
             self.peer_talking = True
-            self.panel.set_ptt_locked(True)
+            QTimer.singleShot(0, lambda: self.panel.set_ptt_locked(True))
             self._broadcast_deck_state()
             self.log_signal.emit("Peer is talking...")
             # Start fresh voicemail buffer if we're busy
@@ -1382,7 +1382,7 @@ class IntercomApp(QObject):
 
         elif msg_type == "TALK_STOP":
             self.peer_talking = False
-            self.panel.set_ptt_locked(False)
+            QTimer.singleShot(0, lambda: self.panel.set_ptt_locked(False))
             self._broadcast_deck_state()
             self.audio.play_talk_ended()
             # If we were in busy mode and buffered audio, save as voicemail
@@ -1443,8 +1443,7 @@ class IntercomApp(QObject):
             self.peer_talking = False
             self._connected_peer_id = None
             self.network.disconnect()
-            self.panel.set_connection(False)
-            self.panel.hide_call()
+            QTimer.singleShot(0, lambda: (self.panel.set_connection(False), self.panel.hide_call()))
 
         elif msg_type == "CONNECTION_REJECTED":
             self.log_signal.emit("Connection declined.")
