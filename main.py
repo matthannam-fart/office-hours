@@ -1411,7 +1411,7 @@ class IntercomApp(QObject):
     # ── Network Callbacks ─────────────────────────────────────────
 
     def handle_audio_stream(self, data):
-        if self.mode in (self.MODE_GREEN, self.MODE_GREEN):
+        if self.mode == self.MODE_GREEN:
             self.audio.play_audio_chunk(data)
         elif self.mode == self.MODE_YELLOW and self.peer_talking:
             # Busy mode: buffer incoming audio as a voicemail
@@ -1455,6 +1455,8 @@ class IntercomApp(QObject):
             self._broadcast_deck_state()
             self.audio.play_talk_ended()
             # If we were in busy mode and buffered audio, save as voicemail
+            vm_count = len(self._vm_buffer) if hasattr(self, '_vm_buffer') else 0
+            print(f"[DEBUG] TALK_STOP: mode={self.mode}, vm_buffer={vm_count} chunks")
             if self.mode == self.MODE_YELLOW and hasattr(self, '_vm_buffer') and self._vm_buffer:
                 self._save_voicemail_from_buffer()
 
