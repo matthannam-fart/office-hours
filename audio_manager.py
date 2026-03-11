@@ -312,6 +312,7 @@ class AudioManager:
         # Opus encoder/decoder (created lazily to handle import failure)
         self._opus_encoder = None
         self._opus_decoder = None
+        self._codec_lock = threading.Lock()
         self._init_opus()
 
         # Codec state — default to best available codec immediately.
@@ -407,25 +408,27 @@ class AudioManager:
 
     def _encode(self, raw_bytes):
         """Encode raw int16 PCM to compressed bytes using the active codec."""
-        if self._active_codec == self.CODEC_OPUS and self._opus_encoder:
-            return self._opus_encoder.encode(raw_bytes, OPUS_FRAME_SIZE)
-        else:
-            return audioop.lin2ulaw(raw_bytes, 2)
+        with self._codec_lock:
+            if self._active_codec == self.CODEC_OPUS and self._opus_encoder:
+                return self._opus_encoder.encode(raw_bytes, OPUS_FRAME_SIZE)
+            else:
+                return audioop.lin2ulaw(raw_bytes, 2)
 
     def _decode(self, data):
         """Decode compressed bytes back to int16 PCM using the active codec.
         Returns silence on failure — never tries the wrong codec, since
         µ-law will happily decode any bytes into noise."""
-        if self._active_codec == self.CODEC_OPUS and self._opus_decoder:
-            try:
-                return self._opus_decoder.decode(data, OPUS_FRAME_SIZE)
-            except Exception:
-                return b'\x00' * OPUS_FRAME_SIZE * 2
-        else:
-            try:
-                return audioop.ulaw2lin(data, 2)
-            except Exception:
-                return b'\x00' * CHUNK_SIZE * 2
+        with self._codec_lock:
+            if self._active_codec == self.CODEC_OPUS and self._opus_decoder:
+                try:
+                    return self._opus_decoder.decode(data, OPUS_FRAME_SIZE)
+                except Exception:
+                    return b'\x00' * OPUS_FRAME_SIZE * 2
+            else:
+                try:
+                    return audioop.ulaw2lin(data, 2)
+                except Exception:
+                    return b'\x00' * CHUNK_SIZE * 2
 
     @property
     def active_frame_size(self):
@@ -647,7 +650,7 @@ class AudioManager:
         try:
             # Decode (Opus or µ-law)
             raw = self._decode(data)
-            audio_data = np.frombuffer(raw, dtype=DTYPE)
+            audio_data = np.frombuffer(raw, dtype=DTYPE).copy()
             if len(audio_data) % CHANNELS != 0:
                 return
 
