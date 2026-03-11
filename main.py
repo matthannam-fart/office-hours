@@ -72,6 +72,8 @@ class IntercomApp(QObject):
         self.is_flashing = False
         self.flash_state = False
         self.incoming_message_path = None
+        self._message_queue = []       # List of message file paths (inbox)
+        self._playing_message = False
         self.pending_connection = False
         self.peer_talking = False
         self.online_users = {}
@@ -573,7 +575,6 @@ class IntercomApp(QObject):
                 caller_name = self._incoming_caller_name
             self.call_connected_signal.emit(caller_name)
             self._start_open_line_if_ready()
-            self._set_busy()
         elif self.pending_from_id:
             # Have a from_id but no room — try relay accept by ID
             self.log("Accepted call — requesting relay room from presence...")
@@ -633,7 +634,6 @@ class IntercomApp(QObject):
                 peer_mode = self.online_users[self._calling_user_id].get("mode", "GREEN")
             self.panel.set_connection(True, peer_name, peer_mode)
             self._start_open_line_if_ready()
-            self._set_busy()
         else:
             self.log("Connection declined.")
             self.panel.set_connection(False)
@@ -662,20 +662,9 @@ class IntercomApp(QObject):
 
         self.log("Disconnected.")
 
-    def _set_busy(self):
-        if self._pre_call_mode is None:
-            self._pre_call_mode = self.mode  # Save mode before call
-        self.network.update_presence_mode("YELLOW", self.active_room_code or "")
-
     def _clear_busy(self):
         self.active_room_code = None
-        # Restore pre-call mode
-        if self._pre_call_mode is not None:
-            self.mode = self._pre_call_mode
-            self._pre_call_mode = None
-        self.panel.set_mode(self.mode)
-        self._update_tray_icon()
-        self.network.update_presence_mode(self.mode)
+        self._pre_call_mode = None
 
     def _start_open_line_if_ready(self):
         if self._hotline_on and self.network.connected:
@@ -816,7 +805,6 @@ class IntercomApp(QObject):
                 self.call_connected_signal.emit(caller_name)
 
             self._start_open_line_if_ready()
-            self._set_busy()
         else:
             self.log_signal.emit("Could not connect to peer.")
             self.panel.set_connection(False)
@@ -1205,35 +1193,57 @@ class IntercomApp(QObject):
         self.log("Broadcast sent")
 
     def on_answer(self):
-        if self.has_message and self.incoming_message_path:
-            self.log("Playing Message...")
-            self.has_message = False
-            self.is_flashing = False
-            self.update_deck_display()
-            self.audio.play_file(self.incoming_message_path)
+        if self.has_message or self._message_queue:
+            self._on_play_message()
 
     def _on_play_message(self):
-        """Play voicemail from the panel banner."""
-        if self.has_message and self.incoming_message_path:
-            self.log("Playing Message...")
-            self.has_message = False
-            self.is_flashing = False
-            self.update_deck_display()
-            self.panel.hide_message()
-            self.audio.play_file(self.incoming_message_path)
+        """Play all queued messages in succession."""
+        if self._playing_message:
+            return  # Already playing
+        if not self._message_queue:
+            if self.has_message and self.incoming_message_path:
+                # Fallback: single message (legacy)
+                self._message_queue = [self.incoming_message_path]
+            else:
+                return
+
+        self._playing_message = True
+        self.has_message = False
+        self.is_flashing = False
+        self.update_deck_display()
+        self.panel.hide_message()
+        count = len(self._message_queue)
+        self.log(f"Playing {count} message{'s' if count > 1 else ''}...")
+
+        import threading
+        def _play_all():
+            while self._message_queue:
+                path = self._message_queue.pop(0)
+                try:
+                    self.audio.play_file(path)
+                    # Clean up played file
+                    os.remove(path)
+                except Exception as e:
+                    print(f"[Message] Play error: {e}")
+            self._playing_message = False
+            self.incoming_message_path = None
+
+        threading.Thread(target=_play_all, daemon=True).start()
 
     def _save_voicemail_from_buffer(self):
         """Save buffered audio from a peer who talked while we were busy."""
         import soundfile as sf
+        import time as _time
         try:
             audio = np.concatenate(self._vm_buffer)
-            fn = os.path.join(_config_dir(), "incoming_message.wav")
+            fn = os.path.join(_config_dir(), f"msg_{int(_time.time()*1000)}.wav")
             sf.write(fn, audio, SAMPLE_RATE)
+            self._message_queue.append(fn)
             self.incoming_message_path = fn
             self.has_message = True
             self.log(f"Voicemail received ({len(self._vm_buffer)} chunks)")
             self.message_received_signal.emit()
-            self.update_deck_display()  # Flash message icon on Stream Deck
+            self.update_deck_display()
         except Exception as e:
             self.log(f"Voicemail save error: {e}")
         finally:
@@ -1422,7 +1432,6 @@ class IntercomApp(QObject):
             caller_name = payload.get("name", "Peer")
             self.call_connected_signal.emit(caller_name)
             self._start_open_line_if_ready()
-            self._set_busy()
 
 
         elif msg_type == "CALL_ENDED":
@@ -1454,9 +1463,11 @@ class IntercomApp(QObject):
             data = payload
             self.log_signal.emit(f"File Received: {len(data)} bytes")
             try:
-                fn = os.path.join(_config_dir(), "incoming_message.wav")
+                import time as _time
+                fn = os.path.join(_config_dir(), f"msg_{int(_time.time()*1000)}.wav")
                 with open(fn, 'wb') as f:
                     f.write(data)
+                self._message_queue.append(fn)
                 self.incoming_message_path = fn
                 self.has_message = True
                 self.is_flashing = True
@@ -1478,13 +1489,14 @@ class IntercomApp(QObject):
 
     def _cleanup_messages(self):
         cfg_dir = _config_dir()
-        for fname in ("outgoing_message.wav", "incoming_message.wav"):
-            path = os.path.join(cfg_dir, fname)
-            try:
-                if os.path.exists(path):
+        import glob
+        for pattern in ("outgoing_message.wav", "incoming_message.wav", "msg_*.wav"):
+            for path in glob.glob(os.path.join(cfg_dir, pattern)):
+                try:
                     os.remove(path)
-            except OSError as e:
-                print(f"Could not delete {fname}: {e}")
+                except OSError as e:
+                    print(f"Could not delete {path}: {e}")
+        self._message_queue.clear()
 
     def _on_incognito_toggle(self, enabled):
         """Toggle incognito mode — hide from online user list."""
