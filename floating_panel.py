@@ -330,7 +330,32 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
-        # ── Bottom section: peer badge → team label → status frame ──
+        # ── Bottom section: mail icon → peer badge → team label → status frame ──
+
+        # Mail icon (hidden by default, shown when messages are waiting)
+        self._sidebar_mail_btn = QPushButton("✉")
+        self._sidebar_mail_btn.setFixedSize(38, 38)
+        self._sidebar_mail_btn.setCursor(Qt.PointingHandCursor)
+        self._sidebar_mail_btn.setVisible(False)
+        self._sidebar_mail_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 19px; font-size: 20px; color: {DARK['WARN']};
+            }}
+            QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
+        """)
+        self._sidebar_mail_btn.clicked.connect(self.play_message_requested.emit)
+        mail_container = QHBoxLayout()
+        mail_container.setContentsMargins(0, 0, 0, 2)
+        mail_container.setAlignment(Qt.AlignCenter)
+        mail_container.addWidget(self._sidebar_mail_btn)
+        v.addLayout(mail_container)
+
+        # Pulse animation for mail icon
+        self._mail_pulse_timer = QTimer(self)
+        self._mail_pulse_timer.setInterval(800)
+        self._mail_pulse_on = True
+        self._mail_pulse_timer.timeout.connect(self._pulse_mail_icon)
 
         # Connected peer initials (circular badge — color reflects peer mode)
         self._sidebar_peer_initials = QPushButton("")
@@ -2245,14 +2270,39 @@ class FloatingPanel(QWidget):
         return banner
 
     def show_message(self):
-        """Show the new message indicator banner."""
+        """Show the new message indicator — sidebar mail icon + banner."""
         self._message_banner.setVisible(True)
+        self._sidebar_mail_btn.setVisible(True)
+        self._mail_pulse_on = True
+        self._mail_pulse_timer.start()
         self._resize_panel()
 
     def hide_message(self):
-        """Hide the message indicator banner."""
+        """Hide the message indicator — sidebar mail icon + banner."""
         self._message_banner.setVisible(False)
+        self._sidebar_mail_btn.setVisible(False)
+        self._mail_pulse_timer.stop()
         self._resize_panel()
+
+    def _pulse_mail_icon(self):
+        """Alternate mail icon opacity for a pulsing effect."""
+        self._mail_pulse_on = not self._mail_pulse_on
+        if self._mail_pulse_on:
+            self._sidebar_mail_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: none;
+                    border-radius: 19px; font-size: 20px; color: {DARK['WARN']};
+                }}
+                QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
+            """)
+        else:
+            self._sidebar_mail_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: none;
+                    border-radius: 19px; font-size: 20px; color: {DARK['TEXT_FAINT']};
+                }}
+                QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
+            """)
 
     # ── Pinned Compact ────────────────────────────────────────────
     def _build_pinned_compact(self, parent_widget=None):
