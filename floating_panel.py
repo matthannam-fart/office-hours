@@ -123,11 +123,6 @@ class FloatingPanel(QWidget):
         self._radio_station = None  # currently playing station name
         self._user_rows = {}  # uid -> UserRow (initialized before set_users can be called)
 
-        # Radio player
-        self._audio_output = QAudioOutput()
-        self._audio_output.setVolume(0.2)
-        self._radio_player = QMediaPlayer()
-        self._radio_player.setAudioOutput(self._audio_output)
 
         import sys
         if sys.platform == 'win32':
@@ -3806,20 +3801,6 @@ class FloatingPanel(QWidget):
             self.set_mode(mode)
         self.incognito_toggled.emit(self._incognito)
 
-    def _play_radio(self, station_name):
-        """Start playing a radio station stream."""
-        url = RADIO_STATIONS.get(station_name)
-        if not url:
-            return
-        self._radio_station = station_name
-        self._radio_player.setSource(QUrl(url))
-        self._radio_player.play()
-
-    def _stop_radio(self):
-        """Stop the radio."""
-        self._radio_player.stop()
-        self._radio_player.setSource(QUrl())
-        self._radio_station = None
 
     def _toggle_dark_mode(self):
         self._dark_mode = not self._dark_mode
