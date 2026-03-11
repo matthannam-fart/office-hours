@@ -302,7 +302,7 @@ class FloatingPanel(QWidget):
 
     # ── Sidebar ─────────────────────────────────────────────────────
     def _build_sidebar(self):
-        """Slim favorites sidebar — user avatar initials for quick PTT target selection."""
+        """Sidebar: OH logo → radio/mail icons → favorites → user badge → traffic light."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(SIDEBAR_W)
@@ -316,8 +316,71 @@ class FloatingPanel(QWidget):
         """)
 
         v = QVBoxLayout(sidebar)
-        v.setContentsMargins(0, 8, 0, 8)
+        v.setContentsMargins(0, 10, 0, 8)
         v.setSpacing(4)
+
+        # ── OH logo at top ──
+        oh_logo = QLabel("OH")
+        oh_logo.setAlignment(Qt.AlignCenter)
+        oh_logo.setFixedHeight(28)
+        oh_logo.setStyleSheet(f"""
+            font-size: 16px; font-weight: 900; color: {DARK['ACCENT']};
+            border: none; letter-spacing: 1px;
+        """)
+        logo_container = QHBoxLayout()
+        logo_container.setContentsMargins(0, 0, 0, 4)
+        logo_container.setAlignment(Qt.AlignCenter)
+        logo_container.addWidget(oh_logo)
+        v.addLayout(logo_container)
+
+        # ── OH logo — click to go home ──
+        oh_logo.setCursor(Qt.PointingHandCursor)
+        oh_logo.mousePressEvent = lambda e: self._switch_page("users")
+
+        # ── Radio icon — toggles NTS stream directly ──
+        self._sidebar_radio_btn = QPushButton("📻")
+        self._sidebar_radio_btn.setFixedSize(36, 36)
+        self._sidebar_radio_btn.setCursor(Qt.PointingHandCursor)
+        self._sidebar_radio_btn.setToolTip("Radio")
+        self._sidebar_radio_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 18px; font-size: 18px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._sidebar_radio_btn.clicked.connect(self._sidebar_radio_toggle)
+        radio_container = QHBoxLayout()
+        radio_container.setContentsMargins(0, 0, 0, 0)
+        radio_container.setAlignment(Qt.AlignCenter)
+        radio_container.addWidget(self._sidebar_radio_btn)
+        v.addLayout(radio_container)
+
+        # ── Mail icon (hidden by default, shown when messages are waiting) ──
+        self._sidebar_mail_btn = QPushButton("✉")
+        self._sidebar_mail_btn.setFixedSize(36, 36)
+        self._sidebar_mail_btn.setCursor(Qt.PointingHandCursor)
+        self._sidebar_mail_btn.setVisible(False)
+        self._sidebar_mail_btn.setToolTip("Messages waiting")
+        self._sidebar_mail_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 18px; font-size: 18px; color: {DARK['WARN']};
+            }}
+            QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
+        """)
+        self._sidebar_mail_btn.clicked.connect(self.play_message_requested.emit)
+        mail_container = QHBoxLayout()
+        mail_container.setContentsMargins(0, 0, 0, 0)
+        mail_container.setAlignment(Qt.AlignCenter)
+        mail_container.addWidget(self._sidebar_mail_btn)
+        v.addLayout(mail_container)
+
+        # Pulse animation for mail icon
+        self._mail_pulse_timer = QTimer(self)
+        self._mail_pulse_timer.setInterval(800)
+        self._mail_pulse_on = True
+        self._mail_pulse_timer.timeout.connect(self._pulse_mail_icon)
 
         # ── Favorite user avatars (populated dynamically) ──
         self._fav_container = QWidget()
@@ -330,34 +393,7 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
-        # ── Bottom section: mail icon → peer badge → team label → status frame ──
-
-        # Mail icon (hidden by default, shown when messages are waiting)
-        self._sidebar_mail_btn = QPushButton("✉")
-        self._sidebar_mail_btn.setFixedSize(38, 38)
-        self._sidebar_mail_btn.setCursor(Qt.PointingHandCursor)
-        self._sidebar_mail_btn.setVisible(False)
-        self._sidebar_mail_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                border-radius: 19px; font-size: 20px; color: {DARK['WARN']};
-            }}
-            QPushButton:hover {{ background: rgba(230, 175, 0, 0.15); }}
-        """)
-        self._sidebar_mail_btn.clicked.connect(self.play_message_requested.emit)
-        mail_container = QHBoxLayout()
-        mail_container.setContentsMargins(0, 0, 0, 2)
-        mail_container.setAlignment(Qt.AlignCenter)
-        mail_container.addWidget(self._sidebar_mail_btn)
-        v.addLayout(mail_container)
-
-        # Pulse animation for mail icon
-        self._mail_pulse_timer = QTimer(self)
-        self._mail_pulse_timer.setInterval(800)
-        self._mail_pulse_on = True
-        self._mail_pulse_timer.timeout.connect(self._pulse_mail_icon)
-
-        # Connected peer initials (circular badge — color reflects peer mode)
+        # ── Connected peer initials (circular badge — color reflects peer mode) ──
         self._sidebar_peer_initials = QPushButton("")
         self._sidebar_peer_initials.setFixedSize(38, 38)
         self._sidebar_peer_initials.setCursor(Qt.PointingHandCursor)
@@ -365,96 +401,172 @@ class FloatingPanel(QWidget):
         self._update_peer_badge_style()
         self._sidebar_peer_initials.clicked.connect(self._show_quick_switch_menu)
         peer_container = QHBoxLayout()
-        peer_container.setContentsMargins(0, 0, 0, 2)
+        peer_container.setContentsMargins(0, 0, 0, 4)
         peer_container.setAlignment(Qt.AlignCenter)
         peer_container.addWidget(self._sidebar_peer_initials)
         v.addLayout(peer_container)
 
-        # Active team name (teal)
-        self._sidebar_team_label = QLabel("")
-        self._sidebar_team_label.setAlignment(Qt.AlignCenter)
-        self._sidebar_team_label.setWordWrap(True)
-        self._sidebar_team_label.setStyleSheet(f"""
-            font-size: 9px; font-weight: 700; color: {DARK['TEAL']};
-            border: none; padding: 0 4px;
-            letter-spacing: 0.5px;
-        """)
-        self._sidebar_team_label.setFixedWidth(SIDEBAR_W)
-        v.addWidget(self._sidebar_team_label)
-
-        # ── Combined status frame (button + orb) ──
-        self._sidebar_status_frame = QFrame()
-        self._sidebar_status_frame.setObjectName("statusFrame")
-        self._sidebar_status_frame.setFixedWidth(SIDEBAR_W - 6)
-        self._sidebar_status_frame.setStyleSheet(f"""
-            QFrame#statusFrame {{
-                background: rgba(0, 166, 81, 0.10);
-                border: 1px solid rgba(0, 166, 81, 0.30);
-                border-radius: 8px;
+        # ── Traffic light mode selector (R / Y / G stacked dots) ──
+        self._traffic_light_frame = QFrame()
+        self._traffic_light_frame.setObjectName("trafficLight")
+        self._traffic_light_frame.setFixedWidth(SIDEBAR_W - 10)
+        self._traffic_light_frame.setStyleSheet(f"""
+            QFrame#trafficLight {{
+                background: {DARK['BG_RAISED']};
+                border: 1px solid {DARK['BORDER']};
+                border-radius: 10px;
             }}
         """)
-        sf_layout = QVBoxLayout(self._sidebar_status_frame)
-        sf_layout.setContentsMargins(4, 6, 4, 8)
-        sf_layout.setSpacing(4)
-        sf_layout.setAlignment(Qt.AlignCenter)
+        tl_layout = QVBoxLayout(self._traffic_light_frame)
+        tl_layout.setContentsMargins(0, 6, 0, 6)
+        tl_layout.setSpacing(2)
+        tl_layout.setAlignment(Qt.AlignCenter)
 
-        # Status dropdown button
-        self._sidebar_status_btn = QPushButton("Avail\n▾")
-        self._sidebar_status_btn.setCursor(Qt.PointingHandCursor)
-        self._sidebar_status_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 9px; font-weight: 600;
-                color: #4cdf80; background: transparent;
-                border: none; padding: 0;
-                line-height: 1.1;
-            }}
-            QPushButton:hover {{ color: #6ef0a0; }}
-            QPushButton::menu-indicator {{ width: 0; height: 0; }}
-        """)
-        # Build the mode selection menu
+        self._traffic_dots = {}
+        for mode_key, color in [("RED", COLORS['RED']), ("YELLOW", COLORS['YELLOW']), ("GREEN", COLORS['GREEN'])]:
+            dot_btn = QPushButton("●")
+            dot_btn.setFixedSize(28, 28)
+            dot_btn.setCursor(Qt.PointingHandCursor)
+            dot_btn.setToolTip(MODE_LABELS.get(mode_key, mode_key))
+            dot_btn.clicked.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
+            self._traffic_dots[mode_key] = dot_btn
+            tl_layout.addWidget(dot_btn, 0, Qt.AlignCenter)
+
+        tl_container = QHBoxLayout()
+        tl_container.setContentsMargins(5, 0, 5, 6)
+        tl_container.setAlignment(Qt.AlignCenter)
+        tl_container.addWidget(self._traffic_light_frame)
+        v.addLayout(tl_container)
+
+        # Initial traffic light styling
+        self._update_traffic_light()
+
+        # ── Hidden legacy refs for compat ──
+        # Status menu (still needed for external callers)
         self._status_menu = QMenu(self)
-        self._status_menu.setStyleSheet(f"""
-            QMenu {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 6px; padding: 4px;
-            }}
-            QMenu::item {{
-                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
-        """)
-        from PySide6.QtWidgets import QWidgetAction
-        for mode_key, label in [("GREEN", "Available"), ("YELLOW", "Busy"), ("RED", "DND")]:
-            color = COLORS[mode_key]
-            item_label = QLabel(f'<span style="color:{color};">●</span> {label}')
-            item_label.setStyleSheet(f"""
-                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
-                border-radius: 4px;
-            """)
-            item_label.setCursor(Qt.PointingHandCursor)
-            wa = QWidgetAction(self._status_menu)
-            wa.setDefaultWidget(item_label)
-            wa.setData(mode_key)
-            wa.triggered.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
-            self._status_menu.addAction(wa)
-        self._sidebar_status_btn.setMenu(self._status_menu)
-        sf_layout.addWidget(self._sidebar_status_btn, 0, Qt.AlignCenter)
-
-        # Mode orb inside the frame
-        self._sidebar_orb = GlowingOrb(24)
-        sf_layout.addWidget(self._sidebar_orb, 0, Qt.AlignCenter)
-
-        status_frame_container = QHBoxLayout()
-        status_frame_container.setContentsMargins(3, 2, 3, 6)
-        status_frame_container.setAlignment(Qt.AlignCenter)
-        status_frame_container.addWidget(self._sidebar_status_frame)
-        v.addLayout(status_frame_container)
+        # Sidebar status button (hidden — replaced by traffic light)
+        self._sidebar_status_btn = QPushButton()
+        self._sidebar_status_btn.setFixedSize(0, 0)
+        self._sidebar_status_btn.setVisible(False)
+        # Sidebar orb (hidden — replaced by traffic light)
+        self._sidebar_orb = GlowingOrb(0)
+        self._sidebar_orb.setVisible(False)
+        # Status frame (hidden)
+        self._sidebar_status_frame = QFrame()
+        self._sidebar_status_frame.setVisible(False)
+        # Team label (hidden — team shown in header instead)
+        self._sidebar_team_label = QLabel("")
+        self._sidebar_team_label.setVisible(False)
 
         # Legacy nav buttons dict (empty — nav removed)
         self._nav_buttons = {}
 
         return sidebar
+
+    def _update_traffic_light(self):
+        """Style the traffic light dots — all show their color, active gets a rounded gray bg."""
+        mode = getattr(self, '_current_mode', 'GREEN')
+        for mk, dot_btn in self._traffic_dots.items():
+            color = COLORS.get(mk, COLORS['GREEN'])
+            if mk == mode:
+                # Active — colored dot with rounded gray rectangle behind it
+                dot_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {DARK['BG_HOVER']}; border: none;
+                        border-radius: 6px;
+                        font-size: 18px; color: {color};
+                    }}
+                    QPushButton:hover {{ background: {DARK['BORDER']}; }}
+                """)
+            else:
+                # Inactive — colored dot, no background
+                dot_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent; border: none;
+                        border-radius: 6px;
+                        font-size: 18px; color: {color};
+                    }}
+                    QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+                """)
+
+    def _sidebar_radio_toggle(self):
+        """Toggle NTS radio from sidebar button. Show/hide volume popup."""
+        self._toggle_radio()
+        if self._radio_playing:
+            # Update button to show "on" state
+            self._sidebar_radio_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(42, 191, 191, 0.15); border: none;
+                    border-radius: 18px; font-size: 18px;
+                }}
+                QPushButton:hover {{ background: rgba(42, 191, 191, 0.25); }}
+            """)
+            self._sidebar_radio_btn.setToolTip("Radio (playing)")
+            self._show_radio_vol_popup()
+        else:
+            self._sidebar_radio_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: none;
+                    border-radius: 18px; font-size: 18px;
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+            self._sidebar_radio_btn.setToolTip("Radio")
+            if hasattr(self, '_radio_vol_popup') and self._radio_vol_popup:
+                self._radio_vol_popup.hide()
+
+    def _show_radio_vol_popup(self):
+        """Show a small volume slider popup next to the radio button."""
+        if hasattr(self, '_radio_vol_popup') and self._radio_vol_popup:
+            self._radio_vol_popup.show()
+            return
+
+        popup = QFrame(self)
+        popup.setObjectName("radioVolPopup")
+        popup.setStyleSheet(f"""
+            QFrame#radioVolPopup {{
+                background: {DARK['BG_RAISED']};
+                border: 1px solid {DARK['BORDER']};
+                border-radius: 8px;
+            }}
+        """)
+        popup.setFixedSize(140, 36)
+
+        h = QHBoxLayout(popup)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(6)
+
+        icon = QLabel("🔊")
+        icon.setStyleSheet("border: none; font-size: 12px;")
+        h.addWidget(icon)
+
+        vol = QSlider(Qt.Horizontal)
+        vol.setRange(0, 100)
+        vol.setValue(self._radio_volume.value() if hasattr(self, '_radio_volume') else 20)
+        vol.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {DARK['BORDER']}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {DARK['TEAL']}; width: 12px; height: 12px;
+                margin: -4px 0; border-radius: 6px;
+            }}
+            QSlider::sub-page:horizontal {{ background: {DARK['TEAL']}; border-radius: 2px; }}
+        """)
+        vol.valueChanged.connect(self._on_radio_volume)
+        if hasattr(self, '_radio_volume'):
+            vol.valueChanged.connect(lambda v: self._radio_volume.setValue(v))
+        h.addWidget(vol, 1)
+
+        # Position to the right of the radio button
+        btn_pos = self._sidebar_radio_btn.mapTo(self, QPoint(0, 0))
+        popup.move(btn_pos.x() + self._sidebar_radio_btn.width() + 4,
+                   btn_pos.y() + (self._sidebar_radio_btn.height() - 36) // 2)
+        popup.show()
+        self._radio_vol_popup = popup
+
+        # Auto-hide after 4 seconds
+        QTimer.singleShot(4000, lambda: popup.hide() if self._radio_playing else None)
 
     def _update_favorites(self, users):
         """Update the sidebar favorites with user initials from the user list."""
@@ -1086,42 +1198,52 @@ class FloatingPanel(QWidget):
         """User clicked Select on a team in the lobby page."""
         self.team_selected_from_lobby.emit(team_id, team_name)
 
-    # ── Status Bar (bottom of content) — now houses PTT ──────────
+    # ── Status Bar (bottom of content) — PTT + Page All ──────────
     def _build_status_bar(self):
         bar = QFrame()
         bar.setStyleSheet(f"border: none; background: transparent;")
-        bar.setFixedHeight(60)
+        bar.setFixedHeight(56)
 
         v = QVBoxLayout(bar)
-        v.setContentsMargins(8, 4, 8, 6)
+        v.setContentsMargins(8, 4, 8, 8)
         v.setSpacing(4)
 
-        # Horizontal row: PTT (5/6) + Page All (1/6)
+        # Combined PTT / Page All bar with teal border
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
+        btn_row.setSpacing(0)
 
-        # PTT button — full-width, mode-colored
-        self.ptt_btn = QPushButton("●  Hold to Talk")
+        # PTT button — left side, ~2/3 width
+        self.ptt_btn = QPushButton("PUSH TO TALK")
         self.ptt_btn.setCursor(Qt.PointingHandCursor)
-        self.ptt_btn.setFixedHeight(36)
+        self.ptt_btn.setFixedHeight(40)
         self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
         self.ptt_btn.released.connect(self.ptt_released.emit)
         self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        btn_row.addWidget(self.ptt_btn, 5)
+        btn_row.addWidget(self.ptt_btn, 2)
 
-        # Page All button
-        self.page_all_btn = QPushButton("Page All")
+        # Thin divider
+        divider = QFrame()
+        divider.setFixedWidth(1)
+        divider.setFixedHeight(40)
+        divider.setStyleSheet(f"background: {DARK['TEAL']}; border: none;")
+        btn_row.addWidget(divider)
+
+        # Page All button — right side, ~1/3 width
+        self.page_all_btn = QPushButton("PAGE ALL")
         self.page_all_btn.setCursor(Qt.PointingHandCursor)
-        self.page_all_btn.setFixedWidth(62)
-        self.page_all_btn.setFixedHeight(36)
+        self.page_all_btn.setFixedHeight(40)
         self.page_all_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 8px; padding: 6px; font-size: 11px;
-                font-weight: 600; color: {DARK['TEXT_FAINT']};
+                background: transparent; border: 1px solid {DARK['TEAL']};
+                border-left: none;
+                border-top-right-radius: 8px; border-bottom-right-radius: 8px;
+                border-top-left-radius: 0; border-bottom-left-radius: 0;
+                padding: 6px 8px; font-size: 11px;
+                font-weight: 700; color: {DARK['TEAL']};
+                letter-spacing: 0.5px;
             }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; color: {DARK['TEXT_DIM']}; }}
-            QPushButton:pressed {{ background: {DARK['BG']}; }}
+            QPushButton:hover {{ background: rgba(42, 191, 191, 0.10); color: {DARK['TEXT']}; }}
+            QPushButton:pressed {{ background: rgba(42, 191, 191, 0.20); }}
         """)
         self.page_all_btn.pressed.connect(self.page_all_pressed.emit)
         self.page_all_btn.released.connect(self.page_all_released.emit)
@@ -1205,61 +1327,44 @@ class FloatingPanel(QWidget):
     }
 
     def _update_mode_btn(self):
-        """Update the sidebar status button to reflect current mode."""
-        mode = self._current_mode
-        text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
-        bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
-        border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
-        short_labels = {'GREEN': 'Avail', 'YELLOW': 'Busy', 'RED': 'DND'}
-        label = short_labels.get(mode, 'Avail')
-
-        self._sidebar_status_btn.setText(f"{label}\n▾")
-        self._sidebar_status_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 9px; font-weight: 600;
-                color: {text_color}; background: transparent;
-                border: none; padding: 0;
-                line-height: 1.1;
-            }}
-            QPushButton:hover {{ color: {text_color}; }}
-            QPushButton::menu-indicator {{ width: 0; height: 0; }}
-        """)
-        # Update the surrounding frame to match mode color
-        self._sidebar_status_frame.setStyleSheet(f"""
-            QFrame#statusFrame {{
-                background: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 8px;
-            }}
-        """)
+        """Update the traffic light dots to reflect current mode."""
+        self._update_traffic_light()
 
     def _update_ptt_style(self):
-        """Style the PTT button with mode-colored tint."""
+        """Style the PTT button — teal-bordered, mode-aware."""
         mode = self._current_mode
         text_color = self._MODE_TEXT_COLORS.get(mode, '#4cdf80')
-        bg_color = self._MODE_BG_COLORS.get(mode, 'rgba(0, 166, 81, 0.10)')
-        border_color = self._MODE_BORDER_COLORS.get(mode, 'rgba(0, 166, 81, 0.30)')
 
         if mode == 'RED':
             # DND — disabled look
             self.ptt_btn.setEnabled(False)
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: {bg_color}; border: 1px solid {border_color};
-                    border-radius: 8px; padding: 8px; font-size: 13px;
-                    font-weight: 600; color: {DARK['TEXT_FAINT']};
+                    background: rgba(229, 57, 53, 0.05);
+                    border: 1px solid {DARK['BORDER']};
+                    border-right: none;
+                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    padding: 8px; font-size: 12px;
+                    font-weight: 700; color: {DARK['TEXT_FAINT']};
+                    letter-spacing: 0.5px;
                 }}
             """)
         else:
             self.ptt_btn.setEnabled(True)
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: {bg_color}; border: 1px solid {border_color};
-                    border-radius: 8px; padding: 8px; font-size: 13px;
-                    font-weight: 600; color: {text_color};
+                    background: transparent;
+                    border: 1px solid {DARK['TEAL']};
+                    border-right: none;
+                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    padding: 8px; font-size: 12px;
+                    font-weight: 700; color: {text_color};
+                    letter-spacing: 0.5px;
                 }}
-                QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {text_color}; }}
-                QPushButton:pressed {{ background: {DARK['BG']}; }}
+                QPushButton:hover {{ background: rgba(42, 191, 191, 0.08); }}
+                QPushButton:pressed {{ background: rgba(42, 191, 191, 0.15); }}
             """)
 
     # ── Connection Bar ────────────────────────────────────────────
@@ -2379,14 +2484,14 @@ class FloatingPanel(QWidget):
         self.open_toggle.set_on(is_on)
         in_call = getattr(self, '_call_peer_name', None)
         if is_on:
-            self.ptt_btn.setText("●  Hotline")
+            self.ptt_btn.setText("HOTLINE")
             self.ptt_mode_label.setText("Hotline — open mic, same-room feel.")
             self.ptt_mode_label.setVisible(True)
         elif in_call:
-            self.ptt_btn.setText(f"●  Talking to {in_call}")
+            self.ptt_btn.setText(f"TALKING TO {in_call.upper()}")
             self.ptt_mode_label.setVisible(False)
         else:
-            self.ptt_btn.setText("●  Hold to Talk")
+            self.ptt_btn.setText("PUSH TO TALK")
             self.ptt_mode_label.setVisible(False)
 
     def set_hotline_enabled(self, enabled):
@@ -2630,7 +2735,7 @@ class FloatingPanel(QWidget):
         self._conn_bar.setVisible(False)   # Call banner replaces connection bar
         self._call_peer_name = caller_name
         if not self._is_open_line:
-            self.ptt_btn.setText(f"●  Talking to {caller_name}")
+            self.ptt_btn.setText(f"TALKING TO {caller_name.upper()}")
         # Show hotline toggle during active calls
         self._hotline_lbl.setVisible(True)
         self.open_toggle.setVisible(True)
@@ -2642,9 +2747,9 @@ class FloatingPanel(QWidget):
         self._call_peer_name = None
         # Reset PTT text
         if self._is_open_line:
-            self.ptt_btn.setText("●  Hotline")
+            self.ptt_btn.setText("HOTLINE")
         else:
-            self.ptt_btn.setText("●  Hold to Talk")
+            self.ptt_btn.setText("PUSH TO TALK")
         # Hide hotline toggle when not in a call
         self._hotline_lbl.setVisible(False)
         self.open_toggle.setVisible(False)
@@ -2656,8 +2761,12 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: rgba(226, 42, 26, 0.15); border: 2px solid {DARK['DANGER']};
-                    border-radius: 8px; padding: 8px; font-size: 13px;
-                    font-weight: 600; color: {DARK['DANGER']};
+                    border-right: none;
+                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    padding: 8px; font-size: 12px;
+                    font-weight: 700; color: {DARK['DANGER']};
+                    letter-spacing: 0.5px;
                 }}
             """)
         else:
@@ -2668,12 +2777,17 @@ class FloatingPanel(QWidget):
         """Disable PTT while the peer is talking."""
         if locked:
             self.ptt_btn.setEnabled(False)
-            self.ptt_btn.setText("●  Listening...")
+            self.ptt_btn.setText("LISTENING...")
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                    border-radius: 8px; padding: 8px; font-size: 13px;
-                    font-weight: 500; color: {DARK['TEXT_FAINT']};
+                    background: {DARK['BG_RAISED']};
+                    border: 1px solid {DARK['BORDER']};
+                    border-right: none;
+                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    padding: 8px; font-size: 12px;
+                    font-weight: 600; color: {DARK['TEXT_FAINT']};
+                    letter-spacing: 0.5px;
                 }}
             """)
         else:
@@ -2681,11 +2795,11 @@ class FloatingPanel(QWidget):
             # Restore text
             in_call = getattr(self, '_call_peer_name', None)
             if self._is_open_line:
-                self.ptt_btn.setText("●  Hotline")
+                self.ptt_btn.setText("HOTLINE")
             elif in_call:
-                self.ptt_btn.setText(f"●  Talking to {in_call}")
+                self.ptt_btn.setText(f"TALKING TO {in_call.upper()}")
             else:
-                self.ptt_btn.setText("●  Hold to Talk")
+                self.ptt_btn.setText("PUSH TO TALK")
             self._update_ptt_style()
 
     # ── Radio Page ─────────────────────────────────────────────
