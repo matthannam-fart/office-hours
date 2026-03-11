@@ -2442,19 +2442,15 @@ class FloatingPanel(QWidget):
         return banner
 
     def show_message(self):
-        """Show the new message indicator — sidebar mail icon + banner."""
-        self._message_banner.setVisible(True)
+        """Show the new message indicator — sidebar mail icon only."""
         self._sidebar_mail_btn.setVisible(True)
         self._mail_pulse_on = True
         self._mail_pulse_timer.start()
-        self._resize_panel()
 
     def hide_message(self):
-        """Hide the message indicator — sidebar mail icon + banner."""
-        self._message_banner.setVisible(False)
+        """Hide the message indicator — sidebar mail icon."""
         self._sidebar_mail_btn.setVisible(False)
         self._mail_pulse_timer.stop()
-        self._resize_panel()
 
     def _pulse_mail_icon(self):
         """Alternate mail icon opacity for a pulsing effect."""

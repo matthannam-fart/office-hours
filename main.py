@@ -953,12 +953,14 @@ class IntercomApp(QObject):
         # Green mode: auto-accept (intercom behavior)
         if self.mode == self.MODE_GREEN:
             self.log(f"Auto-accepting from {from_name} (green mode)")
+            self._intercom_target_id = from_id
             self._on_accept_call()
             return
 
         # Yellow (Busy): auto-accept silently so caller can leave voicemail
         if self.mode == self.MODE_YELLOW:
             self.log(f"Auto-accepting voicemail from {from_name} (busy mode)")
+            self._intercom_target_id = from_id
             self._on_accept_call()
             return
 
