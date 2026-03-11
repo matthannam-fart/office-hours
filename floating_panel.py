@@ -530,38 +530,40 @@ class FloatingPanel(QWidget):
                 border-radius: 8px;
             }}
         """)
-        popup.setFixedSize(140, 36)
+        popup.setFixedSize(36, 120)
 
-        h = QHBoxLayout(popup)
-        h.setContentsMargins(8, 4, 8, 4)
-        h.setSpacing(6)
+        v = QVBoxLayout(popup)
+        v.setContentsMargins(4, 8, 4, 8)
+        v.setSpacing(4)
 
         icon = QLabel("🔊")
+        icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet("border: none; font-size: 12px;")
-        h.addWidget(icon)
+        v.addWidget(icon)
 
-        vol = QSlider(Qt.Horizontal)
+        vol = QSlider(Qt.Vertical)
         vol.setRange(0, 100)
         vol.setValue(self._radio_volume.value() if hasattr(self, '_radio_volume') else 20)
         vol.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                height: 4px; background: {DARK['BORDER']}; border-radius: 2px;
+            QSlider::groove:vertical {{
+                width: 4px; background: {DARK['BORDER']}; border-radius: 2px;
             }}
-            QSlider::handle:horizontal {{
+            QSlider::handle:vertical {{
                 background: {DARK['TEAL']}; width: 12px; height: 12px;
-                margin: -4px 0; border-radius: 6px;
+                margin: 0 -4px; border-radius: 6px;
             }}
-            QSlider::sub-page:horizontal {{ background: {DARK['TEAL']}; border-radius: 2px; }}
+            QSlider::sub-page:vertical {{ background: {DARK['BORDER']}; border-radius: 2px; }}
+            QSlider::add-page:vertical {{ background: {DARK['TEAL']}; border-radius: 2px; }}
         """)
         vol.valueChanged.connect(self._on_radio_volume)
         if hasattr(self, '_radio_volume'):
-            vol.valueChanged.connect(lambda v: self._radio_volume.setValue(v))
-        h.addWidget(vol, 1)
+            vol.valueChanged.connect(lambda v_val: self._radio_volume.setValue(v_val))
+        v.addWidget(vol, 1, Qt.AlignHCenter)
 
         # Position to the right of the radio button
         btn_pos = self._sidebar_radio_btn.mapTo(self, QPoint(0, 0))
         popup.move(btn_pos.x() + self._sidebar_radio_btn.width() + 4,
-                   btn_pos.y() + (self._sidebar_radio_btn.height() - 36) // 2)
+                   btn_pos.y() - 40)
         popup.show()
         self._radio_vol_popup = popup
 
@@ -3076,16 +3078,22 @@ class FloatingPanel(QWidget):
             self._radio_meta_timer.stop()
 
     def _start_radio_stream(self):
-        """Create or restart the media player on the current channel."""
-        if not self._radio_player:
-            self._radio_player = QMediaPlayer(self)
-            self._radio_audio_out = QAudioOutput(self)
-            self._radio_audio_out.setVolume(self._radio_volume.value() / 100.0)
-            self._radio_player.setAudioOutput(self._radio_audio_out)
-            self._radio_player.errorOccurred.connect(self._on_radio_error)
+        """Create a fresh media player and start the stream."""
+        # Destroy old player to avoid stale state after stop/error
+        if self._radio_player:
+            self._radio_player.stop()
+            self._radio_player.deleteLater()
+            self._radio_player = None
+        if self._radio_audio_out:
+            self._radio_audio_out.deleteLater()
+            self._radio_audio_out = None
 
-        self._radio_player.stop()
-        # Channel 1 and 2 have separate stream URLs
+        self._radio_player = QMediaPlayer(self)
+        self._radio_audio_out = QAudioOutput(self)
+        self._radio_audio_out.setVolume(self._radio_volume.value() / 100.0)
+        self._radio_player.setAudioOutput(self._radio_audio_out)
+        self._radio_player.errorOccurred.connect(self._on_radio_error)
+
         urls = [
             "https://stream-relay-geo.ntslive.net/stream?client=NTSRadio",
             "https://stream-relay-geo.ntslive.net/stream2?client=NTSRadio",
