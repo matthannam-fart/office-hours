@@ -146,14 +146,9 @@ class IntercomApp(QObject):
         self.tray.setIcon(create_oh_icon(COLORS['GREEN']))
         self.tray.setToolTip("Office Hours")
         self.tray.activated.connect(self._on_tray_click)
-        # Right-click context menu (Windows only — on macOS, setContextMenu
-        # hijacks left-click behavior, so we rely on the activated signal)
-        if sys.platform == 'win32':
-            tray_menu = QMenu()
-            tray_menu.addAction("Show Panel", self._show_panel_at_tray)
-            tray_menu.addSeparator()
-            tray_menu.addAction("Quit Office Hours", self._quit)
-            self.tray.setContextMenu(tray_menu)
+        self._tray_menu = QMenu()
+        self.tray.setContextMenu(self._tray_menu)
+        self._rebuild_tray_menu()
         self.tray.setVisible(True)
 
         # ── Floating Panel ─────────────────────────────────────
@@ -336,6 +331,35 @@ class IntercomApp(QObject):
     def _update_tray_icon(self):
         color = COLORS.get(self.mode, COLORS['GREEN'])
         self.tray.setIcon(create_oh_icon(color))
+
+    def _rebuild_tray_menu(self):
+        """Rebuild the right-click tray menu with current online users."""
+        self._tray_menu.clear()
+
+        # Online users section
+        users = getattr(self, '_last_panel_users', [])
+        online = [u for u in users if u.get('mode') != 'OFFLINE']
+        if online:
+            for u in online:
+                name = u.get('name', 'Unknown')
+                mode = u.get('mode', 'GREEN')
+                uid = u.get('id', '')
+                dot = {'GREEN': '🟢', 'YELLOW': '🟡', 'RED': '🔴'}.get(mode, '⚪')
+                action = self._tray_menu.addAction(f"{dot} {name}")
+                action.triggered.connect(lambda checked=False, uid=uid: self._tray_select_user(uid))
+        else:
+            no_users = self._tray_menu.addAction("No users online")
+            no_users.setEnabled(False)
+
+        self._tray_menu.addSeparator()
+        self._tray_menu.addAction("Show Panel", self._show_panel_at_tray)
+        self._tray_menu.addSeparator()
+        self._tray_menu.addAction("Quit Office Hours", self._quit)
+
+    def _tray_select_user(self, user_id):
+        """Select a user from the tray menu as PTT target."""
+        self._on_user_selected(user_id)
+        self._show_panel_at_tray()
 
     # ── Hotline Toggle ─────────────────────────────────────────────
     def _on_hotline_toggle(self, is_on):
@@ -877,6 +901,7 @@ class IntercomApp(QObject):
 
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
+        self._rebuild_tray_menu()
         self._broadcast_deck_state()
 
         # Update sidebar peer badge if connected peer's mode changed
@@ -983,7 +1008,7 @@ class IntercomApp(QObject):
         elif action == "cycle_user":
             self._ws_cycle_user()
         elif action == "show_panel":
-            self._show_panel_at_tray()
+            self._toggle_panel()
 
     def _ws_cycle_team(self):
         """Cycle through teams for WS plugin (mirrors plugin)."""
@@ -1106,6 +1131,13 @@ class IntercomApp(QObject):
             self.panel.show()
             self.panel.raise_()
             self.panel.activateWindow()
+
+    def _toggle_panel(self):
+        """Toggle panel visibility — used by Stream Deck OH button."""
+        if self.panel.isVisible():
+            self.panel.hide()
+        else:
+            self._show_panel_at_tray()
 
     def _show_panel_at_tray(self):
         """Show the panel anchored below the menu bar icon."""
@@ -1632,6 +1664,7 @@ class IntercomApp(QObject):
         print(f"[Refilter] {online_count} online, {offline_count} offline, {len(self._team_members)} team members cached")
         self._last_panel_users = panel_users
         self.panel.set_users(panel_users, self._intercom_target_id)
+        self._rebuild_tray_menu()
         self._broadcast_deck_state()
 
     def _ensure_presence_connected(self):
