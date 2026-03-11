@@ -1165,6 +1165,7 @@ class IntercomApp(QObject):
         if self._intercom_target_id:
             self._on_intercom_release(self._intercom_target_id)
             self.panel.set_ptt_active(False)
+            self._broadcast_deck_state()
             return
 
         self.audio.stop_streaming()
@@ -1380,6 +1381,7 @@ class IntercomApp(QObject):
         elif msg_type == "TALK_START":
             self.peer_talking = True
             peer_id = self._connected_peer_id
+            print(f"[DEBUG] TALK_START: peer_id={peer_id}, rows={list(self.panel._user_rows.keys())}")
             QTimer.singleShot(0, lambda: self.panel.set_ptt_locked(True))
             if peer_id:
                 QTimer.singleShot(0, lambda: self.panel.set_user_state(peer_id, "live"))
