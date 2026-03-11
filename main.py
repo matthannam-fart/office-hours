@@ -66,6 +66,7 @@ class IntercomApp(QObject):
         # State
         self.mode = self.MODE_GREEN
         self.remote_mode = self.MODE_GREEN
+        self._hotline_on = False
         self.peer_ip = "127.0.0.1"
         self.has_message = False
         self.is_flashing = False
@@ -336,6 +337,7 @@ class IntercomApp(QObject):
 
     # ── Hotline Toggle ─────────────────────────────────────────────
     def _on_hotline_toggle(self, is_on):
+        self._hotline_on = is_on
         if is_on:
             old_mode = self.mode
             self.mode = self.MODE_GREEN
@@ -645,6 +647,8 @@ class IntercomApp(QObject):
             except Exception:
                 pass  # Best-effort — connection may already be broken
 
+        self._hotline_on = False
+        self.audio.set_hotline(False)
         self.audio.stop_streaming()  # Stop any active stream (PTT or hotline)
         self.audio.reset_codec()  # Reset to default codec for next connection
         self._clear_busy()
@@ -653,6 +657,7 @@ class IntercomApp(QObject):
         self.network.disconnect()
         self.panel.set_connection(False)
         self.panel.set_hotline_enabled(False)
+        self.panel.set_hotline(False)
         self.panel.hide_call()
 
         self.log("Disconnected.")
@@ -673,7 +678,7 @@ class IntercomApp(QObject):
         self.network.update_presence_mode(self.mode)
 
     def _start_open_line_if_ready(self):
-        if self.mode == self.MODE_GREEN and self.network.connected:
+        if self._hotline_on and self.network.connected:
             self.audio.start_streaming()
             self.log("Hotline active — streaming...")
 
