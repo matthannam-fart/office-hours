@@ -393,18 +393,11 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
-        # ── Connected peer initials (circular badge — color reflects peer mode) ──
+        # ── Connected peer initials (hidden — redundant with favorites) ──
         self._sidebar_peer_initials = QPushButton("")
-        self._sidebar_peer_initials.setFixedSize(38, 38)
-        self._sidebar_peer_initials.setCursor(Qt.PointingHandCursor)
+        self._sidebar_peer_initials.setFixedSize(0, 0)
+        self._sidebar_peer_initials.setVisible(False)
         self._sidebar_peer_mode = ""
-        self._update_peer_badge_style()
-        self._sidebar_peer_initials.clicked.connect(self._show_quick_switch_menu)
-        peer_container = QHBoxLayout()
-        peer_container.setContentsMargins(0, 0, 0, 4)
-        peer_container.setAlignment(Qt.AlignCenter)
-        peer_container.addWidget(self._sidebar_peer_initials)
-        v.addLayout(peer_container)
 
         # ── Traffic light mode selector (R / Y / G stacked dots) ──
         self._traffic_light_frame = QFrame()
@@ -2670,6 +2663,8 @@ class FloatingPanel(QWidget):
         self._connected = connected
         self._conn_bar.setVisible(False)
         self._disconn_bar.setVisible(False)
+        if hasattr(self, '_vu_row'):
+            self._vu_row.setVisible(connected)
         if connected and peer_name:
             self.conn_label.setText(f"Connected to {peer_name}")
             self._sidebar_peer_initials.setText(self._peer_initials(peer_name))
