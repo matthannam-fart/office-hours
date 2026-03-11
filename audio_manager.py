@@ -322,6 +322,7 @@ class AudioManager:
 
         # Jitter buffer replaces the old raw queue
         self._jitter_buf = JitterBuffer()
+        self._play_stream_obj = None  # Reference to active OutputStream
 
         # NLMS echo canceller replaces ducking
         self._aec = EchoCanceller(frame_size=CHUNK_SIZE)
@@ -687,12 +688,16 @@ class AudioManager:
                 outdata.fill(0)
 
         try:
-            with sd.OutputStream(device=self.output_device, samplerate=SAMPLE_RATE,
-                                 channels=CHANNELS, dtype=DTYPE, callback=callback,
-                                 blocksize=frame_size, latency='low'):
+            self._play_stream_obj = sd.OutputStream(
+                device=self.output_device, samplerate=SAMPLE_RATE,
+                channels=CHANNELS, dtype=DTYPE, callback=callback,
+                blocksize=frame_size, latency='low')
+            with self._play_stream_obj:
                 while self.listening:
                     sd.sleep(50)
+            self._play_stream_obj = None
         except Exception as e:
+            self._play_stream_obj = None
             self.log(f"Audio Stream Error: {e}")
 
     def stop_listening(self):
@@ -709,44 +714,73 @@ class AudioManager:
         self.start_listening()
 
     def play_file(self, filename):
-        """Play a WAV file"""
+        """Play a WAV file. If the playback stream is active, inject into
+        jitter buffer to avoid PortAudio double-free."""
         try:
             data, fs = sf.read(filename)
-            sd.play(data, fs, device=self.output_device)
-            sd.wait()
+            if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
+                if data.dtype != np.int16:
+                    data = (data * 32767).astype(np.int16)
+                if data.ndim == 1 and CHANNELS == 2:
+                    data = np.column_stack([data, data])
+                elif data.ndim == 1:
+                    data = data.reshape(-1, 1)
+                self._jitter_buf.push(data)
+            else:
+                sd.play(data, fs, device=self.output_device)
+                sd.wait()
         except Exception as e:
             self.log(f"Play File Error: {e}")
 
     def play_notification(self):
-        """Play a short notification chime (two-tone)"""
-        def _play():
-            try:
-                duration = 0.15
-                t1 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-                t2 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-                tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
-                tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
-                gap = np.zeros(int(SAMPLE_RATE * 0.05))
-                chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
-                sd.play(chime, SAMPLE_RATE, device=self.output_device)
-                sd.wait()
-            except Exception as e:
-                self.log(f"Notification sound error: {e}")
-        threading.Thread(target=_play, daemon=True).start()
+        """Play a short notification chime (two-tone).
+        If the playback stream is active, inject into jitter buffer to avoid
+        PortAudio double-free from concurrent sd.play()."""
+        try:
+            duration = 0.15
+            t1 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+            t2 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+            tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
+            tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
+            gap = np.zeros(int(SAMPLE_RATE * 0.05))
+            chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
+            if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
+                mono = (chime * 32767).astype(np.int16)
+                stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
+                self._jitter_buf.push(stereo)
+            else:
+                def _play():
+                    try:
+                        sd.play(chime, SAMPLE_RATE, device=self.output_device)
+                        sd.wait()
+                    except Exception as e:
+                        self.log(f"Notification sound error: {e}")
+                threading.Thread(target=_play, daemon=True).start()
+        except Exception as e:
+            self.log(f"Notification sound error: {e}")
 
     def play_talk_ended(self):
-        """Play a gentle descending tone when the other user stops talking."""
-        def _play():
-            try:
-                duration = 0.12
-                t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-                # Gentle descending sweep from E5 to C5
-                freq = np.linspace(659, 523, len(t))
-                # Soft sine with fade-out envelope
-                envelope = np.linspace(0.15, 0.0, len(t))
-                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-                sd.play(tone, SAMPLE_RATE, device=self.output_device)
-                sd.wait()
-            except Exception as e:
-                self.log(f"Talk-ended sound error: {e}")
-        threading.Thread(target=_play, daemon=True).start()
+        """Play a gentle descending tone when the other user stops talking.
+        If the playback stream is active, inject into jitter buffer to avoid
+        PortAudio double-free from concurrent sd.play()."""
+        try:
+            duration = 0.12
+            t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+            freq = np.linspace(659, 523, len(t))
+            envelope = np.linspace(0.15, 0.0, len(t))
+            tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+            # If play stream is active, inject into jitter buffer
+            if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
+                mono = (tone * 32767).astype(np.int16)
+                stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
+                self._jitter_buf.push(stereo)
+            else:
+                def _play():
+                    try:
+                        sd.play(tone, SAMPLE_RATE, device=self.output_device)
+                        sd.wait()
+                    except Exception as e:
+                        self.log(f"Talk-ended sound error: {e}")
+                threading.Thread(target=_play, daemon=True).start()
+        except Exception as e:
+            self.log(f"Talk-ended sound error: {e}")
