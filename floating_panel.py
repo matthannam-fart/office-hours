@@ -516,9 +516,16 @@ class FloatingPanel(QWidget):
                 self._radio_vol_popup.hide()
 
     def _show_radio_vol_popup(self):
-        """Show a small volume slider popup next to the radio button."""
+        """Show a small volume slider popup next to the radio button. Auto-hides after 5s."""
+        # Increment generation counter to invalidate previous auto-hide timers
+        if not hasattr(self, '_radio_vol_gen'):
+            self._radio_vol_gen = 0
+        self._radio_vol_gen += 1
+        gen = self._radio_vol_gen
+
         if hasattr(self, '_radio_vol_popup') and self._radio_vol_popup:
             self._radio_vol_popup.show()
+            QTimer.singleShot(5000, lambda: self._auto_hide_vol_popup(gen))
             return
 
         popup = QFrame(self)
@@ -565,8 +572,13 @@ class FloatingPanel(QWidget):
         popup.show()
         self._radio_vol_popup = popup
 
-        # Auto-hide after 4 seconds
-        QTimer.singleShot(4000, lambda: popup.hide() if self._radio_playing else None)
+        # Auto-hide after 5 seconds
+        QTimer.singleShot(5000, lambda: self._auto_hide_vol_popup(gen))
+
+    def _auto_hide_vol_popup(self, gen):
+        """Hide volume popup if no newer show request has been made."""
+        if getattr(self, '_radio_vol_gen', 0) == gen and hasattr(self, '_radio_vol_popup') and self._radio_vol_popup:
+            self._radio_vol_popup.hide()
 
     def _update_favorites(self, users):
         """Update the sidebar favorites with user initials from the user list."""
