@@ -425,7 +425,7 @@ class FloatingPanel(QWidget):
         self._traffic_dots = {}
         for mode_key, color in [("RED", COLORS['RED']), ("YELLOW", COLORS['YELLOW']), ("GREEN", COLORS['GREEN'])]:
             dot_btn = QPushButton("●")
-            dot_btn.setFixedSize(28, 28)
+            dot_btn.setFixedSize(40, 40)
             dot_btn.setCursor(Qt.PointingHandCursor)
             dot_btn.setToolTip(MODE_LABELS.get(mode_key, mode_key))
             dot_btn.clicked.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
@@ -473,8 +473,8 @@ class FloatingPanel(QWidget):
                 dot_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: {DARK['BG_HOVER']}; border: none;
-                        border-radius: 6px;
-                        font-size: 18px; color: {color};
+                        border-radius: 10px;
+                        font-size: 32px; color: {color};
                     }}
                     QPushButton:hover {{ background: {DARK['BORDER']}; }}
                 """)
@@ -483,8 +483,8 @@ class FloatingPanel(QWidget):
                 dot_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: transparent; border: none;
-                        border-radius: 6px;
-                        font-size: 18px; color: {color};
+                        border-radius: 10px;
+                        font-size: 32px; color: {color};
                     }}
                     QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
                 """)
