@@ -1309,9 +1309,14 @@ class FloatingPanel(QWidget):
         def _do_auth():
             try:
                 import auth_manager
+
                 if self._login_is_signup:
                     name = self._login_name_input.text().strip()
-                    result = auth_manager.sign_up(email, password, name)
+                    # Start a callback listener BEFORE sign-up so it's ready
+                    # when the user clicks the confirmation link in their email
+                    server, port = auth_manager.start_magic_link_listener()
+                    redirect_url = f"http://localhost:{port}/callback"
+                    result = auth_manager.sign_up(email, password, name, redirect_to=redirect_url)
                 else:
                     result = auth_manager.sign_in_email(email, password)
 
@@ -1319,13 +1324,46 @@ class FloatingPanel(QWidget):
                     self._show_login_error("Authentication failed — no response.")
                     return
 
-                # Check if email confirmation is required (signup)
+                # Check if email confirmation is required (signup without token)
                 if self._login_is_signup and not result.get("access_token"):
-                    self._show_login_info("Check your email to confirm your account.")
-                    self._login_submit_btn.setEnabled(True)
-                    return
+                    self._show_login_info(
+                        "Check your email and click the confirmation link.\n"
+                        "Waiting..."
+                    )
+                    # Wait for the confirmation callback (user clicks email link)
+                    try:
+                        callback_result = auth_manager.wait_for_magic_link_callback(server)
+                        if callback_result and callback_result.get("access_token"):
+                            session = {
+                                "access_token": callback_result["access_token"],
+                                "refresh_token": callback_result.get("refresh_token", ""),
+                                "expires_at": int(time.time()) + int(callback_result.get("expires_in", 3600)),
+                                "user_id": "",  # Will be fetched below
+                                "email": email,
+                            }
+                            # Fetch user profile to get the user ID and metadata
+                            try:
+                                user_info = auth_manager.get_user(callback_result["access_token"])
+                                session["user_id"] = user_info.get("id", "")
+                                meta = user_info.get("user_metadata", {})
+                                session["display_name"] = (
+                                    meta.get("display_name") or meta.get("full_name")
+                                    or meta.get("name") or name
+                                )
+                            except Exception:
+                                session["display_name"] = name
+                            self.login_completed.emit(session)
+                            return
+                        else:
+                            self._show_login_error("Confirmation failed. Please try again.")
+                            self._login_submit_btn.setEnabled(True)
+                            return
+                    except Exception as e:
+                        self._show_login_error(f"Waiting for confirmation: {e}")
+                        self._login_submit_btn.setEnabled(True)
+                        return
 
-                # Build session dict
+                # Direct sign-in (or sign-up without email confirmation)
                 user = result.get("user", {})
                 session = {
                     "access_token": result.get("access_token", ""),

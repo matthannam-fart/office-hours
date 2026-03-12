@@ -112,14 +112,24 @@ def _generate_pkce():
 
 # ── Auth Functions ──────────────────────────────────────────────
 
-def sign_up(email, password, display_name):
+def sign_up(email, password, display_name, redirect_to=None):
     """Create a new account with email + password.
-    Returns the session dict (access_token, refresh_token, user, etc.)."""
+
+    If redirect_to is provided, the confirmation email link will redirect
+    there (with tokens in the URL hash fragment).
+
+    Returns the API response dict. If email confirmation is enabled, this
+    will NOT contain an access_token yet — the user must click the link first.
+    """
     body = {
         "email": email,
         "password": password,
         "data": {"display_name": display_name},
     }
+    # GoTrue v2: emailRedirectTo tells Supabase where the confirmation link
+    # should redirect the user. Without this, it uses the Site URL default.
+    if redirect_to:
+        body["emailRedirectTo"] = redirect_to
     return _post("signup", body=body)
 
 
