@@ -10,3 +10,4 @@ cryptography
 pynput
 streamdeck
 websockets
+pytest
