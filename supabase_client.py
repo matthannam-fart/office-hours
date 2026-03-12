@@ -8,18 +8,61 @@ Uses only urllib (no pip dependencies). Wraps PostgREST API for:
 """
 
 import json
-import urllib.request
+import time
 import urllib.error
 import urllib.parse
-from datetime import datetime, timezone
-from config import SUPABASE_URL, SUPABASE_ANON_KEY, log
+import urllib.request
+from datetime import UTC, datetime
+
+from config import SUPABASE_ANON_KEY, SUPABASE_URL, log
+
+
+def _get_auth_token():
+    """Get the current auth access token, refreshing if expired.
+    Returns the access token string, or None to fall back to anon key."""
+    try:
+        from user_settings import get_auth_session, save_auth_session
+        session = get_auth_session()
+        if not session or not session.get("access_token"):
+            return None
+
+        # Check if token is expired (with 60s buffer)
+        expires_at = session.get("expires_at", 0)
+        if expires_at and time.time() > (expires_at - 60):
+            # Token expired or about to expire — try to refresh
+            refresh_token = session.get("refresh_token")
+            if refresh_token:
+                try:
+                    import auth_manager
+                    new_session = auth_manager.refresh_session(refresh_token)
+                    if new_session and new_session.get("access_token"):
+                        # Save the refreshed session
+                        user = new_session.get("user", {})
+                        save_auth_session({
+                            "access_token": new_session["access_token"],
+                            "refresh_token": new_session.get("refresh_token", refresh_token),
+                            "expires_at": int(time.time()) + new_session.get("expires_in", 3600),
+                            "user_id": user.get("id", session.get("user_id", "")),
+                            "email": user.get("email", session.get("email", "")),
+                        })
+                        return new_session["access_token"]
+                except Exception as e:
+                    log.warning(f"Token refresh failed: {e}")
+            return None  # Fall back to anon key if refresh fails
+
+        return session["access_token"]
+    except Exception:
+        return None
 
 
 def _headers(extra=None):
-    """Standard Supabase REST headers."""
+    """Standard Supabase REST headers. Uses auth token if available."""
+    token = _get_auth_token()
+    bearer = token if token else SUPABASE_ANON_KEY
+
     h = {
         "apikey": SUPABASE_ANON_KEY,
-        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+        "Authorization": f"Bearer {bearer}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
@@ -55,7 +98,7 @@ def _request(method, path, body=None, headers_extra=None, params=None):
 
 def ensure_profile(user_id: str, display_name: str):
     """Upsert the user's profile on app launch. Updates last_seen timestamp."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     result = _request(
         "POST", "profiles",
         body={"id": user_id, "display_name": display_name, "last_seen": now},

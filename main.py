@@ -2,31 +2,50 @@
 main.py — Office Hours Menu Bar App
 System tray app with floating panel UI.
 """
-import sys
 import os
+import sys
 import threading
 import time
-import numpy as np
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QPoint
-from PySide6.QtGui import QAction
 
-from config import (TCP_PORT, UDP_PORT, BUFFER_SIZE, SAMPLE_RATE, CHANNELS, CHUNK_SIZE,
-                     DTYPE, RELAY_HOST, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT,
-                     MAX_FILE_SIZE, MAX_FRAME_SIZE, APP_NAME, LOG_LEVEL, log)
-from network_manager import NetworkManager
-from audio_manager import AudioManager
-from discovery_manager import DiscoveryManager
-from user_settings import (get_display_name, set_display_name, get_user_id,
-                          get_ptt_hotkey, _config_dir,
-                          get_active_team, set_active_team,
-                          get_active_team_name, set_active_team_name,
-                          get_deck_guide_dismissed, set_deck_guide_dismissed)
+import numpy as np
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal, Slot
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+import auth_manager
 import supabase_client
-from hotkey_manager import HotkeyManager
-from floating_panel import FloatingPanel, create_oh_icon
-from ui_constants import COLORS
+from audio_manager import AudioManager
+from config import (
+    DTYPE,
+    MAX_FILE_SIZE,
+    RELAY_HOST,
+    RELAY_PORT,
+    SAMPLE_RATE,
+    log,
+)
 from deck_ws_server import DeckWSServer
+from discovery_manager import DiscoveryManager
+from floating_panel import FloatingPanel, create_oh_icon
+from hotkey_manager import HotkeyManager
+from network_manager import NetworkManager
+from ui_constants import COLORS
+from user_settings import (
+    _config_dir,
+    clear_auth_session,
+    get_active_team,
+    get_active_team_name,
+    get_auth_session,
+    get_deck_guide_dismissed,
+    get_display_name,
+    get_ptt_hotkey,
+    get_user_id,
+    is_logged_in,
+    save_auth_session,
+    set_active_team,
+    set_active_team_name,
+    set_deck_guide_dismissed,
+    set_display_name,
+)
+
 
 class IntercomApp(QObject):
     # Signals to update UI from other threads
@@ -98,9 +117,15 @@ class IntercomApp(QObject):
         self._ws_preview_name = ""       # Name shown during browse
         self._ws_auto_select_timer = None
 
-        # User identity
-        self.display_name = get_display_name()
-        self.user_id = get_user_id()
+        # User identity — prefer auth session UID over local UUID
+        self._auth_logged_in = is_logged_in()
+        if self._auth_logged_in:
+            session = get_auth_session()
+            self.user_id = session.get("user_id", "") or get_user_id()
+            self.display_name = get_display_name()
+        else:
+            self.display_name = get_display_name()
+            self.user_id = get_user_id()
 
         # Team state
         self.active_team_id = get_active_team() or ""
@@ -135,7 +160,8 @@ class IntercomApp(QObject):
             key_name=ptt_key,
             log_callback=self.log_signal.emit,
         )
-        self.hotkey.start()
+        # Global hotkey disabled — use the UI PTT button instead
+        # self.hotkey.start()
 
         # Discovery
         self.discovery = DiscoveryManager(self.on_peer_found, self.on_peer_lost)
@@ -214,13 +240,31 @@ class IntercomApp(QObject):
         self.update_deck_display()
         self.log("System Ready. Scanning for peers...")
 
-        # Auto-connect to presence if relay host is configured
+        # Auth: connect login signals
+        self.panel.login_completed.connect(self._on_login_completed)
+        self.panel.login_skipped.connect(self._on_login_skipped)
+        self.panel.sign_out_requested.connect(self._on_sign_out)
+
+        # Auth token refresh timer (every 50 minutes)
+        self._auth_refresh_timer = QTimer(self)
+        self._auth_refresh_timer.setInterval(50 * 60 * 1000)  # 50 minutes
+        self._auth_refresh_timer.timeout.connect(self._refresh_auth_token)
+
+        # Startup: check auth state and route accordingly
         if RELAY_HOST:
-            if self.display_name:
-                threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+            if self._auth_logged_in:
+                # Logged in — try to refresh token, then auto-connect
+                self._auth_refresh_timer.start()
+                if self.display_name:
+                    threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+                else:
+                    self._teams_loaded_signal.emit()
+            elif self.display_name:
+                # Has a display name but not logged in — show login page
+                self.panel._switch_page("login")
             else:
-                # No name yet — show onboarding immediately, connect after setup
-                self._teams_loaded_signal.emit()
+                # No name, no auth — show login page
+                self.panel._switch_page("login")
 
         # On Windows, auto-show panel at startup since the tray icon
         # often gets hidden in the overflow area and users can't find the app
@@ -452,7 +496,7 @@ class IntercomApp(QObject):
 
         lan_ip = self._find_lan_ip(target_name)
         if lan_ip:
-            self.log(f"Trying direct connection...")
+            self.log("Trying direct connection...")
             threading.Thread(
                 target=self._try_direct_connect, args=(lan_ip, target_name), daemon=True
             ).start()
@@ -478,7 +522,7 @@ class IntercomApp(QObject):
         """Try direct TCP connection to a LAN peer."""
         success = self.network.connect(ip)
         if success:
-            self.log(f"Connected — sending call request...")
+            self.log("Connected — sending call request...")
             self._send_codec_offer()
             # Send a connection request — callee will show accept/decline
             self.network.send_control("CONNECTION_REQUEST", {
@@ -486,7 +530,7 @@ class IntercomApp(QObject):
             })
             # Keep showing "Calling..." — wait for CONNECTION_ACCEPTED
         else:
-            self.log(f"Direct connection failed, trying relay...")
+            self.log("Direct connection failed, trying relay...")
             if hasattr(self, '_calling_user_id'):
                 self.network.connect_to_user(self._calling_user_id)
 
@@ -792,7 +836,7 @@ class IntercomApp(QObject):
         elif msg_type == "CONNECT_ROOM":
             room_code = msg.get("room", "")
             role = msg.get("role", "")
-            self.log_signal.emit(f"Connecting...")
+            self.log_signal.emit("Connecting...")
             threading.Thread(
                 target=self._join_relay_room, args=(room_code, role), daemon=True
             ).start()
@@ -1255,6 +1299,9 @@ class IntercomApp(QObject):
         if self.network.connected:
             self.network.send_file(filename)
         self.log("Broadcast sent")
+        # Reinforce the selected user highlight after page-all ends
+        if self._intercom_target_id:
+            self.panel.highlight_selected_user(self._intercom_target_id)
 
     def on_answer(self):
         if self.has_message or self._message_queue:
@@ -1298,8 +1345,9 @@ class IntercomApp(QObject):
 
     def _save_voicemail_from_buffer(self):
         """Save buffered audio from a peer who talked while we were busy."""
-        import soundfile as sf
         import time as _time
+
+        import soundfile as sf
         try:
             audio = np.concatenate(self._vm_buffer)
             fn = os.path.join(_config_dir(), f"msg_{int(_time.time()*1000)}.wav")
@@ -1470,7 +1518,7 @@ class IntercomApp(QObject):
             chosen = self.audio.negotiate_codec(peer_codecs)
             self.network.send_control("CODEC_ACCEPT", {"codec": chosen})
             if chosen == "ulaw":
-                self.log_signal.emit(f"⚠ Audio: µ-law (peer missing Opus)")
+                self.log_signal.emit("⚠ Audio: µ-law (peer missing Opus)")
             else:
                 self.log_signal.emit(f"Audio: {chosen}")
 
@@ -1479,7 +1527,7 @@ class IntercomApp(QObject):
             chosen = payload.get("codec", "ulaw")
             self.audio.negotiate_codec([chosen])
             if chosen == "ulaw":
-                self.log_signal.emit(f"⚠ Audio: µ-law (peer missing Opus)")
+                self.log_signal.emit("⚠ Audio: µ-law (peer missing Opus)")
             else:
                 self.log_signal.emit(f"Audio: {chosen}")
 
@@ -1500,7 +1548,7 @@ class IntercomApp(QObject):
                 self.pending_room = None  # No relay session for direct calls
                 self.presence_request_signal.emit(requester_name, self.pending_from_id, "")
             else:
-                self.log_signal.emit(f"Ignoring direct CONNECTION_REQUEST — relay call already pending")
+                self.log_signal.emit("Ignoring direct CONNECTION_REQUEST — relay call already pending")
 
         elif msg_type == "CONNECTION_ACCEPTED":
             self.log_signal.emit("Call accepted!")
@@ -1604,6 +1652,108 @@ class IntercomApp(QObject):
         # Update presence server with new name
         if self.network.presence_connected:
             self.network.update_presence_name(new_name)
+
+    # ── Auth Handlers ──────────────────────────────────────────
+
+    @Slot(dict)
+    def _on_login_completed(self, session):
+        """Handle successful login — set user_id, save session, connect."""
+        user_id = session.get("user_id", "")
+        email = session.get("email", "")
+        display_name = session.get("display_name", "")
+
+        if user_id:
+            self.user_id = user_id
+            self.network.user_id = user_id
+
+        # Save auth session
+        save_auth_session(session)
+        self._auth_logged_in = True
+
+        # Start token refresh timer
+        self._auth_refresh_timer.start()
+
+        # Set display name from auth if we got one, else keep existing
+        if display_name:
+            self.display_name = display_name
+            set_display_name(display_name)
+            self.network.display_name = display_name
+            self.panel.set_display_name(display_name)
+
+        if not self.display_name and email:
+            # Use email prefix as fallback display name
+            fallback = email.split("@")[0]
+            self.display_name = fallback
+            set_display_name(fallback)
+            self.network.display_name = fallback
+            self.panel.set_display_name(fallback)
+
+        self.log(f'Logged in as "{self.display_name}" ({email})')
+
+        # Sync profile and connect
+        threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+
+    @Slot()
+    def _on_login_skipped(self):
+        """Handle login skip — use old local UUID flow."""
+        self.log("Login skipped — using local identity")
+        self._auth_logged_in = False
+
+        if self.display_name:
+            # Already have a name — just connect
+            threading.Thread(target=self._auto_connect_presence, daemon=True).start()
+        else:
+            # Show onboarding to collect name
+            self._teams_loaded_signal.emit()
+
+    @Slot()
+    def _on_sign_out(self):
+        """Handle sign out — clear session, show login page."""
+        session = get_auth_session()
+        if session:
+            token = session.get("access_token", "")
+            # Sign out on server in background
+            threading.Thread(
+                target=lambda: auth_manager.sign_out(token), daemon=True
+            ).start()
+
+        clear_auth_session()
+        self._auth_logged_in = False
+        self._auth_refresh_timer.stop()
+        self.log("Signed out")
+
+        # Revert to local UUID for identity
+        self.user_id = get_user_id()
+        self.network.user_id = self.user_id
+
+        # Show login page
+        self.panel._switch_page("login")
+
+    def _refresh_auth_token(self):
+        """Periodically refresh the auth token (called by QTimer)."""
+        def _do_refresh():
+            session = get_auth_session()
+            if not session:
+                return
+            refresh_token = session.get("refresh_token")
+            if not refresh_token:
+                return
+            try:
+                result = auth_manager.refresh_session(refresh_token)
+                if result and result.get("access_token"):
+                    user = result.get("user", {})
+                    save_auth_session({
+                        "access_token": result["access_token"],
+                        "refresh_token": result.get("refresh_token", refresh_token),
+                        "expires_at": int(time.time()) + result.get("expires_in", 3600),
+                        "user_id": user.get("id", session.get("user_id", "")),
+                        "email": user.get("email", session.get("email", "")),
+                    })
+                    log.info("Auth token refreshed")
+            except Exception as e:
+                log.warning(f"Auth token refresh failed: {e}")
+
+        threading.Thread(target=_do_refresh, daemon=True).start()
 
     # ── Team Management ─────────────────────────────────────────
 
@@ -1796,7 +1946,7 @@ class IntercomApp(QObject):
             else:
                 self.log_signal.emit(f"Invalid invite code: {invite_code}")
                 # Show error on onboarding screen (must happen on main thread)
-                from PySide6.QtCore import QMetaObject, Q_ARG
+                from PySide6.QtCore import Q_ARG, QMetaObject
                 QMetaObject.invokeMethod(
                     self.panel, "set_onboarding_error",
                     Qt.QueuedConnection,
@@ -2062,7 +2212,8 @@ def main():
     app.setQuitOnLastWindowClosed(False)  # Keep running with just tray icon
     # Load and set Focal as the global app font
     from PySide6.QtGui import QFont
-    from floating_panel import _load_fonts, FONT_FAMILY
+
+    from floating_panel import FONT_FAMILY, _load_fonts
     _load_fonts()
     app.setFont(QFont(FONT_FAMILY, 13))
     intercom = IntercomApp()

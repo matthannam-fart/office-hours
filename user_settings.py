@@ -1,8 +1,8 @@
+import hashlib
 import json
 import os
 import sys
 import uuid
-import hashlib
 
 
 def _win_restrict_file(filepath):
@@ -66,7 +66,7 @@ def load_settings():
     """Load user settings from disk, or return defaults"""
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r') as f:
+            with open(SETTINGS_FILE) as f:
                 return json.load(f)
         except Exception:
             pass
@@ -99,6 +99,42 @@ def set_display_name(name):
     if not settings.get("user_id") or len(settings.get("user_id", "")) < 16:
         settings["user_id"] = str(uuid.uuid4())
     save_settings(settings)
+
+def get_auth_session():
+    """Return the stored auth session dict, or None if not logged in.
+    Session contains: access_token, refresh_token, expires_at, user_id, email."""
+    settings = load_settings()
+    session = settings.get("auth_session")
+    if session and session.get("access_token"):
+        return session
+    return None
+
+
+def save_auth_session(session):
+    """Store an auth session dict to settings.
+    Expected keys: access_token, refresh_token, expires_at, user_id, email."""
+    settings = load_settings()
+    settings["auth_session"] = {
+        "access_token": session.get("access_token", ""),
+        "refresh_token": session.get("refresh_token", ""),
+        "expires_at": session.get("expires_at", 0),
+        "user_id": session.get("user_id", ""),
+        "email": session.get("email", ""),
+    }
+    save_settings(settings)
+
+
+def clear_auth_session():
+    """Remove the auth session from settings."""
+    settings = load_settings()
+    settings.pop("auth_session", None)
+    save_settings(settings)
+
+
+def is_logged_in():
+    """Check if an auth session exists with a valid access token."""
+    return get_auth_session() is not None
+
 
 def get_ptt_hotkey():
     """Get the configured PTT hotkey name, or None for default."""
@@ -178,16 +214,14 @@ def ensure_lan_cert():
         return CERT_FILE, KEY_FILE
 
     try:
-        import ssl
         import datetime
-        import tempfile
 
         # Use the cryptography library if available, otherwise fall back to openssl CLI
         try:
             from cryptography import x509
-            from cryptography.x509.oid import NameOID
             from cryptography.hazmat.primitives import hashes, serialization
             from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.x509.oid import NameOID
 
             key = ec.generate_private_key(ec.SECP256R1())
             subject = issuer = x509.Name([
@@ -199,8 +233,8 @@ def ensure_lan_cert():
                 .issuer_name(issuer)
                 .public_key(key.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-                .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
+                .not_valid_before(datetime.datetime.now(datetime.UTC))
+                .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650))
                 .sign(key, hashes.SHA256())
             )
 
