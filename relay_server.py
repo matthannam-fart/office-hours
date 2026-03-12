@@ -11,17 +11,17 @@ Usage:
     python relay_server.py --port 50002 --cert server_cert.pem --key server_key.pem
 """
 
-import os
-import socket
-import ssl
-import struct
-import threading
-import json
-import time
-import random
-import string
 import argparse
 import collections
+import json
+import os
+import random
+import socket
+import ssl
+import string
+import struct
+import threading
+import time
 
 # ── Auth ────────────────────────────────────────────────────────
 
@@ -862,25 +862,25 @@ def main():
     global RELAY_AUTH_KEY
     RELAY_AUTH_KEY = args.auth_key
     if RELAY_AUTH_KEY:
-        print(f"[Server] Auth key required for connections")
+        print("[Server] Auth key required for connections")
     else:
-        print(f"[Server] WARNING: No auth key — relay is open to anyone!")
+        print("[Server] WARNING: No auth key — relay is open to anyone!")
 
     # TLS setup
     tls_context = None
     if args.cert and args.key:
         tls_context = create_tls_context(args.cert, args.key)
-        print(f"[Server] TLS ENABLED — encrypted connections required")
+        print("[Server] TLS ENABLED — encrypted connections required")
     else:
-        print(f"[Server] WARNING: TLS disabled — all connections are plaintext!")
-        print(f"[Server] Use --cert and --key to enable TLS")
+        print("[Server] WARNING: TLS disabled — all connections are plaintext!")
+        print("[Server] Use --cert and --key to enable TLS")
 
     tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp_server.bind((args.host, args.port))
     tcp_server.listen(20)
     print(f"[Server] Office Hours Relay listening on {args.host}:{args.port}")
-    print(f"[Server] Presence + Room relay active")
+    print("[Server] Presence + Room relay active")
 
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Launch wrapper for Office Hours — catches crashes and logs them."""
-import sys
 import os
+import sys
+
 
 def run():
     try:

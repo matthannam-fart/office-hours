@@ -1,17 +1,18 @@
-import sounddevice as sd
-import soundfile as sf
-import numpy as np
-import threading
-import queue
+import collections
 import os
 import sys
-import collections
+import threading
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
 
 # Opus codec — high-quality, low-latency voice compression
 try:
     # opuslib uses ctypes.util.find_library which often fails on macOS/Homebrew
     # and Windows (DLL not on PATH). Pre-load from known paths.
-    import ctypes, ctypes.util
+    import ctypes
+    import ctypes.util
     _app_dir = os.path.dirname(os.path.abspath(__file__))
     if ctypes.util.find_library('opus') is None:
         _search_paths = []
@@ -103,8 +104,7 @@ except ImportError:
                     struct.pack_into('<h', result, i * 2, max(-32768, min(32767, sample)))
                 return bytes(result)
 
-import time
-from config import SAMPLE_RATE, CHANNELS, CHUNK_SIZE, DTYPE
+from config import CHANNELS, CHUNK_SIZE, DTYPE, SAMPLE_RATE
 
 # Opus codec settings
 OPUS_BITRATE = 48000          # 48 kbps — clear voice, low bandwidth
@@ -738,20 +738,30 @@ class AudioManager:
         PortAudio double-free from concurrent sd.play()."""
         try:
             duration = 0.15
-            t1 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-            t2 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-            tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
-            tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
-            gap = np.zeros(int(SAMPLE_RATE * 0.05))
-            chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
             if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
+                # Jitter buffer path: use SAMPLE_RATE (matches the stream)
+                t1 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+                t2 = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+                tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
+                tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
+                gap = np.zeros(int(SAMPLE_RATE * 0.05))
+                chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
                 mono = (chime * 32767).astype(np.int16)
                 stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
                 self._jitter_buf.push(stereo)
             else:
+                # sd.play() path: use 44100 Hz stereo for broad device compatibility
+                play_sr = 44100
+                t1 = np.linspace(0, duration, int(play_sr * duration), False)
+                t2 = np.linspace(0, duration, int(play_sr * duration), False)
+                tone1 = 0.3 * np.sin(2 * np.pi * 659 * t1)
+                tone2 = 0.3 * np.sin(2 * np.pi * 784 * t2)
+                gap = np.zeros(int(play_sr * 0.05))
+                chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
+                stereo_chime = np.column_stack([chime, chime])
                 def _play():
                     try:
-                        sd.play(chime, SAMPLE_RATE, device=self.output_device)
+                        sd.play(stereo_chime, play_sr, device=self.output_device)
                         sd.wait()
                     except Exception as e:
                         self.log(f"Notification sound error: {e}")
@@ -765,19 +775,26 @@ class AudioManager:
         PortAudio double-free from concurrent sd.play()."""
         try:
             duration = 0.12
-            t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-            freq = np.linspace(659, 523, len(t))
-            envelope = np.linspace(0.15, 0.0, len(t))
-            tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-            # If play stream is active, inject into jitter buffer
             if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
+                # Jitter buffer path: use SAMPLE_RATE (matches the stream)
+                t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
+                freq = np.linspace(659, 523, len(t))
+                envelope = np.linspace(0.15, 0.0, len(t))
+                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
                 mono = (tone * 32767).astype(np.int16)
                 stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
                 self._jitter_buf.push(stereo)
             else:
+                # sd.play() path: use 44100 Hz stereo for broad device compatibility
+                play_sr = 44100
+                t = np.linspace(0, duration, int(play_sr * duration), False)
+                freq = np.linspace(659, 523, len(t))
+                envelope = np.linspace(0.15, 0.0, len(t))
+                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+                stereo_tone = np.column_stack([tone, tone])
                 def _play():
                     try:
-                        sd.play(tone, SAMPLE_RATE, device=self.output_device)
+                        sd.play(stereo_tone, play_sr, device=self.output_device)
                         sd.wait()
                     except Exception as e:
                         self.log(f"Talk-ended sound error: {e}")

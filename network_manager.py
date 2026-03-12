@@ -1,10 +1,12 @@
+import json
 import socket
 import ssl
-import threading
-import json
-import time
 import struct
-from config import TCP_PORT, UDP_PORT, BUFFER_SIZE, RELAY_PORT, RELAY_TLS, RELAY_CA_CERT, MAX_FRAME_SIZE, RELAY_AUTH_KEY
+import threading
+import time
+
+from config import BUFFER_SIZE, MAX_FRAME_SIZE, RELAY_AUTH_KEY, RELAY_CA_CERT, RELAY_PORT, RELAY_TLS, TCP_PORT, UDP_PORT
+
 
 class NetworkManager:
     def __init__(self, message_callback=None, audio_callback=None, log_callback=None):
@@ -148,8 +150,8 @@ class NetworkManager:
                 self._log(f"TOFU WARNING: Peer {peer_ip} certificate changed!")
                 self._log(f"  Expected: {stored[:23]}...")
                 self._log(f"  Got:      {fingerprint[:23]}...")
-                self._log(f"  Rejecting connection — possible man-in-the-middle attack.")
-                self._log(f"  If this peer legitimately changed certs, remove its entry from trusted_peers in settings.")
+                self._log("  Rejecting connection — possible man-in-the-middle attack.")
+                self._log("  If this peer legitimately changed certs, remove its entry from trusted_peers in settings.")
                 return False
         except Exception as e:
             self._log(f"TOFU verification error: {e}")
@@ -522,7 +524,7 @@ class NetworkManager:
                                 continue
                         else:
                             self._log(f"Accepted plaintext connection from {addr}")
-                    except (socket.timeout, OSError):
+                    except (TimeoutError, OSError):
                         self._log(f"Accepted connection from {addr} (timeout on peek, assuming plaintext)")
                 else:
                     self._log(f"Accepted plaintext connection from {addr}")

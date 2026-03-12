@@ -1,8 +1,10 @@
 import socket
 import sys
-import logging
-from zeroconf import ServiceInfo, Zeroconf, ServiceBrowser, ServiceStateChange
-from config import TCP_PORT, APP_NAME
+
+from zeroconf import ServiceBrowser, ServiceInfo, ServiceStateChange, Zeroconf
+
+from config import APP_NAME, TCP_PORT
+
 
 class DiscoveryManager:
     def __init__(self, on_peer_found=None, on_peer_lost=None):
@@ -29,7 +31,7 @@ class DiscoveryManager:
     def register_service(self):
         local_ip = self.get_local_ip()
         print(f"Registering Service on {local_ip}:{TCP_PORT}")
-        
+
         self.info = ServiceInfo(
             self.service_type,
             self.service_name,
@@ -38,7 +40,7 @@ class DiscoveryManager:
             properties={'version': '2.0'},
             server=f"{socket.gethostname()}.local."
         )
-        
+
         try:
             self.zeroconf.register_service(self.info)
         except Exception as e:
@@ -62,7 +64,7 @@ class DiscoveryManager:
                 addresses = [socket.inet_ntoa(addr) for addr in info.addresses]
                 if addresses and self.on_peer_found:
                     self.on_peer_found(name, addresses[0])
-        
+
         elif state_change is ServiceStateChange.Removed:
             if self.on_peer_lost:
                 self.on_peer_lost(name)

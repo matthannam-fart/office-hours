@@ -3,8 +3,6 @@ hotkey_manager.py — Global Push-to-Talk Hotkey
 Cross-platform (Mac + Windows + Linux) global keyboard listener.
 Uses pynput for system-wide key capture without needing app focus.
 """
-import sys
-import threading
 
 # Default PTT key — F24 is unused on most keyboards, safe default.
 # Users can rebind to any key via settings.

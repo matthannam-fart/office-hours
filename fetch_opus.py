@@ -9,9 +9,9 @@ This is called automatically by the install scripts, but can also be run manuall
     python fetch_opus.py
 """
 import os
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 import tempfile
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +25,8 @@ OPUS_VERSION = "1.5.2"
 def check_opus():
     """Return True if opus is already loadable."""
     try:
-        import ctypes, ctypes.util
+        import ctypes
+        import ctypes.util
         if ctypes.util.find_library('opus'):
             return True
         # Check known paths by platform
@@ -55,13 +56,13 @@ def fetch_windows():
     """Download opus.dll for Windows (usually bundled — this is a fallback)."""
     dll_path = os.path.join(APP_DIR, 'opus.dll')
     if os.path.exists(dll_path):
-        print(f"  ✓ opus.dll bundled with app")
+        print("  ✓ opus.dll bundled with app")
         return True
 
     # Also check libopus-0.dll (common name from MSYS2/vcpkg)
     alt_path = os.path.join(APP_DIR, 'libopus-0.dll')
     if os.path.exists(alt_path):
-        print(f"  ✓ libopus-0.dll found")
+        print("  ✓ libopus-0.dll found")
         return True
 
     print("  opus.dll missing — downloading Opus codec...")
@@ -97,7 +98,7 @@ def fetch_windows():
                             best = full
             if best:
                 shutil.copy2(best, dll_path)
-                print(f"  ✓ Installed opus.dll from NuGet")
+                print("  ✓ Installed opus.dll from NuGet")
                 return True
 
         print("  NuGet strategy failed.")

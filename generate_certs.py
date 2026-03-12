@@ -18,12 +18,13 @@ import datetime
 import os
 import sys
 
+
 def generate_certs(domain="localhost", output_dir="."):
     try:
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
     except ImportError:
         print("Error: 'cryptography' package is required.")
         print("Install it with: pip install cryptography")
@@ -32,7 +33,7 @@ def generate_certs(domain="localhost", output_dir="."):
     os.makedirs(output_dir, exist_ok=True)
 
     # ── Step 1: Generate CA ──────────────────────────────────────
-    print(f"Generating CA certificate...")
+    print("Generating CA certificate...")
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, "Office Hours CA"),
@@ -45,8 +46,8 @@ def generate_certs(domain="localhost", output_dir="."):
         .issuer_name(ca_name)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -85,8 +86,8 @@ def generate_certs(domain="localhost", output_dir="."):
         .issuer_name(ca_name)
         .public_key(server_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
         .add_extension(
             x509.SubjectAlternativeName(san_names),
             critical=False,
@@ -123,11 +124,11 @@ def generate_certs(domain="localhost", output_dir="."):
     print()
     print("  Clients (self-signed mode):")
     print(f"    export TALKBACK_RELAY_CA_CERT={ca_path}")
-    print(f"    export TALKBACK_RELAY_TLS=1")
+    print("    export TALKBACK_RELAY_TLS=1")
     print()
     print("  Or for Let's Encrypt (no CA file needed):")
-    print(f"    export TALKBACK_RELAY_TLS=1")
-    print(f"    # Clients use system trust store automatically")
+    print("    export TALKBACK_RELAY_TLS=1")
+    print("    # Clients use system trust store automatically")
 
 
 def main():

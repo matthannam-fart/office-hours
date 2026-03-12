@@ -41,6 +41,7 @@ LOG_LEVEL = os.environ.get('TALKBACK_LOG_LEVEL', 'INFO')
 # ── Logging Setup ─────────────────────────────────────────────
 import logging
 
+
 def setup_logging():
     """Configure the application-wide logger."""
     logger = logging.getLogger('officehours')
