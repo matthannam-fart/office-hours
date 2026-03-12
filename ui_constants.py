@@ -26,6 +26,11 @@ PANEL_W = 310
 SIDEBAR_W = 56
 PANEL_RADIUS = 14
 
+# Compact vertical strip dimensions
+STRIP_W = 52
+STRIP_AVATAR_SIZE = 36
+STRIP_RADIUS = 12
+
 # ── Dark Theme Palette ───────────────────────────────────────────
 DARK = {
     'BG':         '#1e1e1e',   # Panel background

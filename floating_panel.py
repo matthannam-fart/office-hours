@@ -3,38 +3,65 @@ floating_panel.py — Office Hours Menu Bar Panel
 Frameless popup widget anchored to the system tray icon.
 Matches the wireframe at menubar_wireframe.html.
 """
-import sys
-import os
 import json
+import os
+import sys
 import threading
-from urllib.request import urlopen, Request
-from urllib.error import URLError
-from ctypes import c_void_p
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QScrollArea, QSizePolicy, QGraphicsDropShadowEffect,
-    QGraphicsOpacityEffect, QSystemTrayIcon, QLineEdit, QSpacerItem, QSlider,
-    QComboBox, QStackedWidget, QMenu
-)
+from urllib.request import Request, urlopen
+
 from PySide6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, Slot,
-    QSize, QRect, QPoint, Property, QRectF
+    QEasingCurve,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
 )
 from PySide6.QtGui import (
-    QFont, QColor, QPainter, QBrush, QRadialGradient, QPen,
-    QPixmap, QIcon, QPainterPath, QFontDatabase, QAction
+    QColor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPixmap,
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtCore import QUrl
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QStackedWidget,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 
 # Shared constants (extracted to ui_constants.py)
-from ui_constants import COLORS, MODE_LABELS, RADIO_STATIONS, PANEL_W, PANEL_RADIUS, DARK, LIGHT, SIDEBAR_W
+from ui_constants import (
+    COLORS, DARK, LIGHT, MODE_LABELS, PANEL_RADIUS, PANEL_W, SIDEBAR_W,
+    STRIP_AVATAR_SIZE, STRIP_RADIUS, STRIP_W,
+)
 
 # Snapshot the original dark palette so we can restore it after switching to light
 _DARK_ORIGINAL = dict(DARK)
 
 # Widget classes (extracted to widgets.py)
-from widgets import GlowingOrb, LevelMeter, UnicodeEQ, SmallOrb, UserRow, ToggleSwitch, NavButton
+from widgets import GlowingOrb, SmallOrb, ToggleSwitch, UnicodeEQ, UserRow
 
 # ── Font Loading ─────────────────────────────────────────────────
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -103,6 +130,9 @@ class FloatingPanel(QWidget):
     join_request_declined = Signal(str, str)   # request_id, requester_id — admin declined
     team_selected_from_lobby = Signal(str, str)  # team_id, team_name — user picked existing team
     deck_guide_dismissed = Signal()               # user clicked "don't show again" on deck guide
+    login_completed = Signal(dict)                 # emitted with session data after successful auth
+    login_skipped = Signal()                       # emitted when user clicks "Skip"
+    sign_out_requested = Signal()                  # emitted when user clicks "Sign Out" in settings
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -122,6 +152,13 @@ class FloatingPanel(QWidget):
         self._is_onboarding = False  # True while onboarding is shown
         self._radio_station = None  # currently playing station name
         self._user_rows = {}  # uid -> UserRow (initialized before set_users can be called)
+        self._cached_users = []  # Last user list for strip avatar rebuilds
+        self._strip_selected_uid = ""  # Currently selected user in strip
+        self._fav_selected_uid = ""  # Currently selected user in sidebar favorites
+        self._fav_ring_timer = QTimer(self)  # Animated ring on selected favorite
+        self._fav_ring_opacity = 0.6
+        self._fav_ring_dir = 1
+        self._fav_ring_timer.timeout.connect(self._fav_ring_step)
 
 
         import sys
@@ -265,6 +302,10 @@ class FloatingPanel(QWidget):
         self._settings_view = self._build_settings_view()
         self._content_stack.addWidget(self._settings_view)
 
+        # Page 5: Login
+        self._login_page = self._build_login_page()
+        self._content_stack.addWidget(self._login_page)
+
         self._content_layout.addWidget(self._content_stack, 1)
 
         # ── Status bar at bottom of content ───────────────────
@@ -280,6 +321,10 @@ class FloatingPanel(QWidget):
         # ── Pinned compact (hidden by default) ────────────────
         self._pinned_compact = self._build_pinned_compact(self._frame)
         self._pinned_compact.setVisible(False)
+
+        # ── Compact vertical strip (hidden by default) ────
+        self._compact_strip = self._build_compact_strip()
+        self._compact_strip.setVisible(False)
 
         # Legacy compat: _header reference (used by _toggle_pin etc.)
         self._header = self._sidebar
@@ -495,12 +540,12 @@ class FloatingPanel(QWidget):
         self._toggle_radio()
         if self._radio_playing:
             # Update button to show "on" state
-            self._sidebar_radio_btn.setStyleSheet(f"""
-                QPushButton {{
+            self._sidebar_radio_btn.setStyleSheet("""
+                QPushButton {
                     background: rgba(42, 191, 191, 0.15); border: none;
                     border-radius: 18px; font-size: 18px;
-                }}
-                QPushButton:hover {{ background: rgba(42, 191, 191, 0.25); }}
+                }
+                QPushButton:hover { background: rgba(42, 191, 191, 0.25); }
             """)
             self._sidebar_radio_btn.setToolTip("Radio (playing)")
             self._show_radio_vol_popup()
@@ -603,7 +648,27 @@ class FloatingPanel(QWidget):
             btn.setFixedSize(36, 36)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip(name)
-            color = COLORS.get(mode, COLORS['GREEN'])
+            is_selected = (uid == self._fav_selected_uid)
+            self._style_fav_button(btn, mode, is_selected)
+            btn.clicked.connect(lambda checked=False, u_id=uid: self.user_selected.emit(u_id))
+            self._fav_layout.addWidget(btn, 0, Qt.AlignCenter)
+            self._fav_buttons[uid] = btn
+
+    def _style_fav_button(self, btn, mode, selected=False):
+        """Apply styling to a sidebar favorite button. Selected gets a bright ring."""
+        color = COLORS.get(mode, COLORS['GREEN'])
+        if selected:
+            qc = QColor(color)
+            r, g, b = qc.red(), qc.green(), qc.blue()
+            alpha = self._fav_ring_opacity
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {color}; color: white;
+                    border: 3px solid rgba({r}, {g}, {b}, {alpha:.2f});
+                    border-radius: 18px; font-size: 12px; font-weight: 800;
+                }}
+            """)
+        else:
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: {color}; color: white; border: none;
@@ -611,9 +676,43 @@ class FloatingPanel(QWidget):
                 }}
                 QPushButton:hover {{ border: 2px solid {DARK['TEXT']}; }}
             """)
-            btn.clicked.connect(lambda checked=False, u_id=uid: self.user_selected.emit(u_id))
-            self._fav_layout.addWidget(btn, 0, Qt.AlignCenter)
-            self._fav_buttons[uid] = btn
+
+    def _fav_ring_step(self):
+        """Animate the selected favorite's ring opacity."""
+        self._fav_ring_opacity += self._fav_ring_dir * 0.03
+        if self._fav_ring_opacity >= 1.0:
+            self._fav_ring_opacity = 1.0
+            self._fav_ring_dir = -1
+        elif self._fav_ring_opacity <= 0.4:
+            self._fav_ring_opacity = 0.4
+            self._fav_ring_dir = 1
+        btn = self._fav_buttons.get(self._fav_selected_uid)
+        if btn:
+            mode = 'GREEN'
+            for u in self._cached_users:
+                if u.get('id') == self._fav_selected_uid:
+                    mode = u.get('mode', 'GREEN')
+                    break
+            self._style_fav_button(btn, mode, selected=True)
+
+    def _sync_fav_selection(self, selected_uid):
+        """Sync sidebar favorite selection to match the given user id."""
+        self._fav_selected_uid = selected_uid
+        # Stop animation if deselected
+        if not selected_uid:
+            self._fav_ring_timer.stop()
+        else:
+            self._fav_ring_opacity = 0.6
+            self._fav_ring_dir = 1
+            self._fav_ring_timer.start(40)
+        # Re-style old and new buttons
+        for uid, btn in self._fav_buttons.items():
+            mode = 'GREEN'
+            for u in self._cached_users:
+                if u.get('id') == uid:
+                    mode = u.get('mode', 'GREEN')
+                    break
+            self._style_fav_button(btn, mode, uid == selected_uid)
 
     def _on_nav_clicked(self, key):
         """Handle sidebar nav button clicks (legacy compat)."""
@@ -622,11 +721,12 @@ class FloatingPanel(QWidget):
     def _switch_page(self, key):
         """Switch the content area to show the selected page."""
         self._active_nav = key
-        # Page map: welcome=0, users=1, teams=2, radio=3, settings=4
-        page_map = {"welcome": 0, "users": 1, "teams": 2, "radio": 3, "settings": 4}
+        # Page map: welcome=0, users=1, teams=2, radio=3, settings=4, login=5
+        page_map = {"welcome": 0, "users": 1, "teams": 2, "radio": 3, "settings": 4, "login": 5}
         self._content_stack.setCurrentIndex(page_map.get(key, 0))
 
         is_welcome = (key == "welcome")
+        is_login = (key == "login")
         has_team = bool(getattr(self, '_active_team_name_cache', ''))
         settings_from_welcome = (key == "settings" and getattr(self, '_settings_back_page', '') == "welcome")
         show_sidebar = key in ("users", "teams", "radio", "settings") and not settings_from_welcome
@@ -638,12 +738,12 @@ class FloatingPanel(QWidget):
                 f"border-left: 1px solid {DARK['BORDER']};" if show_sidebar else "border: none;"
             )
 
-        # Hide status bar and header on welcome/settings
+        # Hide status bar and header on welcome/settings/login
         self._status_bar.setVisible(show_sidebar)
         self._content_header.setVisible(show_sidebar and key != "settings")
 
         # Panel width
-        if is_welcome:
+        if is_welcome or is_login:
             self.setFixedWidth(260)
         elif settings_from_welcome:
             self.setFixedWidth(260)
@@ -946,6 +1046,409 @@ class FloatingPanel(QWidget):
 
         return page
 
+    # ── Login Page ────────────────────────────────────────────────────
+    def _build_login_page(self):
+        """Login/signup page: email+password, Google OAuth, magic link."""
+        page = QWidget()
+        page.setStyleSheet("border: none;")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(24, 16, 24, 16)
+        v.setSpacing(0)
+
+        # OH Logo from file
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
+        if os.path.exists(logo_path):
+            logo_px = QPixmap(logo_path).scaledToHeight(40, Qt.SmoothTransformation)
+            logo.setPixmap(logo_px)
+        v.addWidget(logo)
+        v.addSpacing(6)
+
+        # Subtitle
+        self._login_subtitle = QLabel("Sign in to Office Hours")
+        self._login_subtitle.setAlignment(Qt.AlignCenter)
+        self._login_subtitle.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {DARK['TEXT_DIM']};")
+        v.addWidget(self._login_subtitle)
+        v.addSpacing(14)
+
+        # Display name field (only visible in signup mode)
+        self._login_name_label = QLabel("DISPLAY NAME")
+        self._login_name_label.setStyleSheet(
+            f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;"
+        )
+        self._login_name_label.setVisible(False)
+        v.addWidget(self._login_name_label)
+        v.addSpacing(2)
+
+        self._login_name_input = QLineEdit()
+        self._login_name_input.setPlaceholderText("Your Name")
+        self._login_name_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 7px 10px; font-size: 12px;
+                color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        self._login_name_input.setMaxLength(30)
+        self._login_name_input.setVisible(False)
+        v.addWidget(self._login_name_input)
+        v.addSpacing(6)
+
+        # Email field
+        email_lbl = QLabel("EMAIL")
+        email_lbl.setStyleSheet(
+            f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;"
+        )
+        v.addWidget(email_lbl)
+        v.addSpacing(2)
+
+        self._login_email_input = QLineEdit()
+        self._login_email_input.setPlaceholderText("you@example.com")
+        self._login_email_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 7px 10px; font-size: 12px;
+                color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        v.addWidget(self._login_email_input)
+        v.addSpacing(6)
+
+        # Password field
+        self._login_password_label = QLabel("PASSWORD")
+        self._login_password_label.setStyleSheet(
+            f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 1.5px;"
+        )
+        v.addWidget(self._login_password_label)
+        v.addSpacing(2)
+
+        self._login_password_input = QLineEdit()
+        self._login_password_input.setPlaceholderText("Password")
+        self._login_password_input.setEchoMode(QLineEdit.Password)
+        self._login_password_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 7px 10px; font-size: 12px;
+                color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        v.addWidget(self._login_password_input)
+        v.addSpacing(10)
+
+        # Sign In / Sign Up button
+        self._login_submit_btn = QPushButton("Sign In")
+        self._login_submit_btn.setCursor(Qt.PointingHandCursor)
+        self._login_submit_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {DARK['TEAL']}; color: white; border: none;
+                border-radius: 6px; padding: 9px; font-size: 12px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: #239E9E; }}
+            QPushButton:disabled {{ background: {DARK['BORDER']}; color: {DARK['TEXT_FAINT']}; }}
+        """)
+        self._login_submit_btn.clicked.connect(self._on_login_submit)
+        v.addWidget(self._login_submit_btn)
+        v.addSpacing(10)
+
+        # Divider "or"
+        divider_row = QHBoxLayout()
+        divider_row.setContentsMargins(0, 0, 0, 0)
+        line_l = QFrame()
+        line_l.setFrameShape(QFrame.HLine)
+        line_l.setStyleSheet(f"color: {DARK['BORDER']};")
+        line_r = QFrame()
+        line_r.setFrameShape(QFrame.HLine)
+        line_r.setStyleSheet(f"color: {DARK['BORDER']};")
+        or_lbl = QLabel("or")
+        or_lbl.setStyleSheet(f"color: {DARK['TEXT_FAINT']}; font-size: 10px;")
+        or_lbl.setAlignment(Qt.AlignCenter)
+        divider_row.addWidget(line_l, 1)
+        divider_row.addWidget(or_lbl)
+        divider_row.addWidget(line_r, 1)
+        v.addLayout(divider_row)
+        v.addSpacing(10)
+
+        # Google sign-in button
+        google_btn = QPushButton("Sign in with Google")
+        google_btn.setCursor(Qt.PointingHandCursor)
+        google_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT']};
+                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
+                padding: 8px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        google_btn.clicked.connect(self._on_login_google)
+        v.addWidget(google_btn)
+        v.addSpacing(6)
+
+        # Magic link button
+        magic_btn = QPushButton("Email me a link")
+        magic_btn.setCursor(Qt.PointingHandCursor)
+        magic_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT_DIM']};
+                border: none; font-size: 11px; font-weight: 500;
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT']}; }}
+        """)
+        magic_btn.clicked.connect(self._on_login_magic_link)
+        v.addWidget(magic_btn)
+        v.addSpacing(12)
+
+        # Error message label
+        self._login_error = QLabel("")
+        self._login_error.setAlignment(Qt.AlignCenter)
+        self._login_error.setWordWrap(True)
+        self._login_error.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']};")
+        self._login_error.setVisible(False)
+        v.addWidget(self._login_error)
+
+        # Status / info message (e.g., "Check your email")
+        self._login_info = QLabel("")
+        self._login_info.setAlignment(Qt.AlignCenter)
+        self._login_info.setWordWrap(True)
+        self._login_info.setStyleSheet(f"font-size: 11px; color: {DARK['TEAL']};")
+        self._login_info.setVisible(False)
+        v.addWidget(self._login_info)
+        v.addSpacing(8)
+
+        # Toggle sign-in / sign-up link
+        self._login_toggle_btn = QPushButton("Don't have an account? Sign Up")
+        self._login_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self._login_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEAL']};
+                border: none; font-size: 11px; font-weight: 500;
+            }}
+            QPushButton:hover {{ color: {DARK['INFO_LT']}; }}
+        """)
+        self._login_toggle_btn.clicked.connect(self._toggle_login_mode)
+        v.addWidget(self._login_toggle_btn)
+        v.addSpacing(8)
+
+        # Skip link
+        skip_btn = QPushButton("Skip — use without an account")
+        skip_btn.setCursor(Qt.PointingHandCursor)
+        skip_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['TEXT_FAINT']};
+                border: none; font-size: 10px;
+            }}
+            QPushButton:hover {{ color: {DARK['TEXT_DIM']}; }}
+        """)
+        skip_btn.clicked.connect(self.login_skipped.emit)
+        v.addWidget(skip_btn)
+
+        v.addStretch()
+
+        # Internal state
+        self._login_is_signup = False
+
+        return page
+
+    def _toggle_login_mode(self):
+        """Toggle between sign-in and sign-up mode on the login page."""
+        self._login_is_signup = not self._login_is_signup
+        self._login_error.setVisible(False)
+        self._login_info.setVisible(False)
+        if self._login_is_signup:
+            self._login_subtitle.setText("Create your account")
+            self._login_submit_btn.setText("Sign Up")
+            self._login_toggle_btn.setText("Already have an account? Sign In")
+            self._login_name_label.setVisible(True)
+            self._login_name_input.setVisible(True)
+        else:
+            self._login_subtitle.setText("Sign in to Office Hours")
+            self._login_submit_btn.setText("Sign In")
+            self._login_toggle_btn.setText("Don't have an account? Sign Up")
+            self._login_name_label.setVisible(False)
+            self._login_name_input.setVisible(False)
+
+    def _show_login_error(self, msg):
+        """Show an error message on the login page (thread-safe via Signal)."""
+        self._login_error.setText(str(msg))
+        self._login_error.setVisible(True)
+        self._login_info.setVisible(False)
+        self._login_submit_btn.setEnabled(True)
+
+    def _show_login_info(self, msg):
+        """Show an info message on the login page."""
+        self._login_info.setText(str(msg))
+        self._login_info.setVisible(True)
+        self._login_error.setVisible(False)
+
+    def _on_login_submit(self):
+        """Handle the Sign In / Sign Up button click."""
+        import time
+
+        email = self._login_email_input.text().strip()
+        password = self._login_password_input.text().strip()
+
+        if not email:
+            self._show_login_error("Please enter your email.")
+            return
+        if not password:
+            self._show_login_error("Please enter your password.")
+            return
+        if self._login_is_signup:
+            name = self._login_name_input.text().strip()
+            if not name:
+                self._show_login_error("Please enter your display name.")
+                return
+
+        self._login_error.setVisible(False)
+        self._login_info.setVisible(False)
+        self._login_submit_btn.setEnabled(False)
+
+        def _do_auth():
+            try:
+                import auth_manager
+                if self._login_is_signup:
+                    name = self._login_name_input.text().strip()
+                    result = auth_manager.sign_up(email, password, name)
+                else:
+                    result = auth_manager.sign_in_email(email, password)
+
+                if not result:
+                    self._show_login_error("Authentication failed — no response.")
+                    return
+
+                # Check if email confirmation is required (signup)
+                if self._login_is_signup and not result.get("access_token"):
+                    self._show_login_info("Check your email to confirm your account.")
+                    self._login_submit_btn.setEnabled(True)
+                    return
+
+                # Build session dict
+                user = result.get("user", {})
+                session = {
+                    "access_token": result.get("access_token", ""),
+                    "refresh_token": result.get("refresh_token", ""),
+                    "expires_at": int(time.time()) + result.get("expires_in", 3600),
+                    "user_id": user.get("id", ""),
+                    "email": user.get("email", email),
+                }
+
+                # Extract display name from user metadata
+                meta = user.get("user_metadata", {})
+                display_name = meta.get("display_name") or meta.get("full_name") or meta.get("name") or ""
+                if display_name:
+                    session["display_name"] = display_name
+                elif self._login_is_signup:
+                    session["display_name"] = self._login_name_input.text().strip()
+
+                self.login_completed.emit(session)
+
+            except Exception as e:
+                self._show_login_error(str(e))
+
+        threading.Thread(target=_do_auth, daemon=True).start()
+
+    def _on_login_google(self):
+        """Handle Google sign-in button click."""
+        import time
+
+        self._login_error.setVisible(False)
+        self._show_login_info("Opening browser for Google sign-in...")
+
+        def _do_google():
+            try:
+                import auth_manager
+                result = auth_manager.sign_in_google()
+
+                if not result or not result.get("access_token"):
+                    self._show_login_error("Google sign-in failed — no token received.")
+                    return
+
+                # Get user info
+                user = result.get("user", {})
+                if not user:
+                    try:
+                        user = auth_manager.get_user(result["access_token"])
+                    except Exception:
+                        user = {}
+
+                meta = user.get("user_metadata", {})
+                display_name = meta.get("full_name") or meta.get("name") or meta.get("display_name") or ""
+
+                session = {
+                    "access_token": result.get("access_token", ""),
+                    "refresh_token": result.get("refresh_token", ""),
+                    "expires_at": int(time.time()) + int(result.get("expires_in", 3600)),
+                    "user_id": user.get("id", ""),
+                    "email": user.get("email", ""),
+                    "display_name": display_name,
+                }
+
+                self.login_completed.emit(session)
+
+            except Exception as e:
+                self._show_login_error(str(e))
+
+        threading.Thread(target=_do_google, daemon=True).start()
+
+    def _on_login_magic_link(self):
+        """Handle 'Email me a link' button click."""
+        import time
+
+        email = self._login_email_input.text().strip()
+        if not email:
+            self._show_login_error("Please enter your email first.")
+            return
+
+        self._login_error.setVisible(False)
+
+        def _do_magic():
+            try:
+                import auth_manager
+
+                # Start the listener first so we know the port
+                server, port = auth_manager.start_magic_link_listener()
+                redirect_uri = f"http://localhost:{port}/callback"
+
+                # Send the magic link with redirect
+                auth_manager.send_magic_link(email, redirect_to=redirect_uri)
+                self._show_login_info("Check your email — click the link to sign in.")
+
+                # Wait for the callback
+                result = auth_manager.wait_for_magic_link_callback(server)
+
+                if not result or not result.get("access_token"):
+                    self._show_login_error("Magic link sign-in failed — no token received.")
+                    return
+
+                # Get user info
+                user = {}
+                try:
+                    user = auth_manager.get_user(result["access_token"])
+                except Exception:
+                    pass
+
+                meta = user.get("user_metadata", {})
+                display_name = meta.get("full_name") or meta.get("name") or meta.get("display_name") or ""
+
+                session = {
+                    "access_token": result.get("access_token", ""),
+                    "refresh_token": result.get("refresh_token", ""),
+                    "expires_at": int(time.time()) + int(result.get("expires_in", 3600)),
+                    "user_id": user.get("id", ""),
+                    "email": user.get("email", email),
+                    "display_name": display_name,
+                }
+
+                self.login_completed.emit(session)
+
+            except Exception as e:
+                self._show_login_error(str(e))
+
+        threading.Thread(target=_do_magic, daemon=True).start()
+
     def _on_welcome_join_click(self):
         """Join button clicked on welcome page."""
         code = self._welcome_code_input.text().strip()
@@ -1062,7 +1565,7 @@ class FloatingPanel(QWidget):
 
         # ── Bottom actions ──
         actions = QFrame()
-        actions.setStyleSheet(f"border: none; background: transparent;")
+        actions.setStyleSheet("border: none; background: transparent;")
         af = QVBoxLayout(actions)
         af.setContentsMargins(10, 6, 10, 10)
         af.setSpacing(6)
@@ -1138,12 +1641,12 @@ class FloatingPanel(QWidget):
 
             row = QFrame()
             if is_active:
-                row.setStyleSheet(f"""
-                    QFrame {{
+                row.setStyleSheet("""
+                    QFrame {
                         background: rgba(0, 166, 81, 0.08);
                         border: 1px solid rgba(0, 166, 81, 0.30);
                         border-radius: 8px;
-                    }}
+                    }
                 """)
             else:
                 row.setStyleSheet(f"""
@@ -1216,7 +1719,7 @@ class FloatingPanel(QWidget):
     # ── Status Bar (bottom of content) — PTT + Page All ──────────
     def _build_status_bar(self):
         bar = QFrame()
-        bar.setStyleSheet(f"border: none; background: transparent;")
+        bar.setStyleSheet("border: none; background: transparent;")
         bar.setFixedHeight(56)
 
         v = QVBoxLayout(bar)
@@ -2061,7 +2564,16 @@ class FloatingPanel(QWidget):
     def show_manage_team_dialog(self, team_name, team_id, members, invite_code="",
                                is_admin=False, add_callback=None, remove_callback=None):
         """Show team info dialog. All members see code + members, admins can add/remove."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QListWidget, QListWidgetItem
+        from PySide6.QtWidgets import (
+            QDialog,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QListWidget,
+            QListWidgetItem,
+            QPushButton,
+            QVBoxLayout,
+        )
         # Store ref to prevent garbage collection; use panel as parent but override window flags
         self._manage_dlg = dlg = QDialog(self)
         dlg.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
@@ -2082,7 +2594,7 @@ class FloatingPanel(QWidget):
         # Invite code display
         if invite_code:
             code_frame = QFrame()
-            code_frame.setStyleSheet(f"background: rgba(0, 166, 81, 0.08); border: 1px solid rgba(0, 166, 81, 0.20); border-radius: 8px;")
+            code_frame.setStyleSheet("background: rgba(0, 166, 81, 0.08); border: 1px solid rgba(0, 166, 81, 0.20); border-radius: 8px;")
             code_layout = QVBoxLayout(code_frame)
             code_layout.setContentsMargins(12, 10, 12, 10)
             code_lbl = QLabel("Invite Code")
@@ -2528,6 +3040,197 @@ class FloatingPanel(QWidget):
             QPushButton:pressed {{ background: {rgba_pressed}; border: 2px solid {rgba_border}; }}
         """)
 
+    # ── Compact Vertical Strip ────────────────────────────────────
+    def _build_compact_strip(self):
+        """Build a 52px-wide vertical strip with expand btn, status dot, and team avatars."""
+        strip = QFrame(self._frame)
+        strip.setObjectName("compactStrip")
+        strip.setStyleSheet(f"""
+            QFrame#compactStrip {{
+                background: {DARK['BG']};
+                border: 1px solid {DARK['BORDER']};
+                border-radius: {STRIP_RADIUS}px;
+            }}
+        """)
+
+        v = QVBoxLayout(strip)
+        v.setContentsMargins(6, 10, 6, 10)
+        v.setSpacing(6)
+        v.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+
+        # ── Expand button at top ──
+        expand_btn = QPushButton("OH")
+        expand_btn.setFixedSize(28, 28)
+        expand_btn.setCursor(Qt.PointingHandCursor)
+        expand_btn.setToolTip("Expand panel")
+        expand_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 6px; font-size: 11px; font-weight: 900;
+                color: {DARK['ACCENT']};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        expand_btn.clicked.connect(self._toggle_pin)
+        v.addWidget(expand_btn, 0, Qt.AlignCenter)
+
+        # ── Status dot (shows current mode, click to change) ──
+        self._strip_status_dot = QPushButton()
+        self._strip_status_dot.setFixedSize(20, 20)
+        self._strip_status_dot.setCursor(Qt.PointingHandCursor)
+        self._strip_status_dot.setToolTip("Change status")
+        self._update_strip_status_dot()
+        self._strip_status_dot.clicked.connect(self._show_strip_mode_menu)
+        v.addWidget(self._strip_status_dot, 0, Qt.AlignCenter)
+
+        # ── Separator ──
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setFixedWidth(STRIP_W - 16)
+        sep.setStyleSheet(f"background: {DARK['BORDER']};")
+        v.addWidget(sep, 0, Qt.AlignCenter)
+
+        # ── Scrollable avatar area ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QWidget { background: transparent; }
+        """)
+        avatar_container = QWidget()
+        self._strip_avatar_layout = QVBoxLayout(avatar_container)
+        self._strip_avatar_layout.setContentsMargins(0, 4, 0, 4)
+        self._strip_avatar_layout.setSpacing(6)
+        self._strip_avatar_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._strip_avatar_layout.addStretch()
+        scroll.setWidget(avatar_container)
+        v.addWidget(scroll, 1)
+
+        self._strip_avatar_buttons = {}  # uid -> QPushButton
+        return strip
+
+    def _update_strip_status_dot(self):
+        """Update the strip status dot to reflect current mode."""
+        color = COLORS.get(self._current_mode, COLORS['GREEN'])
+        self._strip_status_dot.setStyleSheet(f"""
+            QPushButton {{
+                background: {color}; border: none;
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{ border: 2px solid {DARK['TEXT']}; }}
+        """)
+        self._strip_status_dot.setToolTip(
+            f"Status: {MODE_LABELS.get(self._current_mode, 'Available')} — click to change"
+        )
+
+    def _show_strip_mode_menu(self):
+        """Show a context menu to pick status mode from the strip."""
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px; color: {DARK['TEXT']}; border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        for mode_key, label in MODE_LABELS.items():
+            action = menu.addAction(f"\u25cf  {label}")
+            action.setData(mode_key)
+        chosen = menu.exec(self._strip_status_dot.mapToGlobal(
+            QPoint(self._strip_status_dot.width() + 4, 0)
+        ))
+        if chosen:
+            self.mode_set_requested.emit(chosen.data())
+
+    def _update_strip_avatars(self, users):
+        """Rebuild the avatar buttons in the compact strip from the user list."""
+        # Clear existing
+        for btn in self._strip_avatar_buttons.values():
+            btn.deleteLater()
+        self._strip_avatar_buttons = {}
+
+        for u in users:
+            if u.get('mode') == 'OFFLINE':
+                continue
+            uid = u.get('id', '')
+            name = u.get('name', '?')
+            mode = u.get('mode', 'GREEN')
+            initials = self._peer_initials(name)
+            if not initials:
+                continue
+
+            btn = QPushButton(initials)
+            btn.setFixedSize(STRIP_AVATAR_SIZE, STRIP_AVATAR_SIZE)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(name)
+            is_selected = (uid == self._strip_selected_uid)
+            self._style_strip_avatar(btn, mode, is_selected)
+            btn.clicked.connect(
+                lambda checked=False, u_id=uid: self._on_strip_avatar_clicked(u_id)
+            )
+            self._strip_avatar_layout.insertWidget(
+                self._strip_avatar_layout.count() - 1, btn, 0, Qt.AlignCenter
+            )
+            self._strip_avatar_buttons[uid] = btn
+
+    def _style_strip_avatar(self, btn, mode, selected=False):
+        """Apply styling to a strip avatar button. Selected gets a bright mode-colored ring."""
+        color = COLORS.get(mode, COLORS['GREEN'])
+        radius = STRIP_AVATAR_SIZE // 2
+        if selected:
+            qc = QColor(color)
+            lighter = qc.lighter(140).name()
+            border = f"border: 3px solid {lighter};"
+        else:
+            border = "border: none;"
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {color}; color: white; {border}
+                border-radius: {radius}px; font-size: 12px; font-weight: 800;
+            }}
+            QPushButton:hover {{ border: 2px solid {DARK['TEXT']}; }}
+        """)
+
+    def _on_strip_avatar_clicked(self, user_id):
+        """Handle click on a strip avatar — select/deselect as PTT target."""
+        if self._strip_selected_uid == user_id:
+            self._strip_selected_uid = ""
+            self.user_selected.emit("")
+        else:
+            self._strip_selected_uid = user_id
+            self.user_selected.emit(user_id)
+        # Re-style all avatars
+        for uid, btn in self._strip_avatar_buttons.items():
+            # Find mode from cached users
+            mode = 'GREEN'
+            for u in self._cached_users:
+                if u.get('id') == uid:
+                    mode = u.get('mode', 'GREEN')
+                    break
+            self._style_strip_avatar(btn, mode, uid == self._strip_selected_uid)
+
+    def _calc_strip_height(self):
+        """Compute strip height based on user count, capped at screen height - 50px."""
+        # Top section: expand btn (28) + spacing (6) + dot (20) + spacing (6) + sep (1) + spacing (6)
+        # = ~67px + margins (20) = ~87px
+        top_fixed = 87
+        online = sum(
+            1 for u in self._cached_users if u.get('mode') != 'OFFLINE'
+        )
+        avatar_area = online * (STRIP_AVATAR_SIZE + 6)  # avatar + spacing
+        desired = top_fixed + avatar_area + 10  # bottom margin
+
+        screen = QApplication.primaryScreen()
+        if screen:
+            max_h = screen.availableGeometry().height() - 50
+            return min(desired, max_h)
+        return desired
+
     # ══════════════════════════════════════════════════════════════
     #  Public API — called by IntercomApp
     # ══════════════════════════════════════════════════════════════
@@ -2540,6 +3243,9 @@ class FloatingPanel(QWidget):
         self._update_mode_btn()
         self._update_ptt_style()
         self._update_pinned_style()
+        # Update compact strip status dot
+        if hasattr(self, '_strip_status_dot'):
+            self._update_strip_status_dot()
 
         if mode == 'RED':
             self.ptt_mode_label.setVisible(False)
@@ -2592,12 +3298,12 @@ class FloatingPanel(QWidget):
         """Style the peer initials badge based on peer's mode color."""
         if not mode:
             # Empty/hidden state
-            self._sidebar_peer_initials.setStyleSheet(f"""
-                QPushButton {{
+            self._sidebar_peer_initials.setStyleSheet("""
+                QPushButton {
                     background: transparent; border: none;
                     border-radius: 19px; font-size: 15px; font-weight: 800;
                     color: transparent;
-                }}
+                }
             """)
             return
         bg = COLORS.get(mode, COLORS['GREEN'])
@@ -2729,8 +3435,20 @@ class FloatingPanel(QWidget):
         online_count = sum(1 for u in users if u.get('mode') != 'OFFLINE')
         self.online_count.setText(str(online_count))
 
-        # Update sidebar favorites
+        # Cache users (needed by _update_favorites and _sync_fav_selection)
+        self._cached_users = list(users)
+
+        # Update sidebar favorites and sync selection highlight
+        if selected_user_id:
+            self._fav_selected_uid = selected_user_id
         self._update_favorites(users)
+        self._sync_fav_selection(self._fav_selected_uid)
+
+        # Update compact strip avatars
+        if selected_user_id:
+            self._strip_selected_uid = selected_user_id
+        if hasattr(self, '_strip_avatar_buttons'):
+            self._update_strip_avatars(users)
 
         # Dynamic panel height based on visible content
         if not self._pinned and not self._is_onboarding:
@@ -2744,13 +3462,50 @@ class FloatingPanel(QWidget):
                 row.set_state(UserRow.STATE_IDLE)
         # Toggle selection on clicked row
         row = self._user_rows.get(user_id)
+        selected_uid = ""
         if row:
             if row._state == UserRow.STATE_SELECTED:
                 row.set_state(UserRow.STATE_IDLE)
-                self.user_selected.emit("")  # Deselect
+                selected_uid = ""
             elif row._state == UserRow.STATE_IDLE:
                 row.set_state(UserRow.STATE_SELECTED)
-                self.user_selected.emit(user_id)
+                selected_uid = user_id
+        # Sync sidebar favorites and strip avatars
+        self._sync_fav_selection(selected_uid)
+        self._strip_selected_uid = selected_uid
+        if hasattr(self, '_strip_avatar_buttons'):
+            for uid, btn in self._strip_avatar_buttons.items():
+                mode = 'GREEN'
+                for u in self._cached_users:
+                    if u.get('id') == uid:
+                        mode = u.get('mode', 'GREEN')
+                        break
+                self._style_strip_avatar(btn, mode, uid == selected_uid)
+        self.user_selected.emit(selected_uid)
+
+    def highlight_selected_user(self, user_id):
+        """Reinforce the visual selection on a single user across all UI areas.
+        Deselects all others and highlights the given user_id (or clears if empty)."""
+        # User rows
+        for uid, row in self._user_rows.items():
+            if uid == user_id:
+                if row._state not in (UserRow.STATE_CONNECTING, UserRow.STATE_LIVE):
+                    row.set_state(UserRow.STATE_SELECTED)
+            else:
+                if row._state == UserRow.STATE_SELECTED:
+                    row.set_state(UserRow.STATE_IDLE)
+        # Sidebar favorites
+        self._sync_fav_selection(user_id or "")
+        # Strip avatars
+        self._strip_selected_uid = user_id or ""
+        if hasattr(self, '_strip_avatar_buttons'):
+            for uid, btn in self._strip_avatar_buttons.items():
+                mode = 'GREEN'
+                for u in self._cached_users:
+                    if u.get('id') == uid:
+                        mode = u.get('mode', 'GREEN')
+                        break
+                self._style_strip_avatar(btn, mode, uid == self._strip_selected_uid)
 
     def set_user_state(self, user_id, state):
         """Set a user row's visual state (idle/selected/connecting/live)."""
@@ -3449,6 +4204,19 @@ class FloatingPanel(QWidget):
         leave_val.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
         layout.addWidget(_credit("Team", leave_val))
 
+        # Sign Out (only shown if logged in with auth)
+        try:
+            from user_settings import is_logged_in
+            if is_logged_in():
+                signout_val = _value("Sign Out")
+                signout_val.setStyleSheet(
+                    value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['WARN']}")
+                )
+                signout_val.clicked.connect(self.sign_out_requested.emit)
+                layout.addWidget(_credit("Account", signout_val))
+        except Exception:
+            pass
+
         quit_val = _value("Quit")
         quit_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['DANGER']}"))
         quit_val.clicked.connect(self.quit_requested.emit)
@@ -3461,8 +4229,7 @@ class FloatingPanel(QWidget):
 
     def _show_deck_setup_guide(self):
         """Show Stream Deck setup instructions for the Elgato plugin."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
-        from PySide6.QtGui import QPixmap, QImage
+        from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
         dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
         dlg.setWindowTitle("Stream Deck Setup")
         dlg.setFixedWidth(380)
@@ -3506,7 +4273,7 @@ class FloatingPanel(QWidget):
         layout.addWidget(steps)
 
         # "Don't show again" + OK buttons
-        from PySide6.QtWidgets import QHBoxLayout, QCheckBox
+        from PySide6.QtWidgets import QCheckBox, QHBoxLayout
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
@@ -3624,7 +4391,7 @@ class FloatingPanel(QWidget):
 
     def _invite_friend_email(self):
         """Show a dialog to enter email address(es) and send invite via Resend."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit
+        from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
         idx = self._team_combo.currentIndex()
         code = ""
         team_name = "Office Hours"
@@ -3857,16 +4624,20 @@ class FloatingPanel(QWidget):
         self._update_pin_style(self._pinned)
 
         if self._pinned:
-            # Collapse to compact PTT bar
+            # Collapse to compact vertical strip
             self._sidebar.setVisible(False)
             self._content_frame.setVisible(False)
-            self._pinned_compact.setVisible(True)
-            # Force panel to compact size
-            self.setFixedHeight(58)
+            self._pinned_compact.setVisible(False)  # Keep old bar hidden
+            self._compact_strip.setVisible(True)
+            # Force panel to strip size
+            strip_h = self._calc_strip_height()
+            self.setFixedWidth(STRIP_W + 2)  # +2 for border
+            self.setFixedHeight(strip_h)
         else:
             # Expand to full panel
             self.setMaximumHeight(16777215)  # Remove fixed height
             self.setMinimumHeight(0)
+            self._compact_strip.setVisible(False)
             self._sidebar.setVisible(True)
             self._content_frame.setVisible(True)
             self._pinned_compact.setVisible(False)
@@ -3879,6 +4650,9 @@ class FloatingPanel(QWidget):
     def paintEvent(self, event):
         """Draw a small notch/triangle at the top of the panel pointing up."""
         super().paintEvent(event)
+        # Skip the notch when in compact strip mode
+        if self._pinned:
+            return
         anchor_x = getattr(self, '_notch_x', self.width() // 2)
         h = self._notch_h
         w = 14  # notch base width
@@ -3945,6 +4719,8 @@ class FloatingPanel(QWidget):
                 self._onboarding.setGeometry(r)
             if hasattr(self, '_pinned_compact'):
                 self._pinned_compact.setGeometry(r)
+            if hasattr(self, '_compact_strip'):
+                self._compact_strip.setGeometry(r)
 
     # ── Dragging (needed on Windows for frameless windows) ────
     def mousePressEvent(self, event):
@@ -3996,6 +4772,7 @@ def create_oh_icon(color_hex='#00a651', size=22):
 
     # Fallback: render text
     import sys as _sys
+
     from PySide6.QtGui import QFontMetrics
     if _sys.platform == 'win32':
         font = QFont("Segoe UI")

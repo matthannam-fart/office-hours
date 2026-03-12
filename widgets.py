@@ -2,9 +2,9 @@
 widgets.py — Reusable UI widgets for Office Hours
 Extracted from floating_panel.py for maintainability.
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, Signal, QRectF, QTimer
-from PySide6.QtGui import QColor, QPainter, QBrush, QRadialGradient, QPen, QFont
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QRadialGradient
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 # Import shared constants (from separate module to avoid circular imports)
 from ui_constants import COLORS, DARK
@@ -179,7 +179,6 @@ class UnicodeEQ(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        from PySide6.QtGui import QFont
         import sys as _sys
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -264,6 +263,10 @@ class UserRow(QWidget):
         self._offline = (mode == 'OFFLINE')
         self._pressed = False
         self._state = self.STATE_IDLE
+        self._glow_opacity = 0.12  # For pulsing glow animation
+        self._glow_dir = 1
+        self._glow_timer = QTimer(self)
+        self._glow_timer.timeout.connect(self._glow_step)
         self.setFixedHeight(40 if self._offline else 50)
         if not self._offline:
             self.setCursor(Qt.PointingHandCursor)
@@ -287,7 +290,7 @@ class UserRow(QWidget):
         # Message indicator (amber dot)
         self.msg_dot = QLabel()
         self.msg_dot.setFixedSize(18, 18)
-        self.msg_dot.setStyleSheet(f"""
+        self.msg_dot.setStyleSheet("""
             background: rgba(230, 175, 0, 0.20);
             border: 1px solid rgba(230, 175, 0, 0.40);
             border-radius: 9px;
@@ -309,15 +312,51 @@ class UserRow(QWidget):
         # Apply initial style (must be after name_label is created)
         self._apply_style()
 
+    def _glow_step(self):
+        """Animate the selected-row glow opacity between 0.08 and 0.22."""
+        self._glow_opacity += self._glow_dir * 0.007
+        if self._glow_opacity >= 0.22:
+            self._glow_opacity = 0.22
+            self._glow_dir = -1
+        elif self._glow_opacity <= 0.08:
+            self._glow_opacity = 0.08
+            self._glow_dir = 1
+        if self._state == self.STATE_SELECTED:
+            self._apply_selected_style()
+
+    def _mode_color(self):
+        """Return the QColor hex string for the current mode."""
+        return COLORS.get(self._mode, COLORS['GREEN'])
+
+    def _apply_selected_style(self):
+        """Apply the selected style using the current glow opacity and mode color."""
+        color = self._mode_color()
+        qc = QColor(color)
+        r, g, b = qc.red(), qc.green(), qc.blue()
+        alpha_bg = self._glow_opacity
+        alpha_border = min(1.0, alpha_bg + 0.55)
+        self.setStyleSheet(f"""
+            UserRow {{
+                background: rgba({r}, {g}, {b}, {alpha_bg:.3f});
+                border-left: 3px solid rgba({r}, {g}, {b}, {alpha_border:.2f});
+                border-top: none; border-right: none; border-bottom: none;
+                border-radius: 10px;
+            }}
+        """)
+
     def _apply_style(self):
         """Set background based on current state."""
+        # Stop glow animation unless entering selected state
+        if self._state != self.STATE_SELECTED:
+            self._glow_timer.stop()
+
         if self._state == self.STATE_LIVE:
-            self.setStyleSheet(f"""
-                UserRow {{
+            self.setStyleSheet("""
+                UserRow {
                     background: rgba(229, 57, 53, 0.12);
                     border: 1px solid rgba(229, 57, 53, 0.25);
                     border-radius: 10px;
-                }}
+                }
             """)
             self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {DARK['DANGER']}; border: none;")
         elif self._state == self.STATE_CONNECTING:
@@ -330,15 +369,14 @@ class UserRow(QWidget):
             """)
             self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {DARK['TEXT_DIM']}; border: none;")
         elif self._state == self.STATE_SELECTED:
-            self.setStyleSheet(f"""
-                UserRow {{
-                    background: rgba(0, 166, 81, 0.12);
-                    border-left: 3px solid rgba(0, 166, 81, 0.80);
-                    border-top: none; border-right: none; border-bottom: none;
-                    border-radius: 10px;
-                }}
-            """)
-            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {DARK['ACCENT_LT']}; border: none;")
+            color = self._mode_color()
+            qc = QColor(color)
+            lighter = qc.lighter(130).name()
+            self._glow_opacity = 0.12
+            self._glow_dir = 1
+            self._apply_selected_style()
+            self._glow_timer.start(40)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {lighter}; border: none;")
         else:
             self.setStyleSheet(f"""
                 UserRow {{
@@ -489,15 +527,15 @@ class NavButton(QWidget):
             self._icon.setStyleSheet(f"font-size: 18px; color: {DARK['TEXT']}; border: none; background: transparent;")
             self._label.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['ACCENT_LT']}; letter-spacing: 0.5px; border: none; background: transparent;")
         else:
-            self.setStyleSheet(f"""
-                NavButton {{
+            self.setStyleSheet("""
+                NavButton {
                     background: transparent;
                     border-left: 2px solid transparent;
                     border-radius: 0px;
-                }}
-                NavButton:hover {{
+                }
+                NavButton:hover {
                     background: rgba(255, 255, 255, 0.03);
-                }}
+                }
             """)
             self._icon.setStyleSheet(f"font-size: 18px; color: {DARK['TEXT_DIM']}; border: none; background: transparent;")
             self._label.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {DARK['TEXT_FAINT']}; letter-spacing: 0.5px; border: none; background: transparent;")

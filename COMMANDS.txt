@@ -1,0 +1,38 @@
+OFFICE HOURS — QUICK REFERENCE
+================================
+
+RUN THE APP
+-----------
+cd ~/Projects/office-hours
+source venv/bin/activate
+python main.py
+
+
+PREVIEW UI (no login/network needed)
+-------------------------------------
+python preview.py              # welcome screen (default)
+python preview.py users        # user list + sidebar
+python preview.py settings     # settings panel
+python preview.py teams        # team management
+python preview.py radio        # NTS radio player
+python preview.py onboarding   # first-launch screen
+
+
+RUN THE RELAY SERVER
+--------------------
+python relay_server.py --port 50002
+
+
+QUALITY CHECKS (Claude runs these, but you can too)
+----------------------------------------------------
+ruff check .              # lint — catches code mistakes
+pyright .                 # type check — catches wrong function calls
+python -m pytest tests/   # tests — catches things that broke
+
+
+USEFUL TERMINAL TIPS
+--------------------
+ctrl+c                    # stop whatever is running (the app, preview, etc)
+up arrow                  # repeat your last command
+!!                        # also repeats last command
+clear                     # clean up the terminal screen
