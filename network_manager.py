@@ -824,6 +824,34 @@ class NetworkManager:
         except Exception as e:
             self._log(f"Presence send failed: {e}")
 
+    def send_page_all(self, file_path, team_id, sender_name):
+        """Broadcast a voice message to all GREEN team members via relay.
+
+        Reads the audio file, base64-encodes it, and sends via the presence
+        socket. The relay forwards to all GREEN members. No call is established.
+        """
+        import base64
+        if not self.presence_connected or not self.presence_socket:
+            self._log("Cannot page all — not connected to presence")
+            return False
+        try:
+            with open(file_path, 'rb') as f:
+                audio_data = f.read()
+            audio_b64 = base64.b64encode(audio_data).decode('ascii')
+            msg = {
+                "action": "PAGE_ALL",
+                "team_id": team_id,
+                "sender_name": sender_name,
+                "audio_b64": audio_b64,
+            }
+            data = json.dumps(msg).encode('utf-8')
+            self._send_frame_on(self.presence_socket, data)
+            self._log(f"Page All sent ({len(audio_data)} bytes)")
+            return True
+        except Exception as e:
+            self._log(f"Page All failed: {e}")
+            return False
+
     def cancel_connection(self, target_user_id=None):
         """Cancel an outgoing connection request"""
         if not self.presence_connected or not self.presence_socket:
@@ -875,6 +903,11 @@ class NetworkManager:
 
                 elif msg_type in ("JOIN_REQUEST", "JOIN_RESPONSE", "JOIN_REQUEST_FAILED"):
                     # Lobby join request/response — forward to main.py
+                    if self.presence_callback:
+                        self.presence_callback(msg)
+
+                elif msg_type == "PAGE_ALL":
+                    # One-way broadcast message from a teammate
                     if self.presence_callback:
                         self.presence_callback(msg)
 

@@ -269,8 +269,11 @@ def start_magic_link_listener(callback_port=None):
     return server, port
 
 
-def wait_for_magic_link_callback(server):
+def wait_for_magic_link_callback(server, cancel_event=None):
     """Block until the magic link callback is received on the given server.
+
+    If cancel_event (threading.Event) is provided, setting it will abort the wait
+    early and raise AuthError("cancelled").
 
     Returns session dict or raises AuthError.
     """
@@ -284,13 +287,28 @@ def wait_for_magic_link_callback(server):
 
     serve_thread = threading.Thread(target=_serve, daemon=True)
     serve_thread.start()
-    serve_thread.join(timeout=_CALLBACK_TIMEOUT)
+
+    # Poll so we can detect cancellation
+    elapsed = 0.0
+    poll_interval = 0.5
+    while elapsed < _CALLBACK_TIMEOUT:
+        if cancel_event and cancel_event.is_set():
+            deadline.set()
+            break
+        if not serve_thread.is_alive():
+            break
+        serve_thread.join(timeout=poll_interval)
+        elapsed += poll_interval
+
     deadline.set()
 
     try:
         server.server_close()
     except Exception:
         pass
+
+    if cancel_event and cancel_event.is_set():
+        raise AuthError("Cancelled")
 
     if server._auth_error:
         raise AuthError(f"Magic link error: {server._auth_error}")

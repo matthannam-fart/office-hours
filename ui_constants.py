@@ -27,7 +27,7 @@ SIDEBAR_W = 56
 PANEL_RADIUS = 14
 
 # Compact vertical strip dimensions
-STRIP_W = 52
+STRIP_W = 56
 STRIP_AVATAR_SIZE = 36
 STRIP_RADIUS = 12
 

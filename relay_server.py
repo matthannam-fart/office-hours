@@ -370,6 +370,39 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                 else:
                     print(f"[Join] Requester {requester_id} not online for response")
 
+            elif action == "PAGE_ALL":
+                # Broadcast a one-way voice message to all GREEN team members
+                team_id = msg.get("team_id", "")
+                sender_name = msg.get("sender_name", "Someone")
+                audio_b64 = msg.get("audio_b64", "")
+
+                if not team_id or not audio_b64:
+                    print(f"[PageAll] Ignored — missing team_id or audio data from {user_id}")
+                    continue
+
+                recipients = []
+                with presence_lock:
+                    for uid, info in presence.items():
+                        if (uid != user_id
+                                and info.get("team_id") == team_id
+                                and info.get("mode") == "GREEN"):
+                            recipients.append((uid, info["sock"]))
+
+                page_msg = {
+                    "type": "PAGE_ALL",
+                    "from_id": user_id,
+                    "from_name": sender_name,
+                    "audio_b64": audio_b64,
+                }
+                sent = 0
+                for uid, sock in recipients:
+                    try:
+                        send_json(sock, page_msg)
+                        sent += 1
+                    except Exception:
+                        print(f"[PageAll] Failed to deliver to {uid}")
+                print(f"[PageAll] {sender_name} paged {sent}/{len(recipients)} GREEN members in team {team_id[:8]}")
+
     except Exception as e:
         print(f"[Presence] Error with {client_addr}: {e}")
     finally:

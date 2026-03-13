@@ -377,24 +377,9 @@ class FloatingPanel(QWidget):
         oh_logo.setCursor(Qt.PointingHandCursor)
         oh_logo.mousePressEvent = lambda e: self._switch_page("users")
 
-        # ── Radio icon — toggles NTS stream directly ──
-        self._sidebar_radio_btn = QPushButton("📻")
-        self._sidebar_radio_btn.setFixedSize(36, 36)
-        self._sidebar_radio_btn.setCursor(Qt.PointingHandCursor)
-        self._sidebar_radio_btn.setToolTip("Radio")
-        self._sidebar_radio_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                border-radius: 18px; font-size: 18px;
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-        """)
-        self._sidebar_radio_btn.clicked.connect(self._sidebar_radio_toggle)
-        radio_container = QHBoxLayout()
-        radio_container.setContentsMargins(0, 0, 0, 0)
-        radio_container.setAlignment(Qt.AlignCenter)
-        radio_container.addWidget(self._sidebar_radio_btn)
-        v.addLayout(radio_container)
+        # Hidden radio button placeholder (radio controls live in settings now)
+        self._sidebar_radio_btn = QPushButton()
+        self._sidebar_radio_btn.setVisible(False)
 
         # ── Mail icon (hidden by default, shown when messages are waiting) ──
         self._sidebar_mail_btn = QPushButton("✉")
@@ -439,39 +424,48 @@ class FloatingPanel(QWidget):
         self._sidebar_peer_initials.setVisible(False)
         self._sidebar_peer_mode = ""
 
-        # ── Traffic light mode selector (R / Y / G stacked dots) ──
-        self._traffic_light_frame = QFrame()
-        self._traffic_light_frame.setObjectName("trafficLight")
-        self._traffic_light_frame.setFixedWidth(SIDEBAR_W - 10)
-        self._traffic_light_frame.setStyleSheet(f"""
-            QFrame#trafficLight {{
-                background: {DARK['BG_RAISED']};
-                border: 1px solid {DARK['BORDER']};
-                border-radius: 10px;
+        # ── Status orb dropdown (single orb, expands to pick R/Y/G) ──
+        status_container = QVBoxLayout()
+        status_container.setContentsMargins(5, 0, 5, 8)
+        status_container.setAlignment(Qt.AlignCenter)
+        status_container.setSpacing(2)
+
+        status_label = QLabel("STATUS")
+        status_label.setAlignment(Qt.AlignCenter)
+        status_label.setStyleSheet(
+            f"font-size: 8px; font-weight: 700; color: {DARK['TEXT_FAINT']};"
+            " letter-spacing: 1px; border: none;"
+        )
+        status_container.addWidget(status_label)
+
+        self._status_orb_frame = QFrame()
+        self._status_orb_frame.setObjectName("statusOrb")
+        self._status_orb_frame.setFixedSize(40, 40)
+        self._status_orb_frame.setStyleSheet(f"""
+            QFrame#statusOrb {{
+                background: transparent;
+                border: 1px solid {DARK['TEAL']};
+                border-radius: 8px;
             }}
         """)
-        tl_layout = QVBoxLayout(self._traffic_light_frame)
-        tl_layout.setContentsMargins(0, 6, 0, 6)
-        tl_layout.setSpacing(2)
-        tl_layout.setAlignment(Qt.AlignCenter)
+        orb_layout = QVBoxLayout(self._status_orb_frame)
+        orb_layout.setContentsMargins(0, 0, 0, 0)
+        orb_layout.setAlignment(Qt.AlignCenter)
 
+        self._status_orb_btn = QPushButton("●")
+        self._status_orb_btn.setFixedSize(38, 38)
+        self._status_orb_btn.setCursor(Qt.PointingHandCursor)
+        self._status_orb_btn.setToolTip("Change status")
+        self._status_orb_btn.clicked.connect(self._show_status_dropdown)
+        orb_layout.addWidget(self._status_orb_btn, 0, Qt.AlignCenter)
+
+        status_container.addWidget(self._status_orb_frame, 0, Qt.AlignCenter)
+        v.addLayout(status_container)
+
+        # Keep legacy refs for compat
         self._traffic_dots = {}
-        for mode_key, color in [("RED", COLORS['RED']), ("YELLOW", COLORS['YELLOW']), ("GREEN", COLORS['GREEN'])]:
-            dot_btn = QPushButton("●")
-            dot_btn.setFixedSize(40, 40)
-            dot_btn.setCursor(Qt.PointingHandCursor)
-            dot_btn.setToolTip(MODE_LABELS.get(mode_key, mode_key))
-            dot_btn.clicked.connect(lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk))
-            self._traffic_dots[mode_key] = dot_btn
-            tl_layout.addWidget(dot_btn, 0, Qt.AlignCenter)
 
-        tl_container = QHBoxLayout()
-        tl_container.setContentsMargins(5, 0, 5, 6)
-        tl_container.setAlignment(Qt.AlignCenter)
-        tl_container.addWidget(self._traffic_light_frame)
-        v.addLayout(tl_container)
-
-        # Initial traffic light styling
+        # Initial orb styling
         self._update_traffic_light()
 
         # ── Hidden legacy refs for compat ──
@@ -497,30 +491,69 @@ class FloatingPanel(QWidget):
         return sidebar
 
     def _update_traffic_light(self):
-        """Style the traffic light dots — all show their color, active gets a rounded gray bg."""
+        """Style the single status orb to reflect the current mode."""
         mode = getattr(self, '_current_mode', 'GREEN')
-        for mk, dot_btn in self._traffic_dots.items():
-            color = COLORS.get(mk, COLORS['GREEN'])
-            if mk == mode:
-                # Active — colored dot with rounded gray rectangle behind it
-                dot_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {DARK['BG_HOVER']}; border: none;
-                        border-radius: 10px;
-                        font-size: 32px; color: {color};
-                    }}
-                    QPushButton:hover {{ background: {DARK['BORDER']}; }}
-                """)
-            else:
-                # Inactive — colored dot, no background
-                dot_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: transparent; border: none;
-                        border-radius: 10px;
-                        font-size: 32px; color: {color};
-                    }}
-                    QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-                """)
+        color = COLORS.get(mode, COLORS['GREEN'])
+        self._status_orb_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                border-radius: 10px;
+                font-size: 32px; color: {color};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._status_orb_btn.setToolTip(MODE_LABELS.get(mode, mode))
+
+    def _show_status_dropdown(self):
+        """Show a dropdown menu to pick status (Available / Busy / DND)."""
+        from PySide6.QtWidgets import QWidgetAction
+        mode = getattr(self, '_current_mode', 'GREEN')
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+        """)
+        for mode_key, color in [("GREEN", COLORS['GREEN']), ("YELLOW", COLORS['YELLOW']), ("RED", COLORS['RED'])]:
+            label = MODE_LABELS.get(mode_key, mode_key)
+            is_active = (mode_key == mode)
+            prefix = "✓ " if is_active else "   "
+
+            row = QWidget()
+            row.setCursor(Qt.PointingHandCursor)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(10, 5, 14, 5)
+            h.setSpacing(6)
+
+            check_lbl = QLabel(prefix)
+            check_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT']}; border: none;")
+            check_lbl.setFixedWidth(16)
+            h.addWidget(check_lbl)
+
+            dot = QLabel("●")
+            dot.setStyleSheet(f"font-size: 14px; color: {color}; border: none;")
+            h.addWidget(dot)
+
+            text_lbl = QLabel(label)
+            text_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT']}; border: none;")
+            h.addWidget(text_lbl)
+            h.addStretch()
+
+            row.setStyleSheet(f"""
+                QWidget {{ border-radius: 4px; }}
+                QWidget:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+
+            wa = QWidgetAction(menu)
+            wa.setDefaultWidget(row)
+            wa.triggered.connect(
+                lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk)
+            )
+            menu.addAction(wa)
+        menu.exec(self._status_orb_frame.mapToGlobal(
+            QPoint(self._status_orb_frame.width() + 4, 0)
+        ))
 
     def _reset_sidebar_radio_btn(self):
         """Reset sidebar radio button to 'off' style."""
@@ -738,9 +771,9 @@ class FloatingPanel(QWidget):
                 f"border-left: 1px solid {DARK['BORDER']};" if show_sidebar else "border: none;"
             )
 
-        # Hide status bar and header on welcome/settings/login
+        # Hide status bar and header on welcome/login
         self._status_bar.setVisible(show_sidebar)
-        self._content_header.setVisible(show_sidebar and key != "settings")
+        self._content_header.setVisible(show_sidebar)
 
         # Panel width
         if is_welcome or is_login:
@@ -756,18 +789,22 @@ class FloatingPanel(QWidget):
             self._section_title.setText(f"{team_name} ▾")
             self._hamburger_btn.setText("⚙")
             self._hamburger_btn.setVisible(True)
+            self._collapse_btn.setVisible(True)
         elif key == "settings":
             self._section_title.setText("Settings")
-            self._hamburger_btn.setText("←")
+            self._hamburger_btn.setText("✕")
             self._hamburger_btn.setVisible(True)
+            self._collapse_btn.setVisible(False)
         elif key == "teams":
             self._section_title.setText("Teams")
             self._hamburger_btn.setText("←")
             self._hamburger_btn.setVisible(True)
+            self._collapse_btn.setVisible(False)
         elif key == "radio":
             self._section_title.setText("Radio")
             self._hamburger_btn.setText("←")
             self._hamburger_btn.setVisible(True)
+            self._collapse_btn.setVisible(False)
 
         # Populate settings when navigating to it
         if key == "settings":
@@ -789,15 +826,16 @@ class FloatingPanel(QWidget):
 
         title_row.addStretch()
 
-        # Team name button — clickable dropdown to switch teams
+        # Team name button — clickable dropdown to switch teams / copy code
         self._section_title = QPushButton("TEAM ▾")
         self._section_title.setCursor(Qt.PointingHandCursor)
+        self._section_title.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self._section_title.setStyleSheet(f"""
             QPushButton {{
                 font-size: 13px; font-weight: 700; color: {DARK['TEXT']};
                 letter-spacing: 0.5px; border: none;
                 background: {DARK['BG_RAISED']}; border-radius: 6px;
-                padding: 4px 10px;
+                padding: 4px 12px;
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
@@ -806,20 +844,6 @@ class FloatingPanel(QWidget):
 
         # Hidden compat ref (some code checks this)
         self._team_dropdown_btn = self._section_title
-
-        # Room code button — always visible, copies invite code
-        self._room_code_btn = QPushButton("ROOM CODE")
-        self._room_code_btn.setCursor(Qt.PointingHandCursor)
-        self._room_code_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 9px; font-weight: 700; color: {DARK['TEXT_DIM']};
-                background: transparent; border: 1px solid {DARK['BORDER']};
-                border-radius: 4px; padding: 3px 8px; letter-spacing: 0.5px;
-            }}
-            QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
-        """)
-        self._room_code_btn.clicked.connect(lambda: (self._copy_invite_code(), self._show_copied_toast()))
-        title_row.addWidget(self._room_code_btn)
 
         title_row.addStretch()
 
@@ -833,6 +857,22 @@ class FloatingPanel(QWidget):
         self.open_toggle.toggled.connect(self.hotline_toggled.emit)
         self.open_toggle.setVisible(False)
         title_row.addWidget(self.open_toggle)
+
+        # Collapse to compact strip button
+        self._collapse_btn = QPushButton("⬡")
+        self._collapse_btn.setFixedSize(28, 28)
+        self._collapse_btn.setCursor(Qt.PointingHandCursor)
+        self._collapse_btn.setToolTip("Minimize")
+        self._collapse_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 14px; color: {DARK['TEXT_DIM']};
+                background: transparent; border: none;
+            }}
+            QPushButton:hover {{ color: {DARK['TEAL']}; }}
+        """)
+        self._collapse_btn.clicked.connect(self._toggle_pin)
+        self._collapse_btn.setVisible(False)
+        title_row.addWidget(self._collapse_btn)
 
         # Settings gear button — toggles settings page
         self._hamburger_btn = QPushButton("⚙")
@@ -861,7 +901,7 @@ class FloatingPanel(QWidget):
             self._switch_page("users")
 
     def _show_team_dropdown(self):
-        """Show dropdown menu to switch teams or go back to teams list."""
+        """Show dropdown menu to switch teams, copy room code, or manage teams."""
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
@@ -873,21 +913,49 @@ class FloatingPanel(QWidget):
                 border-radius: 4px;
             }}
             QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+            QMenu::separator {{ background: {DARK['BORDER']}; height: 1px; margin: 4px 8px; }}
         """)
 
-        # List all teams from the hidden combo
-        for i in range(self._team_combo.count()):
-            team_name = self._team_combo.itemText(i)
-            team_id = self._team_combo.itemData(i)
-            is_active = (i == self._team_combo.currentIndex())
-            action = menu.addAction(f"{'✓ ' if is_active else '   '}{team_name}")
-            action.triggered.connect(
-                lambda checked=False, tid=team_id, tn=team_name:
-                    self._on_team_page_select(tid, tn)
-            )
+        # ── Active team header ──
+        active_idx = self._team_combo.currentIndex()
+        active_name = self._team_combo.itemText(active_idx) if active_idx >= 0 else ""
+        if active_name:
+            hdr = menu.addAction(f"✓ {active_name}")
+            hdr.setEnabled(False)
 
+        # ── Active team actions ──
+        code = self._team_combo.itemData(active_idx, Qt.UserRole + 2) if active_idx >= 0 else ""
+        if code:
+            menu.addAction("📋  Copy Room Code").triggered.connect(
+                lambda: (self._copy_invite_code(), self._show_copied_toast())
+            )
+        menu.addAction("📨  Invite Teammate").triggered.connect(
+            self._invite_friend_email
+        )
+        menu.addAction("Leave Team").triggered.connect(
+            self._confirm_leave_team
+        )
+
+        # ── Other teams ──
+        other_teams = []
+        for i in range(self._team_combo.count()):
+            if i == active_idx:
+                continue
+            other_teams.append((
+                self._team_combo.itemText(i),
+                self._team_combo.itemData(i),
+            ))
+        if other_teams:
+            menu.addSeparator()
+            for tn, tid in other_teams:
+                menu.addAction(f"   {tn}").triggered.connect(
+                    lambda checked=False, t=tid, n=tn:
+                        self._on_team_page_select(t, n)
+                )
+
+        # ── Bottom actions ──
         menu.addSeparator()
-        menu.addAction("Manage Teams...").triggered.connect(
+        menu.addAction("Manage Teams…").triggered.connect(
             lambda: self._switch_page("teams")
         )
 
@@ -911,7 +979,7 @@ class FloatingPanel(QWidget):
         page = QWidget()
         page.setStyleSheet("border: none;")
         v = QVBoxLayout(page)
-        v.setContentsMargins(24, 16, 24, 16)
+        v.setContentsMargins(24, 0, 24, 16)
         v.setSpacing(0)
 
         # Gear icon top-right
@@ -932,22 +1000,22 @@ class FloatingPanel(QWidget):
         gear_row.addWidget(self._welcome_gear)
         v.addLayout(gear_row)
 
-        # OH Logo from file
+        # OH Logo from file (compact)
         logo = QLabel()
         logo.setAlignment(Qt.AlignCenter)
         logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
         if os.path.exists(logo_path):
-            logo_px = QPixmap(logo_path).scaledToHeight(40, Qt.SmoothTransformation)
+            logo_px = QPixmap(logo_path).scaledToHeight(20, Qt.SmoothTransformation)
             logo.setPixmap(logo_px)
         v.addWidget(logo)
-        v.addSpacing(6)
+        v.addSpacing(4)
 
         # Welcome text
         welcome = QLabel("Welcome to Office Hours")
         welcome.setAlignment(Qt.AlignCenter)
-        welcome.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {DARK['TEXT_DIM']};")
+        welcome.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {DARK['TEXT_DIM']};")
         v.addWidget(welcome)
-        v.addSpacing(14)
+        v.addSpacing(10)
 
         # TEAMS label
         teams_hdr = QLabel("TEAMS")
@@ -960,7 +1028,7 @@ class FloatingPanel(QWidget):
         team_scroll.setWidgetResizable(True)
         team_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         team_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        team_scroll.setFixedHeight(80)
+        team_scroll.setFixedHeight(140)
         team_scroll.setStyleSheet(f"""
             QScrollArea {{ border: 1px solid {DARK['BORDER']}; border-radius: 6px; background: {DARK['BG_RAISED']}; }}
             QScrollBar:vertical {{ width: 4px; background: transparent; }}
@@ -1216,6 +1284,21 @@ class FloatingPanel(QWidget):
         self._login_info.setStyleSheet(f"font-size: 11px; color: {DARK['TEAL']};")
         self._login_info.setVisible(False)
         v.addWidget(self._login_info)
+
+        # Cancel button (visible only while waiting for email confirmation)
+        self._login_cancel_btn = QPushButton("Cancel")
+        self._login_cancel_btn.setCursor(Qt.PointingHandCursor)
+        self._login_cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DARK['DANGER']};
+                border: 1px solid {DARK['DANGER']}; border-radius: 6px;
+                padding: 6px; font-size: 11px; font-weight: 500;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._login_cancel_btn.setVisible(False)
+        self._login_cancel_btn.clicked.connect(self._on_login_cancel)
+        v.addWidget(self._login_cancel_btn)
         v.addSpacing(8)
 
         # Toggle sign-in / sign-up link
@@ -1249,6 +1332,7 @@ class FloatingPanel(QWidget):
 
         # Internal state
         self._login_is_signup = False
+        self._login_cancel_event = None  # threading.Event to cancel email wait
 
         return page
 
@@ -1282,6 +1366,14 @@ class FloatingPanel(QWidget):
         self._login_info.setText(str(msg))
         self._login_info.setVisible(True)
         self._login_error.setVisible(False)
+
+    def _on_login_cancel(self):
+        """Cancel a pending email confirmation wait."""
+        if self._login_cancel_event:
+            self._login_cancel_event.set()
+        self._login_cancel_btn.setVisible(False)
+        self._login_info.setVisible(False)
+        self._login_submit_btn.setEnabled(True)
 
     def _on_login_submit(self):
         """Handle the Sign In / Sign Up button click."""
@@ -1326,13 +1418,18 @@ class FloatingPanel(QWidget):
 
                 # Check if email confirmation is required (signup without token)
                 if self._login_is_signup and not result.get("access_token"):
+                    self._login_cancel_event = threading.Event()
                     self._show_login_info(
                         "Check your email and click the confirmation link.\n"
                         "Waiting..."
                     )
+                    self._login_cancel_btn.setVisible(True)
                     # Wait for the confirmation callback (user clicks email link)
                     try:
-                        callback_result = auth_manager.wait_for_magic_link_callback(server)
+                        callback_result = auth_manager.wait_for_magic_link_callback(
+                            server, cancel_event=self._login_cancel_event
+                        )
+                        self._login_cancel_btn.setVisible(False)
                         if callback_result and callback_result.get("access_token"):
                             session = {
                                 "access_token": callback_result["access_token"],
@@ -1358,7 +1455,18 @@ class FloatingPanel(QWidget):
                             self._show_login_error("Confirmation failed. Please try again.")
                             self._login_submit_btn.setEnabled(True)
                             return
+                    except auth_manager.AuthError as e:
+                        self._login_cancel_btn.setVisible(False)
+                        if "Cancelled" in str(e):
+                            # User cancelled — just reset the form
+                            self._login_info.setVisible(False)
+                            self._login_submit_btn.setEnabled(True)
+                            return
+                        self._show_login_error(f"Waiting for confirmation: {e}")
+                        self._login_submit_btn.setEnabled(True)
+                        return
                     except Exception as e:
+                        self._login_cancel_btn.setVisible(False)
                         self._show_login_error(f"Waiting for confirmation: {e}")
                         self._login_submit_btn.setEnabled(True)
                         return
@@ -1383,8 +1491,19 @@ class FloatingPanel(QWidget):
 
                 self.login_completed.emit(session)
 
+            except auth_manager.AuthError as e:
+                msg = str(e)
+                # If signup fails because user already exists, suggest sign-in
+                if self._login_is_signup and ("already registered" in msg.lower()
+                        or "already been registered" in msg.lower()
+                        or "user already registered" in msg.lower()):
+                    self._show_login_error("This email is already registered. Try signing in instead.")
+                else:
+                    self._show_login_error(msg)
+                self._login_submit_btn.setEnabled(True)
             except Exception as e:
                 self._show_login_error(str(e))
+                self._login_submit_btn.setEnabled(True)
 
         threading.Thread(target=_do_auth, daemon=True).start()
 
@@ -1511,6 +1630,8 @@ class FloatingPanel(QWidget):
             for t in teams:
                 if t['id'] not in my_ids:
                     all_teams.append((t, False))
+
+        all_teams.sort(key=lambda t: t[0].get('name', '').lower())
 
         if not all_teams:
             empty = QLabel("No teams yet — start one!")
@@ -1758,11 +1879,13 @@ class FloatingPanel(QWidget):
     def _build_status_bar(self):
         bar = QFrame()
         bar.setStyleSheet("border: none; background: transparent;")
-        bar.setFixedHeight(56)
 
         v = QVBoxLayout(bar)
-        v.setContentsMargins(8, 4, 8, 8)
+        v.setContentsMargins(8, 0, 8, 17)
         v.setSpacing(4)
+
+        # Spacer to push buttons to bottom, aligned with sidebar status orb
+        v.addStretch()
 
         # Combined PTT / Page All bar with teal border
         btn_row = QHBoxLayout()
@@ -2570,6 +2693,7 @@ class FloatingPanel(QWidget):
 
         self._team_combo.blockSignals(True)
         self._team_combo.clear()
+        teams = sorted(teams, key=lambda t: t.get("name", "").lower())
         active_index = 0
         for i, team in enumerate(teams):
             self._team_combo.addItem(team["name"], team["id"])
@@ -3080,7 +3204,7 @@ class FloatingPanel(QWidget):
 
     # ── Compact Vertical Strip ────────────────────────────────────
     def _build_compact_strip(self):
-        """Build a 52px-wide vertical strip with expand btn, status dot, and team avatars."""
+        """Build a sidebar-width vertical strip: OH logo, status btn, PTT btn."""
         strip = QFrame(self._frame)
         strip.setObjectName("compactStrip")
         strip.setStyleSheet(f"""
@@ -3093,33 +3217,24 @@ class FloatingPanel(QWidget):
 
         v = QVBoxLayout(strip)
         v.setContentsMargins(6, 10, 6, 10)
-        v.setSpacing(6)
+        v.setSpacing(8)
         v.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
-        # ── Expand button at top ──
+        # ── OH logo at top (click to expand) ──
         expand_btn = QPushButton("OH")
-        expand_btn.setFixedSize(28, 28)
+        expand_btn.setFixedSize(40, 28)
         expand_btn.setCursor(Qt.PointingHandCursor)
         expand_btn.setToolTip("Expand panel")
         expand_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                border-radius: 6px; font-size: 11px; font-weight: 900;
+                border-radius: 6px; font-size: 14px; font-weight: 900;
                 color: {DARK['ACCENT']};
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
         expand_btn.clicked.connect(self._toggle_pin)
         v.addWidget(expand_btn, 0, Qt.AlignCenter)
-
-        # ── Status dot (shows current mode, click to change) ──
-        self._strip_status_dot = QPushButton()
-        self._strip_status_dot.setFixedSize(20, 20)
-        self._strip_status_dot.setCursor(Qt.PointingHandCursor)
-        self._strip_status_dot.setToolTip("Change status")
-        self._update_strip_status_dot()
-        self._strip_status_dot.clicked.connect(self._show_strip_mode_menu)
-        v.addWidget(self._strip_status_dot, 0, Qt.AlignCenter)
 
         # ── Separator ──
         sep = QFrame()
@@ -3128,36 +3243,69 @@ class FloatingPanel(QWidget):
         sep.setStyleSheet(f"background: {DARK['BORDER']};")
         v.addWidget(sep, 0, Qt.AlignCenter)
 
-        # ── Scrollable avatar area ──
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QWidget { background: transparent; }
-        """)
-        avatar_container = QWidget()
-        self._strip_avatar_layout = QVBoxLayout(avatar_container)
-        self._strip_avatar_layout.setContentsMargins(0, 4, 0, 4)
-        self._strip_avatar_layout.setSpacing(6)
-        self._strip_avatar_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        self._strip_avatar_layout.addStretch()
-        scroll.setWidget(avatar_container)
-        v.addWidget(scroll, 1)
+        # ── Status button (outlined, matching main status orb) ──
+        self._strip_status_dot = QPushButton()
+        self._strip_status_dot.setFixedSize(40, 40)
+        self._strip_status_dot.setCursor(Qt.PointingHandCursor)
+        self._strip_status_dot.setToolTip("Change status")
+        self._update_strip_status_dot()
+        self._strip_status_dot.clicked.connect(self._show_strip_mode_menu)
+        v.addWidget(self._strip_status_dot, 0, Qt.AlignCenter)
 
-        self._strip_avatar_buttons = {}  # uid -> QPushButton
+        # ── PTT button (outlined, same size as status) ──
+        self._strip_ptt_btn = QPushButton("🎙")
+        self._strip_ptt_btn.setFixedSize(40, 40)
+        self._strip_ptt_btn.setCursor(Qt.PointingHandCursor)
+        self._strip_ptt_btn.setToolTip("Push to Talk")
+        self._strip_ptt_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {DARK['TEAL']};
+                border-radius: 8px;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+            QPushButton:pressed {{ background: {DARK['ACCENT']}; }}
+        """)
+        self._strip_ptt_btn.pressed.connect(
+            lambda: self.ptt_pressed.emit()
+        )
+        self._strip_ptt_btn.released.connect(
+            lambda: self.ptt_released.emit()
+        )
+        v.addWidget(self._strip_ptt_btn, 0, Qt.AlignCenter)
+
+        v.addStretch()
+
+        # Keep avatar dict for compatibility
+        self._strip_avatar_buttons: dict[str, QPushButton] = {}
         return strip
 
     def _update_strip_status_dot(self):
-        """Update the strip status dot to reflect current mode."""
+        """Update the strip status button to reflect current mode."""
         color = COLORS.get(self._current_mode, COLORS['GREEN'])
         self._strip_status_dot.setStyleSheet(f"""
             QPushButton {{
-                background: {color}; border: none;
-                border-radius: 10px;
+                background: transparent;
+                border: 1px solid {DARK['TEAL']};
+                border-radius: 8px;
             }}
-            QPushButton:hover {{ border: 2px solid {DARK['TEXT']}; }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+        """)
+        self._strip_status_dot.setText("●")
+        font = self._strip_status_dot.font()
+        font.setPixelSize(18)
+        self._strip_status_dot.setFont(font)
+        # Use palette-like inline style for the colored dot text
+        self._strip_status_dot.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {DARK['TEAL']};
+                border-radius: 8px;
+                font-size: 18px;
+                color: {color};
+            }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
         self._strip_status_dot.setToolTip(
             f"Status: {MODE_LABELS.get(self._current_mode, 'Available')} — click to change"
@@ -3186,35 +3334,8 @@ class FloatingPanel(QWidget):
             self.mode_set_requested.emit(chosen.data())
 
     def _update_strip_avatars(self, users):
-        """Rebuild the avatar buttons in the compact strip from the user list."""
-        # Clear existing
-        for btn in self._strip_avatar_buttons.values():
-            btn.deleteLater()
-        self._strip_avatar_buttons = {}
-
-        for u in users:
-            if u.get('mode') == 'OFFLINE':
-                continue
-            uid = u.get('id', '')
-            name = u.get('name', '?')
-            mode = u.get('mode', 'GREEN')
-            initials = self._peer_initials(name)
-            if not initials:
-                continue
-
-            btn = QPushButton(initials)
-            btn.setFixedSize(STRIP_AVATAR_SIZE, STRIP_AVATAR_SIZE)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(name)
-            is_selected = (uid == self._strip_selected_uid)
-            self._style_strip_avatar(btn, mode, is_selected)
-            btn.clicked.connect(
-                lambda checked=False, u_id=uid: self._on_strip_avatar_clicked(u_id)
-            )
-            self._strip_avatar_layout.insertWidget(
-                self._strip_avatar_layout.count() - 1, btn, 0, Qt.AlignCenter
-            )
-            self._strip_avatar_buttons[uid] = btn
+        """No-op — compact strip no longer shows avatars."""
+        pass
 
     def _style_strip_avatar(self, btn, mode, selected=False):
         """Apply styling to a strip avatar button. Selected gets a bright mode-colored ring."""
@@ -3253,21 +3374,10 @@ class FloatingPanel(QWidget):
             self._style_strip_avatar(btn, mode, uid == self._strip_selected_uid)
 
     def _calc_strip_height(self):
-        """Compute strip height based on user count, capped at screen height - 50px."""
-        # Top section: expand btn (28) + spacing (6) + dot (20) + spacing (6) + sep (1) + spacing (6)
-        # = ~67px + margins (20) = ~87px
-        top_fixed = 87
-        online = sum(
-            1 for u in self._cached_users if u.get('mode') != 'OFFLINE'
-        )
-        avatar_area = online * (STRIP_AVATAR_SIZE + 6)  # avatar + spacing
-        desired = top_fixed + avatar_area + 10  # bottom margin
-
-        screen = QApplication.primaryScreen()
-        if screen:
-            max_h = screen.availableGeometry().height() - 50
-            return min(desired, max_h)
-        return desired
+        """Fixed strip height: OH logo (28) + sep (1) + status (40) + PTT (40) + margins/spacing."""
+        # margins top/bottom (20) + OH (28) + spacing (8) + sep (1) + spacing (8)
+        # + status (40) + spacing (8) + PTT (40) + bottom padding
+        return 170
 
     # ══════════════════════════════════════════════════════════════
     #  Public API — called by IntercomApp
@@ -3991,27 +4101,8 @@ class FloatingPanel(QWidget):
         view.setStyleSheet("border: none;")
 
         v = QVBoxLayout(view)
-        v.setContentsMargins(0, 8, 0, 8)
+        v.setContentsMargins(0, 4, 0, 8)
         v.setSpacing(0)
-
-        # ── Header: back button ──
-        header = QHBoxLayout()
-        header.setContentsMargins(12, 4, 12, 4)
-
-        self._settings_back_btn = QPushButton("←")
-        self._settings_back_btn.setFixedSize(32, 32)
-        self._settings_back_btn.setCursor(Qt.PointingHandCursor)
-        self._settings_back_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 18px; color: {DARK['TEXT_DIM']};
-                background: transparent; border: none;
-            }}
-            QPushButton:hover {{ color: {DARK['TEXT']}; }}
-        """)
-        self._settings_back_btn.clicked.connect(self._toggle_settings)
-        header.addWidget(self._settings_back_btn)
-        header.addStretch()
-        v.addLayout(header)
 
         # ── Scrollable settings items ──
         scroll = QScrollArea()
@@ -4037,7 +4128,7 @@ class FloatingPanel(QWidget):
         return view
 
     def _populate_settings(self):
-        """Rebuild settings — movie credits style: labels left, values right."""
+        """Rebuild settings — grouped sections with headers."""
         layout = self._settings_layout
 
         # Clear existing items
@@ -4046,6 +4137,12 @@ class FloatingPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        section_header_style = f"""
+            QLabel {{
+                font-size: 10px; font-weight: 700; color: {DARK['TEXT_DIM']};
+                letter-spacing: 1px; border: none; padding: 0;
+            }}
+        """
         label_style = f"""
             QLabel {{
                 font-size: 11px; font-weight: 600; color: {DARK['TEXT_DIM']};
@@ -4081,7 +4178,7 @@ class FloatingPanel(QWidget):
             return btn
 
         def _credit(label_text, value_widget):
-            """One movie-credits row: label left, value right."""
+            """One row: label left, value right."""
             row = QWidget()
             h = QHBoxLayout(row)
             h.setContentsMargins(14, 0, 14, 0)
@@ -4091,48 +4188,42 @@ class FloatingPanel(QWidget):
             h.addWidget(value_widget)
             return row
 
-        def _spacer(h=6):
-            s = QWidget()
-            s.setFixedHeight(h)
-            return s
+        def _section(title):
+            """Section header with divider line."""
+            wrapper = QWidget()
+            wrapper.setStyleSheet("border: none;")
+            v_inner = QVBoxLayout(wrapper)
+            v_inner.setContentsMargins(14, 12, 14, 4)
+            v_inner.setSpacing(4)
+            line = QFrame()
+            line.setFixedHeight(1)
+            line.setStyleSheet(f"background: {DARK['BORDER_LT']};")
+            v_inner.addWidget(line)
+            hdr = QLabel(title.upper())
+            hdr.setStyleSheet(section_header_style)
+            v_inner.addWidget(hdr)
+            return wrapper
 
-        # ── OH Logo ──
-        import os
-        logo = QLabel()
-        logo.setAlignment(Qt.AlignCenter)
-        logo.setStyleSheet("border: none;")
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
-        if os.path.exists(logo_path):
-            logo_px = QPixmap(logo_path).scaledToHeight(32, Qt.SmoothTransformation)
-            logo.setPixmap(logo_px)
-        layout.addWidget(logo)
+        # ═══════════════════════════════════════
+        # PROFILE
+        # ═══════════════════════════════════════
+        layout.addWidget(_section("Profile"))
 
-        subtitle = QLabel("Settings")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {DARK['TEXT_DIM']}; border: none; padding: 0 0 8px 0;")
-        layout.addWidget(subtitle)
-
-        # ── Name ──
         display_name = getattr(self, '_display_name', None) or 'Not set'
         name_val = _value(display_name)
         name_val.clicked.connect(lambda: (self._change_name_dialog(), self._populate_settings()))
         layout.addWidget(_credit("Name", name_val))
 
-        # ── Theme ──
         theme_text = "Light" if self._dark_mode else "Dark"
         theme_val = _value(theme_text)
         theme_val.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
         layout.addWidget(_credit("Theme", theme_val))
 
-        # ── Incognito ──
-        incognito_text = "On" if self._incognito else "Off"
-        incognito_val = _value(incognito_text)
-        incognito_val.clicked.connect(lambda: (self._toggle_incognito(), self._populate_settings()))
-        layout.addWidget(_credit("Incognito", incognito_val))
+        # ═══════════════════════════════════════
+        # AUDIO
+        # ═══════════════════════════════════════
+        layout.addWidget(_section("Audio"))
 
-        layout.addWidget(_spacer(8))
-
-        # ── Audio In ──
         try:
             import sounddevice as sd
             devices = sd.query_devices()
@@ -4164,7 +4255,7 @@ class FloatingPanel(QWidget):
                     lambda checked=False, i=idx: (self._on_input_device_changed(i), self._populate_settings())
                 )
             in_val.setMenu(in_menu)
-            layout.addWidget(_credit("Audio In", in_val))
+            layout.addWidget(_credit("Input", in_val))
 
             out_val = _value(current_out_name + "  ▾")
             out_menu = QMenu(out_val)
@@ -4175,18 +4266,11 @@ class FloatingPanel(QWidget):
                     lambda checked=False, i=idx: (self._on_output_device_changed(i), self._populate_settings())
                 )
             out_val.setMenu(out_menu)
-            layout.addWidget(_credit("Audio Out", out_val))
+            layout.addWidget(_credit("Output", out_val))
         except Exception as e:
             print(f"Audio device settings error: {e}")
 
-        layout.addWidget(_spacer(8))
-
-        # ── Send Invite ──
-        invite_val = _value("Send")
-        invite_val.clicked.connect(self._invite_friend_email)
-        layout.addWidget(_credit("Invite", invite_val))
-
-        # ── Radio ──
+        # Radio + volume together
         is_playing = getattr(self, '_radio_playing', False)
         play_text = "Stop" if is_playing else "Play"
         play_color = DARK['DANGER'] if is_playing else DARK['ACCENT']
@@ -4195,7 +4279,6 @@ class FloatingPanel(QWidget):
         radio_val.clicked.connect(lambda: (self._toggle_radio(), self._populate_settings()))
         layout.addWidget(_credit("Radio", radio_val))
 
-        # ── Volume ──
         vol_slider = QSlider(Qt.Horizontal)
         vol_slider.setRange(0, 100)
         vol_slider.setValue(self._radio_volume.value() if hasattr(self, '_radio_volume') else 20)
@@ -4215,32 +4298,19 @@ class FloatingPanel(QWidget):
         vol_slider.valueChanged.connect(lambda v: self._radio_volume.setValue(v) if hasattr(self, '_radio_volume') else None)
         layout.addWidget(_credit("Volume", vol_slider))
 
-        layout.addWidget(_spacer(8))
-
-        # ── Plug Ins ──
         deck_connected = getattr(self, '_deck_connected', False)
-        if deck_connected:
-            deck_val = _value("Connected")
-            deck_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['ACCENT']}"))
-            deck_val.setEnabled(False)
-        else:
-            deck_val = _value("Setup")
-            deck_val.clicked.connect(self._show_deck_setup_guide)
-        layout.addWidget(_credit("Plug Ins", deck_val))
+        status_text = "Connected" if deck_connected else "Not Connected"
+        status_color = DARK['ACCENT'] if deck_connected else DARK['TEXT_DIM']
+        deck_val = _value(status_text)
+        deck_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {status_color}"))
+        deck_val.clicked.connect(self._show_deck_setup_guide)
+        layout.addWidget(_credit("Stream Deck", deck_val))
 
-        # ── Leave Team | Quit ──
+        # ═══════════════════════════════════════
+        # Bottom: destructive actions
+        # ═══════════════════════════════════════
         layout.addStretch()
-
-        divider = QFrame()
-        divider.setFixedHeight(1)
-        divider.setStyleSheet(f"background: {DARK['BORDER_LT']}; margin: 0 14px;")
-        layout.addWidget(divider)
-        layout.addWidget(_spacer(4))
-
-        leave_val = _value("Leave")
-        leave_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['WARN']}"))
-        leave_val.clicked.connect(lambda: (self._close_settings(), self._confirm_leave_team()))
-        layout.addWidget(_credit("Team", leave_val))
+        layout.addWidget(_section(""))  # divider only, empty title
 
         # Sign Out (only shown if logged in with auth)
         try:
@@ -4488,6 +4558,8 @@ class FloatingPanel(QWidget):
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
         cancel_btn.setStyleSheet(f"""
             QPushButton {{
                 padding: 6px 14px; font-size: 12px; font-weight: 500;
@@ -4500,6 +4572,8 @@ class FloatingPanel(QWidget):
 
         send_btn = QPushButton("Send Invite")
         send_btn.setCursor(Qt.PointingHandCursor)
+        send_btn.setAutoDefault(False)
+        send_btn.setDefault(False)
         send_btn.setStyleSheet(f"""
             QPushButton {{
                 padding: 6px 14px; font-size: 12px; font-weight: 600;
@@ -4673,12 +4747,15 @@ class FloatingPanel(QWidget):
             self.setFixedHeight(strip_h)
         else:
             # Expand to full panel
+            self.setMaximumWidth(16777215)  # Remove fixed width
             self.setMaximumHeight(16777215)  # Remove fixed height
             self.setMinimumHeight(0)
+            self.setFixedWidth(PANEL_W)
             self._compact_strip.setVisible(False)
             self._sidebar.setVisible(True)
             self._content_frame.setVisible(True)
             self._pinned_compact.setVisible(False)
+            self._switch_page("users")
             self._resize_panel()
 
     def is_pinned(self):

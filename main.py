@@ -195,8 +195,9 @@ class IntercomApp(QObject):
 
         self.panel.set_display_name(self.display_name or "Office Hours")
 
-        # Stream Deck plugin bridge is always available
-        self.panel.set_deck_status(True, "Plugin Bridge")
+        # Stream Deck status — check actual client connections
+        deck_connected = hasattr(self, 'deck_ws') and self.deck_ws.client_count > 0
+        self.panel.set_deck_status(deck_connected)
 
         # Start Services
         self.discovery.register_service()
@@ -880,6 +881,10 @@ class IntercomApp(QObject):
                 msg.get("reason", "Could not reach team admin")
             )
 
+        elif msg_type == "PAGE_ALL":
+            # One-way broadcast message from a teammate
+            self._handle_page_all(msg)
+
     def _join_relay_room(self, room_code, role):
         """Connect to relay for an active call. Room code is internal — never shown to user."""
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
@@ -1289,16 +1294,25 @@ class IntercomApp(QObject):
         self.log("Broadcasting...")
 
     def on_page_all_release(self):
-        """Stop recording and broadcast to team."""
+        """Stop recording and broadcast to all GREEN team members."""
         filename = self.audio.stop_recording_message()
         self.panel.set_ptt_active(False)
         if not filename:
             return
-        # Send to currently connected peer if any
-        # Full multi-user broadcast needs server-side message relay (deferred)
-        if self.network.connected:
-            self.network.send_file(filename)
-        self.log("Broadcast sent")
+        if not self.active_team_id:
+            self.log("No team selected — cannot page all")
+            return
+
+        def _send():
+            ok = self.network.send_page_all(
+                filename, self.active_team_id, self.display_name
+            )
+            if ok:
+                self.log_signal.emit("Page All sent")
+            else:
+                self.log_signal.emit("Page All failed — not connected")
+
+        threading.Thread(target=_send, daemon=True).start()
         # Reinforce the selected user highlight after page-all ends
         if self._intercom_target_id:
             self.panel.highlight_selected_user(self._intercom_target_id)
@@ -1342,6 +1356,31 @@ class IntercomApp(QObject):
             QTimer.singleShot(0, self._broadcast_deck_state)
 
         threading.Thread(target=_play_all, daemon=True).start()
+
+    def _handle_page_all(self, msg):
+        """Handle an incoming PAGE_ALL broadcast — save audio and queue it."""
+        import base64
+        import time as _time
+
+        from_name = msg.get("from_name", "Someone")
+        audio_b64 = msg.get("audio_b64", "")
+        if not audio_b64:
+            return
+        try:
+            audio_data = base64.b64decode(audio_b64)
+            fn = os.path.join(_config_dir(), f"page_{int(_time.time()*1000)}.wav")
+            with open(fn, 'wb') as f:
+                f.write(audio_data)
+            self._message_queue.append(fn)
+            self.incoming_message_path = fn
+            self.has_message = True
+            self.is_flashing = True
+            self.update_deck_display()
+            self.audio.play_notification()
+            self.message_received_signal.emit()
+            self.log(f"Page All from {from_name}")
+        except Exception as e:
+            self.log(f"Page All receive error: {e}")
 
     def _save_voicemail_from_buffer(self):
         """Save buffered audio from a peer who talked while we were busy."""
@@ -1904,7 +1943,7 @@ class IntercomApp(QObject):
                     "invite_code": result.get("invite_code", ""),
                     "role": "admin",
                 }
-                self.my_teams = [team_entry]
+                self.my_teams.append(team_entry)
                 self.active_team_id = result["id"]
                 self.active_team_name = team_name
                 set_active_team(self.active_team_id)

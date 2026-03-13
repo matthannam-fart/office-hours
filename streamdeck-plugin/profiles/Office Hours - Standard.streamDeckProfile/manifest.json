@@ -1,0 +1,253 @@
+{
+  "Actions": {
+    "0,0": {
+      "Name": "OH",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "OH",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.logo"
+    },
+    "4,0": {
+      "Name": "Panel",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "Panel",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.panel"
+    },
+    "0,1": {
+      "Name": "Push to Talk",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "Push to Talk",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.talk"
+    },
+    "1,1": {
+      "Name": "Status",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "Status",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.mode"
+    },
+    "0,2": {
+      "Name": "Team",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "Team",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.team"
+    },
+    "1,2": {
+      "Name": "User",
+      "Settings": {},
+      "State": 0,
+      "States": [
+        {
+          "FFamily": "",
+          "FSize": "9",
+          "FStyle": "",
+          "FUnderline": "off",
+          "Image": "",
+          "Title": "User",
+          "TitleAlignment": "bottom",
+          "TitleColor": "#ffffff",
+          "TitleShow": ""
+        }
+      ],
+      "UUID": "com.officehours.intercom.user"
+    }
+  },
+  "Controllers": {
+    "Keypad": {
+      "CurrentPage": "6A30C0B0-C51F-4393-82E8-36203F6C89CE",
+      "Pages": {
+        "6A30C0B0-C51F-4393-82E8-36203F6C89CE": {
+          "Actions": {
+            "0,0": {
+              "Name": "OH",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "OH",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.logo"
+            },
+            "4,0": {
+              "Name": "Panel",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "Panel",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.panel"
+            },
+            "0,1": {
+              "Name": "Push to Talk",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "Push to Talk",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.talk"
+            },
+            "1,1": {
+              "Name": "Status",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "Status",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.mode"
+            },
+            "0,2": {
+              "Name": "Team",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "Team",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.team"
+            },
+            "1,2": {
+              "Name": "User",
+              "Settings": {},
+              "State": 0,
+              "States": [
+                {
+                  "FFamily": "",
+                  "FSize": "9",
+                  "FStyle": "",
+                  "FUnderline": "off",
+                  "Image": "",
+                  "Title": "User",
+                  "TitleAlignment": "bottom",
+                  "TitleColor": "#ffffff",
+                  "TitleShow": ""
+                }
+              ],
+              "UUID": "com.officehours.intercom.user"
+            }
+          },
+          "Name": "Default"
+        }
+      }
+    }
+  },
+  "DeviceModel": 1,
+  "DeviceUUID": "",
+  "Name": "Office Hours - Standard",
+  "Pages": [
+    "6A30C0B0-C51F-4393-82E8-36203F6C89CE"
+  ],
+  "Version": "1.0",
+  "AppIdentifier": "",
+  "UUID": "CD6D561E-E229-4F09-BA8C-5DD635F8F04F"
+}
