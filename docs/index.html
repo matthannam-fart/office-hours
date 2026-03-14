@@ -32,6 +32,38 @@
       color: #8a8aad;
       margin-bottom: 2.5rem;
     }
+    .invite-banner {
+      background: rgba(0,184,148,0.12);
+      border: 1px solid rgba(0,184,148,0.3);
+      border-radius: 10px;
+      padding: 1.2rem 1.5rem;
+      margin-bottom: 2rem;
+      display: none;
+    }
+    .invite-banner.visible { display: block; }
+    .invite-banner p {
+      color: #c0c0d0;
+      font-size: 0.95rem;
+      margin-bottom: 0.6rem;
+    }
+    .invite-code {
+      display: inline-block;
+      background: rgba(0,0,0,0.3);
+      color: #00b894;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 1.3rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: all;
+    }
+    .invite-hint {
+      font-size: 0.8rem;
+      color: #6a6a8a;
+      margin-top: 0.5rem;
+    }
     .download-btn {
       display: inline-block;
       padding: 14px 36px;
@@ -102,7 +134,13 @@
     <h1>Office Hours</h1>
     <p class="tagline">Push-to-talk intercom for teams. LAN or remote.</p>
 
-    <a class="download-btn" href="https://github.com/matthannam-fart/office-hours/archive/refs/heads/main.zip">
+    <div id="invite-banner" class="invite-banner">
+      <p>You've been invited to a team! Download the app, then enter this code:</p>
+      <span id="invite-code" class="invite-code"></span>
+      <p class="invite-hint">Click the code to copy it</p>
+    </div>
+
+    <a class="download-btn" href="https://github.com/matthannam-fart/office-hours/releases/latest/download/OfficeHours.zip">
       Download ZIP
     </a>
 
@@ -115,7 +153,7 @@
 
       <div id="mac-instructions" class="platform-instructions active">
         <ol>
-          <li>Unzip the download and open the folder</li>
+          <li>Unzip the download and open the <strong>office-hours</strong> folder</li>
           <li>Double-click <strong>Office Hours.command</strong></li>
           <li>If macOS blocks it: go to <strong>System Settings &gt; Privacy &amp; Security</strong> and click <strong>Open Anyway</strong></li>
           <li>The app installs everything it needs on first run</li>
@@ -125,15 +163,18 @@
       <div id="win-instructions" class="platform-instructions">
         <ol>
           <li>Install <a href="https://www.python.org/downloads/" style="color:#00b894">Python</a> first (check "Add to PATH" during install)</li>
-          <li>Unzip the download and open the folder</li>
+          <li>Unzip the download and open the <strong>office-hours</strong> folder</li>
           <li>Double-click <strong>Office Hours.bat</strong></li>
           <li>The app installs everything it needs on first run</li>
         </ol>
       </div>
     </div>
 
-    <p class="note">
+    <p class="note" id="note-default">
       When the app opens, enter your name. If you have an invite code, paste it in to join your team.
+    </p>
+    <p class="note" id="note-invite" style="display:none">
+      When the app opens, enter your name and paste in the invite code shown above.
     </p>
   </div>
 
@@ -143,6 +184,24 @@
       document.querySelectorAll('.platform-instructions').forEach(i => i.classList.remove('active'));
       event.target.classList.add('active');
       document.getElementById(p + '-instructions').classList.add('active');
+    }
+
+    // Invite code support: ohinter.com?code=XXXXX
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      const banner = document.getElementById('invite-banner');
+      const codeEl = document.getElementById('invite-code');
+      codeEl.textContent = code;
+      banner.classList.add('visible');
+      document.getElementById('note-default').style.display = 'none';
+      document.getElementById('note-invite').style.display = 'block';
+
+      codeEl.addEventListener('click', function() {
+        navigator.clipboard.writeText(code);
+        codeEl.style.background = 'rgba(0,184,148,0.3)';
+        setTimeout(() => codeEl.style.background = 'rgba(0,0,0,0.3)', 600);
+      });
     }
   </script>
 </body>
