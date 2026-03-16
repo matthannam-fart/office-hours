@@ -1,5 +1,5 @@
 """
-floating_panel.py — Office Hours Menu Bar Panel
+floating_panel.py — Vox Menu Bar Panel
 Frameless popup widget anchored to the system tray icon.
 Matches the wireframe at menubar_wireframe.html.
 """
@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QFont,
     QFontDatabase,
     QIcon,
+    QImage,
     QPainter,
     QPainterPath,
     QPixmap,
@@ -53,8 +54,16 @@ from PySide6.QtWidgets import (
 
 # Shared constants (extracted to ui_constants.py)
 from ui_constants import (
-    COLORS, DARK, LIGHT, MODE_LABELS, PANEL_RADIUS, PANEL_W, SIDEBAR_W,
-    STRIP_AVATAR_SIZE, STRIP_RADIUS, STRIP_W,
+    COLORS,
+    DARK,
+    LIGHT,
+    MODE_LABELS,
+    PANEL_RADIUS,
+    PANEL_W,
+    SIDEBAR_W,
+    STRIP_AVATAR_SIZE,
+    STRIP_RADIUS,
+    STRIP_W,
 )
 
 # Snapshot the original dark palette so we can restore it after switching to light
@@ -360,13 +369,19 @@ class FloatingPanel(QWidget):
         v.setSpacing(4)
 
         # ── OH logo at top ──
-        oh_logo = QLabel("OH")
+        oh_logo = QLabel()
         oh_logo.setAlignment(Qt.AlignCenter)
         oh_logo.setFixedHeight(28)
-        oh_logo.setStyleSheet(f"""
-            font-size: 16px; font-weight: 900; color: {DARK['ACCENT']};
-            border: none; letter-spacing: 1px;
-        """)
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
+        if os.path.exists(_logo_path):
+            _logo_px = QPixmap(_logo_path).scaledToHeight(20, Qt.SmoothTransformation)
+            oh_logo.setPixmap(_logo_px)
+        else:
+            oh_logo.setText("VOX")
+            oh_logo.setStyleSheet(f"""
+                font-size: 16px; font-weight: 900; color: {DARK['ACCENT']};
+                border: none; letter-spacing: 1px;
+            """)
         logo_container = QHBoxLayout()
         logo_container.setContentsMargins(0, 0, 0, 4)
         logo_container.setAlignment(Qt.AlignCenter)
@@ -858,22 +873,6 @@ class FloatingPanel(QWidget):
         self.open_toggle.setVisible(False)
         title_row.addWidget(self.open_toggle)
 
-        # Collapse to compact strip button
-        self._collapse_btn = QPushButton("⬡")
-        self._collapse_btn.setFixedSize(28, 28)
-        self._collapse_btn.setCursor(Qt.PointingHandCursor)
-        self._collapse_btn.setToolTip("Minimize")
-        self._collapse_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 14px; color: {DARK['TEXT_DIM']};
-                background: transparent; border: none;
-            }}
-            QPushButton:hover {{ color: {DARK['TEAL']}; }}
-        """)
-        self._collapse_btn.clicked.connect(self._toggle_pin)
-        self._collapse_btn.setVisible(False)
-        title_row.addWidget(self._collapse_btn)
-
         # Settings gear button — toggles settings page
         self._hamburger_btn = QPushButton("⚙")
         self._hamburger_btn.setFixedSize(36, 36)
@@ -888,6 +887,22 @@ class FloatingPanel(QWidget):
         self._hamburger_btn.clicked.connect(self._toggle_settings)
         self._hamburger_btn.setVisible(False)
         title_row.addWidget(self._hamburger_btn)
+
+        # Pop out to compact strip button
+        self._collapse_btn = QPushButton("↗")
+        self._collapse_btn.setFixedSize(28, 28)
+        self._collapse_btn.setCursor(Qt.PointingHandCursor)
+        self._collapse_btn.setToolTip("Pop out")
+        self._collapse_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 14px; color: {DARK['TEXT_DIM']};
+                background: transparent; border: none;
+            }}
+            QPushButton:hover {{ color: {DARK['TEAL']}; }}
+        """)
+        self._collapse_btn.clicked.connect(self._toggle_pin)
+        self._collapse_btn.setVisible(False)
+        title_row.addWidget(self._collapse_btn)
 
         v.addLayout(title_row)
 
@@ -929,7 +944,7 @@ class FloatingPanel(QWidget):
             menu.addAction("📋  Copy Room Code").triggered.connect(
                 lambda: (self._copy_invite_code(), self._show_copied_toast())
             )
-        menu.addAction("📨  Invite Teammate").triggered.connect(
+        menu.addAction("📨  Copy Invite").triggered.connect(
             self._invite_friend_email
         )
         menu.addAction("Leave Team").triggered.connect(
@@ -1011,7 +1026,7 @@ class FloatingPanel(QWidget):
         v.addSpacing(4)
 
         # Welcome text
-        welcome = QLabel("Welcome to Office Hours")
+        welcome = QLabel("Welcome to Vox")
         welcome.setAlignment(Qt.AlignCenter)
         welcome.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {DARK['TEXT_DIM']};")
         v.addWidget(welcome)
@@ -1084,7 +1099,7 @@ class FloatingPanel(QWidget):
         code_row = QHBoxLayout()
         code_row.setSpacing(6)
         self._welcome_code_input = QLineEdit()
-        self._welcome_code_input.setPlaceholderText("OH-XXXXX")
+        self._welcome_code_input.setPlaceholderText("VOX-XXXXX")
         self._welcome_code_input.setAlignment(Qt.AlignCenter)
         self._welcome_code_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1134,7 +1149,7 @@ class FloatingPanel(QWidget):
         v.addSpacing(6)
 
         # Subtitle
-        self._login_subtitle = QLabel("Sign in to Office Hours")
+        self._login_subtitle = QLabel("Sign in to Vox")
         self._login_subtitle.setAlignment(Qt.AlignCenter)
         self._login_subtitle.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {DARK['TEXT_DIM']};")
         v.addWidget(self._login_subtitle)
@@ -1348,7 +1363,7 @@ class FloatingPanel(QWidget):
             self._login_name_label.setVisible(True)
             self._login_name_input.setVisible(True)
         else:
-            self._login_subtitle.setText("Sign in to Office Hours")
+            self._login_subtitle.setText("Sign in to Vox")
             self._login_submit_btn.setText("Sign In")
             self._login_toggle_btn.setText("Don't have an account? Sign Up")
             self._login_name_label.setVisible(False)
@@ -2107,7 +2122,7 @@ class FloatingPanel(QWidget):
         # Quit button
         gear = QPushButton("✕")
         gear.setFixedSize(24, 24)
-        gear.setToolTip("Quit Office Hours")
+        gear.setToolTip("Quit Vox")
         gear.setStyleSheet(f"""
             QPushButton {{
                 border: none; background: transparent; font-size: 13px;
@@ -2208,7 +2223,7 @@ class FloatingPanel(QWidget):
         layout.setSpacing(0)
 
         # Title
-        title = QLabel("Welcome to Office Hours")
+        title = QLabel("Welcome to Vox")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {DARK['TEXT']};")
         layout.addWidget(title)
@@ -2592,23 +2607,23 @@ class FloatingPanel(QWidget):
         self._onboarding_name_input.setText(name)
 
     def _format_invite_code(self, text):
-        """Auto-capitalize and prepend OH- as the user types."""
+        """Auto-capitalize and prepend VOX- as the user types."""
         # Block re-entrant calls while we update the text
         self._invite_input.blockSignals(True)
         cursor_pos = self._invite_input.cursorPosition()
 
         # Strip whitespace and uppercase
         raw = text.strip().upper()
-        # Remove any existing OH- prefix so we can re-add it cleanly
-        if raw.startswith("OH-"):
+        # Remove any existing VOX- prefix so we can re-add it cleanly
+        if raw.startswith("VOX-"):
+            raw = raw[4:]
+        elif raw.startswith("VOX"):
             raw = raw[3:]
-        elif raw.startswith("OH"):
-            raw = raw[2:]
         # Remove dashes from the code portion
         raw = raw.replace("-", "")
-        # Rebuild with OH- prefix if user has typed anything
+        # Rebuild with VOX- prefix if user has typed anything
         if raw:
-            formatted = f"OH-{raw}"
+            formatted = f"VOX-{raw}"
         else:
             formatted = ""
 
@@ -3185,7 +3200,7 @@ class FloatingPanel(QWidget):
         """Update the pinned compact bar to match the PTT button shape, colored by mode."""
         color_hex = COLORS.get(self._current_mode, COLORS['GREEN'])
         label = MODE_LABELS.get(self._current_mode, 'Available')
-        name = getattr(self, '_display_name', 'Office Hours')
+        name = getattr(self, '_display_name', 'Vox')
         self.pinned_ptt.setText(f"{name}  -  {label}")
         # Convert hex to rgba for translucency
         c = QColor(color_hex)
@@ -3221,7 +3236,7 @@ class FloatingPanel(QWidget):
         v.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
         # ── OH logo at top (click to expand) ──
-        expand_btn = QPushButton("OH")
+        expand_btn = QPushButton("VOX")
         expand_btn.setFixedSize(40, 28)
         expand_btn.setCursor(Qt.PointingHandCursor)
         expand_btn.setToolTip("Expand panel")
@@ -4042,7 +4057,7 @@ class FloatingPanel(QWidget):
         def _fetch():
             try:
                 req = Request("https://www.nts.live/api/v2/live",
-                              headers={"User-Agent": "OfficeHours/1.0"})
+                              headers={"User-Agent": "Vox/1.0"})
                 with urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read())
                     self._nts_meta_ready.emit(data)
@@ -4156,6 +4171,7 @@ class FloatingPanel(QWidget):
                 background: transparent; border: none; border-radius: 4px;
             }}
             QPushButton:hover {{ color: {DARK['TEAL']}; }}
+            QPushButton::menu-indicator {{ width: 0; height: 0; }}
         """
         menu_style = f"""
             QMenu {{
@@ -4328,7 +4344,7 @@ class FloatingPanel(QWidget):
         quit_val = _value("Quit")
         quit_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['DANGER']}"))
         quit_val.clicked.connect(self.quit_requested.emit)
-        layout.addWidget(_credit("Office Hours", quit_val))
+        layout.addWidget(_credit("Vox", quit_val))
 
     def set_deck_status(self, connected, deck_name="Stream Deck"):
         """Update Stream Deck connection status (called from main.py)."""
@@ -4355,7 +4371,7 @@ class FloatingPanel(QWidget):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Office Hours works with the Elgato Stream Deck app.\n"
+            "Vox works with the Elgato Stream Deck app.\n"
             "The plugin was auto-installed — just add the actions:"
         )
         subtitle.setWordWrap(True)
@@ -4365,14 +4381,14 @@ class FloatingPanel(QWidget):
         steps = QLabel(
             "1. Open the Stream Deck app\n\n"
             "2. In the right sidebar, find the\n"
-            "   \"Office Hours\" category\n\n"
+            "   \"Vox\" category\n\n"
             "3. Drag these actions onto your deck:\n\n"
             "   • Push to Talk — hold to talk\n"
             "   • Status Mode — cycle availability\n"
-            "   • OH Logo — shows status & previews\n"
+            "   • Vox Logo — shows status & previews\n"
             "   • Switch Team — cycle teams\n"
             "   • Select User — cycle users\n"
-            "   • Show Panel — open the OH window\n\n"
+            "   • Show Panel — open the Vox window\n\n"
             "Suggested layout (top row):\n"
             "   PTT  |  Mode  |  Logo"
         )
@@ -4469,9 +4485,9 @@ class FloatingPanel(QWidget):
         QApplication.clipboard().setText(code)
         self._show_copied_toast()
 
-    def _show_copied_toast(self):
-        """Show a 'Copied!' label that fades up and out."""
-        toast = QLabel("Copied!", self)
+    def _show_copied_toast(self, text="Copied!"):
+        """Show a toast label that fades up and out."""
+        toast = QLabel(text, self)
         toast.setStyleSheet(f"""
             background: {DARK['BG_RAISED']}; color: {COLORS['GREEN']};
             border: 1px solid {DARK['BORDER']}; border-radius: 6px;
@@ -4498,145 +4514,30 @@ class FloatingPanel(QWidget):
         anim.start()
 
     def _invite_friend_email(self):
-        """Show a dialog to enter email address(es) and send invite via Resend."""
-        from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+        """Copy a shareable invite message to the clipboard."""
         idx = self._team_combo.currentIndex()
         code = ""
-        team_name = "Office Hours"
+        team_name = "Vox"
         if idx >= 0:
             code = self._team_combo.itemData(idx, Qt.UserRole + 2) or ""
-            team_name = self._team_combo.currentText() or "Office Hours"
-
-        sender_name = getattr(self, '_display_name', None) or "A teammate"
-
-        # Build dialog — use explicit flags so it doesn't inherit
-        # the panel's frameless/tool flags which can make it invisible
-        dlg = QDialog(self, Qt.Dialog | Qt.WindowStaysOnTopHint)
-        dlg.setWindowTitle("Send Invite")
-        dlg.setFixedWidth(320)
-        dlg.setStyleSheet(f"""
-            QDialog {{ background: {DARK['BG']}; border: 1px solid {DARK['BORDER']}; border-radius: 10px; }}
-            QLabel {{ color: {DARK['TEXT']}; border: none; }}
-        """)
-
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
-
-        title = QLabel(f"Invite to {team_name}")
-        title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {DARK['TEXT']}; border: none;")
-        layout.addWidget(title)
-
-        subtitle = QLabel("Enter email address:")
-        subtitle.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
-        layout.addWidget(subtitle)
-
-        email_input = QLineEdit()
-        email_input.setPlaceholderText("friend@example.com")
-        email_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                border-radius: 6px; padding: 8px 10px; font-size: 13px;
-                color: {DARK['TEXT']};
-            }}
-            QLineEdit:focus {{ border-color: {DARK['ACCENT']}; }}
-        """)
-        layout.addWidget(email_input)
+            team_name = self._team_combo.currentText() or "Vox"
 
         if code:
-            code_label = QLabel(f"Code: {code}")
-            code_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_FAINT']}; border: none;")
-            layout.addWidget(code_label)
+            msg = (
+                f"Join me on Vox!\n\n"
+                f"Team: {team_name}\n"
+                f"Code: {code}\n\n"
+                f"Download: https://github.com/matthannam-fart/vox/archive/refs/heads/main.zip"
+            )
+        else:
+            msg = (
+                f"Join me on Vox!\n\n"
+                f"Team: {team_name}\n\n"
+                f"Download: https://github.com/matthannam-fart/vox/archive/refs/heads/main.zip"
+            )
 
-        status_label = QLabel("")
-        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['TEXT_DIM']}; border: none;")
-        status_label.setVisible(False)
-        layout.addWidget(status_label)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setAutoDefault(False)
-        cancel_btn.setDefault(False)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                padding: 6px 14px; font-size: 12px; font-weight: 500;
-                color: {DARK['TEXT_DIM']}; background: transparent;
-                border: 1px solid {DARK['BORDER']}; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-        """)
-        cancel_btn.clicked.connect(dlg.reject)
-
-        send_btn = QPushButton("Send Invite")
-        send_btn.setCursor(Qt.PointingHandCursor)
-        send_btn.setAutoDefault(False)
-        send_btn.setDefault(False)
-        send_btn.setStyleSheet(f"""
-            QPushButton {{
-                padding: 6px 14px; font-size: 12px; font-weight: 600;
-                color: #fff; background: {DARK['ACCENT']};
-                border: none; border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: {DARK['TEAL']}; }}
-        """)
-
-        def _do_send(checked=False):
-            email = email_input.text().strip()
-            print(f"[Invite] _do_send called, email={email!r}")
-            if not email or "@" not in email:
-                status_label.setText("Please enter a valid email address.")
-                status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
-                status_label.setVisible(True)
-                return
-            send_btn.setEnabled(False)
-            send_btn.setText("Sending...")
-            status_label.setVisible(False)
-
-            import threading
-            def _send():
-                try:
-                    print(f"[Invite] Calling send_invite_email({email!r}, {team_name!r})")
-                    from supabase_client import send_invite_email
-                    result = send_invite_email(email, team_name, code, sender_name)
-                    print(f"[Invite] Result: {result}")
-                except Exception as e:
-                    print(f"[Invite] Exception: {e}")
-                    result = None
-                # Update UI from main thread via QTimer.singleShot
-                if result:
-                    QTimer.singleShot(0, lambda: _on_result(True))
-                else:
-                    QTimer.singleShot(0, lambda: _on_result(False))
-
-            def _on_result(success):
-                try:
-                    if success:
-                        status_label.setText("Sent!")
-                        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['ACCENT']}; border: none;")
-                        status_label.setVisible(True)
-                        QTimer.singleShot(1000, dlg.accept)
-                    else:
-                        status_label.setText("Failed to send. Try again.")
-                        status_label.setStyleSheet(f"font-size: 11px; color: {DARK['DANGER']}; border: none;")
-                        status_label.setVisible(True)
-                        send_btn.setEnabled(True)
-                        send_btn.setText("Send Invite")
-                except RuntimeError:
-                    pass  # Dialog already closed
-
-            threading.Thread(target=_send, daemon=True).start()
-
-        send_btn.clicked.connect(_do_send)
-        email_input.returnPressed.connect(_do_send)
-
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(send_btn)
-        layout.addLayout(btn_row)
-
-        dlg.exec()
+        QApplication.clipboard().setText(msg)
+        self._show_copied_toast("Invite copied to clipboard!")
 
     def _copy_invite_code(self):
         """Copy the current team's invite code to the clipboard."""
@@ -4736,6 +4637,8 @@ class FloatingPanel(QWidget):
         self._update_pin_style(self._pinned)
 
         if self._pinned:
+            # Save position so we can restore on expand
+            self._pre_pin_pos = self.pos()
             # Collapse to compact vertical strip
             self._sidebar.setVisible(False)
             self._content_frame.setVisible(False)
@@ -4745,6 +4648,9 @@ class FloatingPanel(QWidget):
             strip_h = self._calc_strip_height()
             self.setFixedWidth(STRIP_W + 2)  # +2 for border
             self.setFixedHeight(strip_h)
+            # Move to top right corner of screen
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.move(screen.right() - self.width() - 8, screen.top() + 8)
         else:
             # Expand to full panel
             self.setMaximumWidth(16777215)  # Remove fixed width
@@ -4757,6 +4663,9 @@ class FloatingPanel(QWidget):
             self._pinned_compact.setVisible(False)
             self._switch_page("users")
             self._resize_panel()
+            # Restore original position
+            if hasattr(self, '_pre_pin_pos'):
+                self.move(self._pre_pin_pos)
 
     def is_pinned(self):
         return self._pinned
@@ -4875,14 +4784,21 @@ def create_oh_icon(color_hex='#00a651', size=22):
     Falls back to text rendering if files not found.
     """
     icon_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(icon_dir, "oh_icon.png")
-    icon_2x_path = os.path.join(icon_dir, "oh_icon@2x.png")
+    icon_path = os.path.join(icon_dir, "vox_icon.png")
+    icon_2x_path = os.path.join(icon_dir, "vox_icon@2x.png")
 
-    if os.path.exists(icon_path):
-        icon = QIcon()
-        icon.addFile(icon_path, QSize(18, 18))
-        if os.path.exists(icon_2x_path):
-            icon.addFile(icon_2x_path, QSize(36, 36))
+    if os.path.exists(icon_2x_path):
+        # Load @2x and scale down — ensures alpha is preserved
+        img = QImage(icon_2x_path)
+        img = img.convertToFormat(QImage.Format.Format_ARGB32)
+        pixmap = QPixmap.fromImage(img)
+        icon = QIcon(pixmap)
+        return icon
+    elif os.path.exists(icon_path):
+        img = QImage(icon_path)
+        img = img.convertToFormat(QImage.Format.Format_ARGB32)
+        pixmap = QPixmap.fromImage(img)
+        icon = QIcon(pixmap)
         return icon
 
     # Fallback: render text
@@ -4897,7 +4813,7 @@ def create_oh_icon(color_hex='#00a651', size=22):
     font.setWeight(QFont.Bold)
     font.setLetterSpacing(QFont.AbsoluteSpacing, -1.0)
     fm = QFontMetrics(font)
-    text_width = fm.horizontalAdvance("OH") + 4
+    text_width = fm.horizontalAdvance("VOX") + 4
 
     pixmap = QPixmap(max(text_width, size), size)
     pixmap.fill(QColor(0, 0, 0, 0))
@@ -4907,7 +4823,7 @@ def create_oh_icon(color_hex='#00a651', size=22):
     p.setRenderHint(QPainter.TextAntialiasing)
     p.setFont(font)
     p.setPen(QColor(0, 0, 0))
-    p.drawText(QRect(0, 0, pixmap.width(), pixmap.height()), Qt.AlignCenter, "OH")
+    p.drawText(QRect(0, 0, pixmap.width(), pixmap.height()), Qt.AlignCenter, "VOX")
     p.end()
 
     return QIcon(pixmap)
@@ -4927,7 +4843,7 @@ if __name__ == '__main__':
 
     # Panel
     panel = FloatingPanel()
-    panel.set_connection(True, "OH-7X3K")
+    panel.set_connection(True, "VOX-7X3K")
 
     # Demo users
     panel.set_users([
