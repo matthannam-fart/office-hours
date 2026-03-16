@@ -778,7 +778,7 @@ class FloatingPanel(QWidget):
         is_login = (key == "login")
         has_team = bool(getattr(self, '_active_team_name_cache', ''))
         settings_from_welcome = (key == "settings" and getattr(self, '_settings_back_page', '') == "welcome")
-        show_sidebar = key in ("users", "teams", "radio", "settings") and not settings_from_welcome
+        show_sidebar = key in ("users", "teams", "radio") and not settings_from_welcome
 
         # Sidebar: visible only when a team is active (not from welcome)
         self._sidebar.setVisible(show_sidebar)
@@ -788,11 +788,12 @@ class FloatingPanel(QWidget):
             )
 
         # Hide status bar and header on welcome/login
+        is_settings = (key == "settings")
         self._status_bar.setVisible(show_sidebar)
-        self._content_header.setVisible(show_sidebar)
+        self._content_header.setVisible(show_sidebar or is_settings)
 
         # Panel width
-        if is_welcome or is_login:
+        if is_welcome or is_login or is_settings:
             self.setFixedWidth(260)
         elif settings_from_welcome:
             self.setFixedWidth(260)
@@ -803,11 +804,13 @@ class FloatingPanel(QWidget):
         if key == "users":
             team_name = getattr(self, '_active_team_name_cache', 'Team')
             self._section_title.setText(f"{team_name} ▾")
+            self._section_title.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
             self._hamburger_btn.setText("⚙")
             self._hamburger_btn.setVisible(True)
             self._collapse_btn.setVisible(True)
         elif key == "settings":
             self._section_title.setText("Settings")
+            self._section_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             self._hamburger_btn.setText("✕")
             self._hamburger_btn.setVisible(True)
             self._collapse_btn.setVisible(False)
@@ -3238,16 +3241,22 @@ class FloatingPanel(QWidget):
         v.setSpacing(8)
         v.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
-        # ── OH logo at top (click to expand) ──
-        expand_btn = QPushButton("VOX")
+        # ── Logo at top (click to expand) ──
+        expand_btn = QPushButton()
         expand_btn.setFixedSize(40, 28)
         expand_btn.setCursor(Qt.PointingHandCursor)
         expand_btn.setToolTip("Expand panel")
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'oh_logo.png')
+        if os.path.exists(_logo_path):
+            _logo_px = QPixmap(_logo_path).scaledToHeight(20, Qt.SmoothTransformation)
+            expand_btn.setIcon(QIcon(_logo_px))
+            expand_btn.setIconSize(_logo_px.size())
+        else:
+            expand_btn.setText("VOX")
         expand_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: none;
-                border-radius: 6px; font-size: 14px; font-weight: 900;
-                color: {DARK['ACCENT']};
+                border-radius: 6px;
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
@@ -4331,7 +4340,14 @@ class FloatingPanel(QWidget):
         layout.addStretch()
         layout.addWidget(_section(""))  # divider only, empty title
 
-        # Sign Out (only shown if logged in with auth)
+        # Account row: Sign Out + Quit on one line
+        acct_row = QWidget()
+        acct_h = QHBoxLayout(acct_row)
+        acct_h.setContentsMargins(14, 0, 14, 0)
+        acct_h.setSpacing(8)
+        acct_h.addWidget(_label("Account"))
+        acct_h.addStretch()
+
         try:
             from user_settings import is_logged_in
             if is_logged_in():
@@ -4340,14 +4356,16 @@ class FloatingPanel(QWidget):
                     value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['WARN']}")
                 )
                 signout_val.clicked.connect(self.sign_out_requested.emit)
-                layout.addWidget(_credit("Account", signout_val))
+                acct_h.addWidget(signout_val)
         except Exception:
             pass
 
         quit_val = _value("Quit")
         quit_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['DANGER']}"))
         quit_val.clicked.connect(self.quit_requested.emit)
-        layout.addWidget(_credit("", quit_val))
+        acct_h.addWidget(quit_val)
+
+        layout.addWidget(acct_row)
 
     def set_deck_status(self, connected, deck_name="Stream Deck"):
         """Update Stream Deck connection status (called from main.py)."""
@@ -4651,11 +4669,18 @@ class FloatingPanel(QWidget):
             strip_h = self._calc_strip_height()
             self.setFixedWidth(STRIP_W + 2)  # +2 for border
             self.setFixedHeight(strip_h)
+            # Float on top of all windows with 90% opacity
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.setWindowOpacity(0.9)
+            self.show()
             # Move to top right corner of screen
             screen = QApplication.primaryScreen().availableGeometry()
             self.move(screen.right() - self.width() - 8, screen.top() + 8)
         else:
-            # Expand to full panel
+            # Expand to full panel — restore normal window flags and opacity
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.setWindowOpacity(1.0)
+            self.show()
             self.setMaximumWidth(16777215)  # Remove fixed width
             self.setMaximumHeight(16777215)  # Remove fixed height
             self.setMinimumHeight(0)
