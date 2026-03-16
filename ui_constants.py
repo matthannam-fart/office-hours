@@ -1,5 +1,5 @@
 """
-ui_constants.py — Shared UI constants for Office Hours
+ui_constants.py — Shared UI constants for Vox
 Colour palettes, mode labels, dimensions used by both widgets and the panel.
 """
 
@@ -22,7 +22,7 @@ RADIO_STATIONS = {
 }
 
 # Panel dimensions
-PANEL_W = 310
+PANEL_W = 260
 SIDEBAR_W = 56
 PANEL_RADIUS = 14
 

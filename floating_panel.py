@@ -441,7 +441,7 @@ class FloatingPanel(QWidget):
 
         # ── Status orb dropdown (single orb, expands to pick R/Y/G) ──
         status_container = QVBoxLayout()
-        status_container.setContentsMargins(5, 0, 5, 8)
+        status_container.setContentsMargins(5, 0, 5, 0)
         status_container.setAlignment(Qt.AlignCenter)
         status_container.setSpacing(2)
 
@@ -455,7 +455,7 @@ class FloatingPanel(QWidget):
 
         self._status_orb_frame = QFrame()
         self._status_orb_frame.setObjectName("statusOrb")
-        self._status_orb_frame.setFixedSize(40, 40)
+        self._status_orb_frame.setFixedSize(32, 32)
         self._status_orb_frame.setStyleSheet(f"""
             QFrame#statusOrb {{
                 background: transparent;
@@ -468,7 +468,7 @@ class FloatingPanel(QWidget):
         orb_layout.setAlignment(Qt.AlignCenter)
 
         self._status_orb_btn = QPushButton("●")
-        self._status_orb_btn.setFixedSize(38, 38)
+        self._status_orb_btn.setFixedSize(30, 30)
         self._status_orb_btn.setCursor(Qt.PointingHandCursor)
         self._status_orb_btn.setToolTip("Change status")
         self._status_orb_btn.clicked.connect(self._show_status_dropdown)
@@ -514,6 +514,7 @@ class FloatingPanel(QWidget):
                 background: transparent; border: none;
                 border-radius: 10px;
                 font-size: 32px; color: {color};
+                padding-bottom: 4px;
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
@@ -833,7 +834,7 @@ class FloatingPanel(QWidget):
         header.setStyleSheet("border: none;")
 
         v = QVBoxLayout(header)
-        v.setContentsMargins(12, 10, 12, 0)
+        v.setContentsMargins(12, 0, 6, 0)
         v.setSpacing(8)
 
         title_row = QHBoxLayout()
@@ -881,6 +882,8 @@ class FloatingPanel(QWidget):
             QPushButton {{
                 font-size: 24px; color: {DARK['TEXT']};
                 background: transparent; border: none;
+                padding-bottom: 4px;
+                margin-left: 15px;
             }}
             QPushButton:hover {{ color: {DARK['TEAL']}; }}
         """)
@@ -1896,7 +1899,7 @@ class FloatingPanel(QWidget):
         bar.setStyleSheet("border: none; background: transparent;")
 
         v = QVBoxLayout(bar)
-        v.setContentsMargins(8, 0, 8, 17)
+        v.setContentsMargins(8, 0, 8, 8)
         v.setSpacing(4)
 
         # Spacer to push buttons to bottom, aligned with sidebar status orb
@@ -1909,7 +1912,7 @@ class FloatingPanel(QWidget):
         # PTT button — left side, ~2/3 width
         self.ptt_btn = QPushButton("PUSH TO TALK")
         self.ptt_btn.setCursor(Qt.PointingHandCursor)
-        self.ptt_btn.setFixedHeight(40)
+        self.ptt_btn.setFixedHeight(32)
         self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
         self.ptt_btn.released.connect(self.ptt_released.emit)
         self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -1918,14 +1921,14 @@ class FloatingPanel(QWidget):
         # Thin divider
         divider = QFrame()
         divider.setFixedWidth(1)
-        divider.setFixedHeight(40)
+        divider.setFixedHeight(32)
         divider.setStyleSheet(f"background: {DARK['TEAL']}; border: none;")
         btn_row.addWidget(divider)
 
         # Page All button — right side, ~1/3 width
         self.page_all_btn = QPushButton("PAGE ALL")
         self.page_all_btn.setCursor(Qt.PointingHandCursor)
-        self.page_all_btn.setFixedHeight(40)
+        self.page_all_btn.setFixedHeight(32)
         self.page_all_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: 1px solid {DARK['TEAL']};
@@ -4344,7 +4347,7 @@ class FloatingPanel(QWidget):
         quit_val = _value("Quit")
         quit_val.setStyleSheet(value_style.replace(f"color: {DARK['TEXT']}", f"color: {DARK['DANGER']}"))
         quit_val.clicked.connect(self.quit_requested.emit)
-        layout.addWidget(_credit("Vox", quit_val))
+        layout.addWidget(_credit("", quit_val))
 
     def set_deck_status(self, connected, deck_name="Stream Deck"):
         """Update Stream Deck connection status (called from main.py)."""
@@ -4696,7 +4699,7 @@ class FloatingPanel(QWidget):
 
     # ── Size Management ─────────────────────────────────────────
     # Fixed panel height — consistent across all pages
-    PANEL_H = 460
+    PANEL_H = 380
     WELCOME_H = 380
 
     def _auto_resize(self):
