@@ -1,15 +1,13 @@
 """
-Shared fixtures for Office Hours tests.
+Shared fixtures for Vox tests.
 
 These tests are designed to run WITHOUT a running app, network, or GUI.
 They validate config defaults, settings persistence, protocol logic,
 and pure utility functions so Claude can self-verify changes.
 """
 
-import json
 import os
 import sys
-import tempfile
 
 import pytest
 

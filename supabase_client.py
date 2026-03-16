@@ -1,5 +1,5 @@
 """
-supabase_client.py — Lightweight Supabase REST client for Office Hours teams.
+supabase_client.py — Lightweight Supabase REST client for Vox teams.
 
 Uses only urllib (no pip dependencies). Wraps PostgREST API for:
   - User profiles (upsert on launch)
@@ -72,7 +72,8 @@ def _headers(extra=None):
 
 
 def _request(method, path, body=None, headers_extra=None, params=None):
-    """Make an HTTP request to the Supabase PostgREST API."""
+    """Make an HTTP request to the Supabase PostgREST API.
+    Retries once on transient errors (5xx, timeout)."""
     url = f"{SUPABASE_URL}/rest/v1/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params, doseq=True)
@@ -80,18 +81,36 @@ def _request(method, path, body=None, headers_extra=None, params=None):
     data = json.dumps(body).encode("utf-8") if body else None
     hdrs = _headers(headers_extra)
 
-    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw) if raw.strip() else []
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
-        log.warning(f"Supabase {method} {path} → {e.code}: {error_body}")
-        return None
-    except Exception as e:
-        log.warning(f"Supabase request failed: {e}")
-        return None
+    last_err = None
+    for attempt in range(2):
+        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw) if raw.strip() else []
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            if e.code >= 500 and attempt == 0:
+                log.warning(f"Supabase {method} {path} → {e.code} (retrying): {error_body}")
+                time.sleep(0.5)
+                last_err = e
+                continue
+            log.warning(f"Supabase {method} {path} → {e.code}: {error_body}")
+            return None
+        except (TimeoutError, urllib.error.URLError, OSError) as e:
+            if attempt == 0:
+                log.warning(f"Supabase {method} {path} transient error (retrying): {e}")
+                time.sleep(0.5)
+                last_err = e
+                continue
+            log.warning(f"Supabase {method} {path} failed after retry: {e}")
+            return None
+        except Exception as e:
+            log.warning(f"Supabase request failed: {e}")
+            return None
+
+    log.warning(f"Supabase {method} {path} failed after retry: {last_err}")
+    return None
 
 
 # ── Profiles ─────────────────────────────────────────────────────

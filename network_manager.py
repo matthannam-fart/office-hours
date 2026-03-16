@@ -65,7 +65,7 @@ class NetworkManager:
         if self.log_callback:
             self.log_callback(msg)
         import logging
-        logging.getLogger('officehours').info(msg)
+        logging.getLogger('vox').info(msg)
 
     # ── TLS Setup ─────────────────────────────────────────────────
 
@@ -266,7 +266,7 @@ class NetworkManager:
             if sock:
                 try:
                     sock.close()
-                except:
+                except OSError:
                     pass
             return None
 
@@ -350,7 +350,7 @@ class NetworkManager:
             if sock:
                 try:
                     sock.close()
-                except:
+                except OSError:
                     pass
             return False
 
@@ -519,7 +519,7 @@ class NetworkManager:
                                 self._log(f"TLS handshake failed from {addr}: {e}")
                                 try:
                                     client.close()
-                                except:
+                                except OSError:
                                     pass
                                 continue
                         else:
@@ -535,7 +535,7 @@ class NetworkManager:
                         self._log(f"Ignoring LAN connection from {addr} — relay session active")
                         try:
                             client.close()
-                        except:
+                        except OSError:
                             pass
                         continue
 
@@ -544,7 +544,7 @@ class NetworkManager:
                         self._log(f"Replacing stale connection with new from {addr}")
                         try:
                             self.tcp_socket.close()
-                        except:
+                        except OSError:
                             pass
 
                     self.tcp_socket = client
@@ -643,13 +643,13 @@ class NetworkManager:
         if self.tcp_socket:
             try:
                 self.tcp_socket.close()
-            except:
+            except OSError:
                 pass
             self.tcp_socket = None
         if self.relay_udp_socket:
             try:
                 self.relay_udp_socket.close()
-            except:
+            except OSError:
                 pass
             self.relay_udp_socket = None
         self.peer_ip = None
@@ -716,7 +716,7 @@ class NetworkManager:
             if self.presence_socket:
                 try:
                     self.presence_socket.close()
-                except:
+                except OSError:
                     pass
             return False
 
@@ -960,7 +960,8 @@ class NetworkManager:
             try:
                 ping = json.dumps({"action": "PING"}).encode('utf-8')
                 self._send_frame_on(self.presence_socket, ping)
-            except Exception:
+            except (OSError, ssl.SSLError):
+                self._log("Presence heartbeat failed — socket dead")
                 break  # Socket dead, _listen_presence will handle reconnect
 
     def disconnect_presence(self):
@@ -970,7 +971,7 @@ class NetworkManager:
         if self.presence_socket:
             try:
                 self.presence_socket.close()
-            except:
+            except OSError:
                 pass
             self.presence_socket = None
 

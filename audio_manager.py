@@ -489,85 +489,14 @@ class AudioManager:
 
         def callback(indata, frames, time_info, status):
             if status:
-                self.log(str(status))
+                self.log(f"[Mic] stream status: {status}")
             if not self.streaming:
                 return
 
-            # Calculate RMS for level meter and VOX
-            rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
-
-            # Report mic level
-            if self.mic_level_callback:
-                level = min(1.0, rms / 32768.0 * 10)
-                self.mic_level_callback(level)
-
-            # ── Hotline path: always-on with soft noise suppression ──
-            if self._hotline_enabled:
-                audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
-                frame_len = len(audio_f32)
-
-                # Adaptive noise floor (tracks ambient level)
-                if rms < self._hotline_noise_floor:
-                    self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_DECAY_RATE
-                else:
-                    self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_ADAPT_RATE
-                self._hotline_noise_floor = max(self._hotline_noise_floor, HOTLINE_NOISE_FLOOR_MIN)
-
-                # Determine if voice is present (spectral + level check)
-                voice_thresh = self._hotline_noise_floor * HOTLINE_VOICE_THRESH
-                is_voice = False
-                if rms >= voice_thresh:
-                    try:
-                        fft = np.abs(np.fft.rfft(audio_f32))
-                        freqs = np.fft.rfftfreq(frame_len, 1.0 / SAMPLE_RATE)
-                        total_energy = np.sum(fft ** 2)
-                        if total_energy > 0:
-                            voice_mask = (freqs >= HOTLINE_VOICE_BAND[0]) & (freqs <= HOTLINE_VOICE_BAND[1])
-                            voice_energy = np.sum(fft[voice_mask] ** 2)
-                            is_voice = (voice_energy / total_energy) >= HOTLINE_VOICE_RATIO
-                    except Exception:
-                        is_voice = True  # If FFT fails, assume voice
-
-                # Smooth gain: ramp toward 1.0 (voice) or suppressed level (no voice)
-                suppress_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # ~0.18 for 15dB
-                target_gain = 1.0 if is_voice else suppress_gain
-
-                # Ramp gain based on frame duration (20ms per frame)
-                frame_sec = frame_len / SAMPLE_RATE
-                if target_gain > self._hotline_gain:
-                    # Attack: fast ramp up
-                    attack_sec = max(0.001, HOTLINE_ATTACK_MS / 1000)
-                    self._hotline_gain += (1.0 - suppress_gain) * (frame_sec / attack_sec)
-                    self._hotline_gain = min(self._hotline_gain, 1.0)
-                else:
-                    # Release: slow ramp down (keeps natural tails)
-                    release_sec = max(0.001, HOTLINE_RELEASE_MS / 1000)
-                    self._hotline_gain -= (1.0 - suppress_gain) * (frame_sec / release_sec)
-                    self._hotline_gain = max(self._hotline_gain, suppress_gain)
-
-                # Apply gain — never fully silent, always some room tone
-                indata = (indata.astype(np.float32) * self._hotline_gain).astype(DTYPE)
-
-                # AEC is critical for hotline (both sides have open mics)
-                cleaned = self._aec.cancel(indata)
-                raw = cleaned.tobytes()
-
-                # Encode with hotline encoder (lower bitrate for continuous streaming)
-                if self._hotline_opus_encoder:
-                    compressed = self._hotline_opus_encoder.encode(raw, OPUS_FRAME_SIZE)
-                else:
-                    compressed = self._encode(raw)
-                self.network_manager.send_audio(compressed)
-                return
-
-            # ── PTT path: only sends when streaming flag is set ──
-            # AEC: remove echo from mic signal using speaker reference
-            cleaned = self._aec.cancel(indata)
-            raw = cleaned.tobytes()
-
-            # Encode and send
-            compressed = self._encode(raw)
-            self.network_manager.send_audio(compressed)
+            try:
+                self._mic_callback_inner(indata, frames, time_info)
+            except Exception as e:
+                self.log(f"[Mic] callback error: {e}")
 
         try:
             with sd.InputStream(device=self.input_device, samplerate=SAMPLE_RATE,
@@ -575,8 +504,89 @@ class AudioManager:
                                 blocksize=frame_size, latency='low'):
                 while self.streaming:
                     sd.sleep(50)
+        except sd.PortAudioError as e:
+            self.log(f"Mic Stream Error (device may have been removed): {e}")
+            self.streaming = False
         except Exception as e:
             self.log(f"Mic Stream Error: {e}")
+            self.streaming = False
+
+    def _mic_callback_inner(self, indata, frames, time_info):
+        # Calculate RMS for level meter and VOX
+        rms = np.sqrt(np.mean(indata.astype(np.float32) ** 2))
+
+        # Report mic level
+        if self.mic_level_callback:
+            level = min(1.0, rms / 32768.0 * 10)
+            self.mic_level_callback(level)
+
+        # ── Hotline path: always-on with soft noise suppression ──
+        if self._hotline_enabled:
+            audio_f32 = indata[:, 0].astype(np.float32) if indata.ndim > 1 else indata.astype(np.float32).flatten()
+            frame_len = len(audio_f32)
+
+            # Adaptive noise floor (tracks ambient level)
+            if rms < self._hotline_noise_floor:
+                self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_DECAY_RATE
+            else:
+                self._hotline_noise_floor += (rms - self._hotline_noise_floor) * HOTLINE_NOISE_ADAPT_RATE
+            self._hotline_noise_floor = max(self._hotline_noise_floor, HOTLINE_NOISE_FLOOR_MIN)
+
+            # Determine if voice is present (spectral + level check)
+            voice_thresh = self._hotline_noise_floor * HOTLINE_VOICE_THRESH
+            is_voice = False
+            if rms >= voice_thresh:
+                try:
+                    fft = np.abs(np.fft.rfft(audio_f32))
+                    freqs = np.fft.rfftfreq(frame_len, 1.0 / SAMPLE_RATE)
+                    total_energy = np.sum(fft ** 2)
+                    if total_energy > 0:
+                        voice_mask = (freqs >= HOTLINE_VOICE_BAND[0]) & (freqs <= HOTLINE_VOICE_BAND[1])
+                        voice_energy = np.sum(fft[voice_mask] ** 2)
+                        is_voice = (voice_energy / total_energy) >= HOTLINE_VOICE_RATIO
+                except Exception:
+                    is_voice = True  # If FFT fails, assume voice
+
+            # Smooth gain: ramp toward 1.0 (voice) or suppressed level (no voice)
+            suppress_gain = 10 ** (-HOTLINE_SUPPRESS_DB / 20)  # ~0.18 for 15dB
+            target_gain = 1.0 if is_voice else suppress_gain
+
+            # Ramp gain based on frame duration (20ms per frame)
+            frame_sec = frame_len / SAMPLE_RATE
+            if target_gain > self._hotline_gain:
+                # Attack: fast ramp up
+                attack_sec = max(0.001, HOTLINE_ATTACK_MS / 1000)
+                self._hotline_gain += (1.0 - suppress_gain) * (frame_sec / attack_sec)
+                self._hotline_gain = min(self._hotline_gain, 1.0)
+            else:
+                # Release: slow ramp down (keeps natural tails)
+                release_sec = max(0.001, HOTLINE_RELEASE_MS / 1000)
+                self._hotline_gain -= (1.0 - suppress_gain) * (frame_sec / release_sec)
+                self._hotline_gain = max(self._hotline_gain, suppress_gain)
+
+            # Apply gain — never fully silent, always some room tone
+            indata = (indata.astype(np.float32) * self._hotline_gain).astype(DTYPE)
+
+            # AEC is critical for hotline (both sides have open mics)
+            cleaned = self._aec.cancel(indata)
+            raw = cleaned.tobytes()
+
+            # Encode with hotline encoder (lower bitrate for continuous streaming)
+            if self._hotline_opus_encoder:
+                compressed = self._hotline_opus_encoder.encode(raw, OPUS_FRAME_SIZE)
+            else:
+                compressed = self._encode(raw)
+            self.network_manager.send_audio(compressed)
+            return
+
+        # ── PTT path: only sends when streaming flag is set ──
+        # AEC: remove echo from mic signal using speaker reference
+        cleaned = self._aec.cancel(indata)
+        raw = cleaned.tobytes()
+
+        # Encode and send
+        compressed = self._encode(raw)
+        self.network_manager.send_audio(compressed)
 
     def set_hotline(self, enabled):
         """Enable/disable hotline (always-on) mode with soft noise suppression."""
@@ -627,14 +637,22 @@ class AudioManager:
 
     def _record_buffer(self):
         def callback(indata, frames, time, status):
-            if self.recording:
-                self.message_buffer.append(indata.copy())
+            if status:
+                self.log(f"[Record] stream status: {status}")
+            try:
+                if self.recording:
+                    self.message_buffer.append(indata.copy())
+            except Exception as e:
+                self.log(f"[Record] callback error: {e}")
 
         try:
             with sd.InputStream(device=self.input_device, samplerate=SAMPLE_RATE,
                                 channels=CHANNELS, dtype=DTYPE, callback=callback):
                 while self.recording:
                     sd.sleep(100)
+        except sd.PortAudioError as e:
+            self.log(f"Record Error (device may have been removed): {e}")
+            self.recording = False
         except Exception as e:
             self.log(f"Record Error: {e}")
 
@@ -674,7 +692,7 @@ class AudioManager:
 
         def callback(outdata, frames, time, status):
             if status:
-                print(status)
+                self.log(f"[Play] stream status: {status}")
             try:
                 data = self._jitter_buf.pull(outdata.shape)
                 outdata[:] = data[:len(outdata)] if len(data) >= len(outdata) else np.pad(
@@ -696,6 +714,10 @@ class AudioManager:
                 while self.listening:
                     sd.sleep(50)
             self._play_stream_obj = None
+        except sd.PortAudioError as e:
+            self._play_stream_obj = None
+            self.log(f"Audio Stream Error (device may have been removed): {e}")
+            self.listening = False
         except Exception as e:
             self._play_stream_obj = None
             self.log(f"Audio Stream Error: {e}")

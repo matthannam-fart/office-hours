@@ -1,7 +1,6 @@
 """Tests for user_settings.py — settings persistence, user ID, display name, etc."""
 
 import json
-import os
 
 
 def test_load_settings_returns_empty_dict_when_no_file(patched_settings):

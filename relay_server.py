@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Office Hours Relay Server
+Vox Relay Server
 
 Two channels:
 1. Presence — clients register with a name, server broadcasts who's online + modes
@@ -297,8 +297,8 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                                 "type": "CONNECTION_REJECTED",
                                 "message": "Connection declined"
                             })
-                        except Exception:
-                            pass
+                        except (OSError, ConnectionError) as e:
+                            print(f"[Presence] Could not send rejection to {target_id}: {e}")
 
             elif action == "CANCEL_CONNECTION":
                 # Caller cancelled — notify the target
@@ -313,8 +313,8 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                                 "message": "Call was cancelled"
                             })
                             print(f"[Presence] {user_id} cancelled call to {target_id}")
-                        except Exception:
-                            pass
+                        except (OSError, ConnectionError) as e:
+                            print(f"[Presence] Could not send cancellation to {target_id}: {e}")
 
             elif action == "JOIN_REQUEST":
                 # Lobby: requester wants to join a team — route to admin
@@ -403,8 +403,12 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                         print(f"[PageAll] Failed to deliver to {uid}")
                 print(f"[PageAll] {sender_name} paged {sent}/{len(recipients)} GREEN members in team {team_id[:8]}")
 
+    except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+        print(f"[Presence] Client {client_addr} disconnected: {e}")
+    except (OSError, ssl.SSLError) as e:
+        print(f"[Presence] Socket error with {client_addr}: {e}")
     except Exception as e:
-        print(f"[Presence] Error with {client_addr}: {e}")
+        print(f"[Presence] Unexpected error with {client_addr}: {e}")
     finally:
         if user_id:
             with presence_lock:
@@ -420,9 +424,9 @@ rooms = {}          # room_code -> {"clients": [conn1, conn2], "udp_addrs": [add
 rooms_lock = threading.Lock()
 
 def generate_room_code():
-    """Generate a human-friendly room code like OH-7X3KA2 (6 chars for brute-force resistance)"""
+    """Generate a human-friendly room code like VOX-7X3KA2 (6 chars for brute-force resistance)"""
     suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    return f"OH-{suffix}"
+    return f"VOX-{suffix}"
 
 def cleanup_stale_rooms(max_age=3600):
     """Remove rooms older than max_age seconds"""
@@ -435,7 +439,7 @@ def cleanup_stale_rooms(max_age=3600):
             for client in rooms[code]["clients"]:
                 try:
                     client.close()
-                except:
+                except OSError:
                     pass
             del rooms[code]
 
@@ -613,8 +617,12 @@ def handle_room_client(client_sock, client_addr, udp_sock):
                 except Exception:
                     pass
 
+    except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+        print(f"[Room] Client {client_addr} disconnected: {e}")
+    except (OSError, ssl.SSLError) as e:
+        print(f"[Room] Socket error with {client_addr}: {e}")
     except Exception as e:
-        print(f"[Room] Error with {client_addr}: {e}")
+        print(f"[Room] Unexpected error with {client_addr}: {e}")
     finally:
         client_sock.close()
         if room_code:
@@ -656,8 +664,8 @@ def udp_relay_loop(udp_sock):
                             if a and i != sender_idx:
                                 udp_sock.sendto(data, a)
                         break
-        except Exception as e:
-            print(f"[UDP] Error: {e}")
+        except OSError as e:
+            print(f"[UDP] Socket error: {e}")
 
 # ── TCP Router ───────────────────────────────────────────────────
 
@@ -721,11 +729,23 @@ def handle_client(client_sock, client_addr, udp_sock):
             send_json(client_sock, {"status": "error", "message": f"Unknown action: {action}"})
             client_sock.close()
 
-    except Exception as e:
-        print(f"[Router] Error: {e}")
+    except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+        print(f"[Router] Client {client_addr} disconnected during routing: {e}")
         try:
             client_sock.close()
-        except:
+        except OSError:
+            pass
+    except (OSError, ssl.SSLError) as e:
+        print(f"[Router] Socket error from {client_addr}: {e}")
+        try:
+            client_sock.close()
+        except OSError:
+            pass
+    except Exception as e:
+        print(f"[Router] Unexpected error from {client_addr}: {e}")
+        try:
+            client_sock.close()
+        except OSError:
             pass
 
 def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handshake_msg):
@@ -849,8 +869,12 @@ def handle_room_client_with_handshake(client_sock, client_addr, udp_sock, handsh
                 except Exception:
                     pass
 
+    except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
+        print(f"[Room] Client {client_addr} disconnected: {e}")
+    except (OSError, ssl.SSLError) as e:
+        print(f"[Room] Socket error with {client_addr}: {e}")
     except Exception as e:
-        print(f"[Room] Error: {e}")
+        print(f"[Room] Unexpected error with {client_addr}: {e}")
     finally:
         client_sock.close()
         if room_code:
@@ -881,14 +905,14 @@ def create_tls_context(cert_file, key_file):
 # ── Main ─────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Office Hours Relay Server")
+    parser = argparse.ArgumentParser(description="Vox Relay Server")
     parser.add_argument("--port", type=int, default=50002, help="Port for TCP and UDP (default: 50002)")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--cert", type=str, default=None, help="TLS certificate file (PEM)")
     parser.add_argument("--key", type=str, default=None, help="TLS private key file (PEM)")
     parser.add_argument("--auth-key", type=str,
-                        default=os.environ.get('OFFICEHOURS_RELAY_KEY', 'oh-relay-v1-2026'),
-                        help="Auth key clients must provide (env: OFFICEHOURS_RELAY_KEY)")
+                        default=os.environ.get('VOX_RELAY_KEY', 'vox-relay-v1-2026'),
+                        help="Auth key clients must provide (env: VOX_RELAY_KEY)")
     args = parser.parse_args()
 
     # Auth setup
@@ -912,7 +936,7 @@ def main():
     tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp_server.bind((args.host, args.port))
     tcp_server.listen(20)
-    print(f"[Server] Office Hours Relay listening on {args.host}:{args.port}")
+    print(f"[Server] Vox Relay listening on {args.host}:{args.port}")
     print("[Server] Presence + Room relay active")
 
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

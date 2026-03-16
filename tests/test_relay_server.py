@@ -1,15 +1,13 @@
 """Tests for relay_server.py — pure logic that doesn't require a running server."""
 
-import time
-
 
 def test_generate_room_code_format():
-    """Room codes should match OH-XXXXXX format (6 uppercase alphanumeric chars)."""
+    """Room codes should match VOX-XXXXXX format (6 uppercase alphanumeric chars)."""
     from relay_server import generate_room_code
     for _ in range(20):
         code = generate_room_code()
-        assert code.startswith("OH-")
-        suffix = code[3:]
+        assert code.startswith("VOX-")
+        suffix = code[4:]
         assert len(suffix) == 6
         assert suffix.isalnum()
         assert suffix == suffix.upper()
