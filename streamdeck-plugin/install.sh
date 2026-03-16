@@ -1,12 +1,12 @@
 #!/bin/bash
-# Install the Office Hours Stream Deck plugin
+# Install the Vox Stream Deck plugin
 set -e
 
-PLUGIN_DIR="com.officehours.intercom.sdPlugin"
+PLUGIN_DIR="com.vox.intercom.sdPlugin"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "Installing Office Hours Stream Deck plugin..."
+echo "Installing Vox Stream Deck plugin..."
 
 # Validate Node dependencies (ws module must exist)
 if [ ! -d "$PLUGIN_DIR/bin/node_modules/ws" ]; then
@@ -47,7 +47,7 @@ fi
 echo "  Copying plugin to Stream Deck..."
 if cp -R "$PLUGIN_DIR" "$DEST" 2>/dev/null; then
     echo ""
-    echo "Done! Restart the Stream Deck app, then find 'Office Hours' in the action list."
+    echo "Done! Restart the Stream Deck app, then find 'Vox' in the action list."
 else
     echo ""
     echo "ERROR: Failed to copy plugin. Check permissions on: $DEST"

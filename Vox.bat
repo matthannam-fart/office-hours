@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-REM Office Hours - Windows
+REM Vox - Windows
 REM Double-click this file to launch
 
 REM Ensure the window stays open no matter what happens
@@ -15,12 +15,12 @@ cd /d "%~dp0"
 
 echo.
 echo   ============================================
-echo     Office Hours - Intercom
+echo     Vox - Intercom
 echo   ============================================
 echo.
 
 REM ── Step 0: Auto-update ──
-set "REPO_URL=https://github.com/matthannam-fart/office-hours"
+set "REPO_URL=https://github.com/matthannam-fart/vox"
 
 git --version >nul 2>&1
 if errorlevel 1 goto :no_git
@@ -48,7 +48,7 @@ echo   Checking for updates...
 
 REM Get latest commit SHA using PowerShell JSON parsing (more reliable)
 set "LATEST_SHA="
-for /f "tokens=*" %%a in ('powershell -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/matthannam-fart/office-hours/commits/main' -TimeoutSec 5).sha" 2^>nul') do (
+for /f "tokens=*" %%a in ('powershell -Command "(Invoke-RestMethod -Uri 'https://api.github.com/repos/matthannam-fart/vox/commits/main' -TimeoutSec 5).sha" 2^>nul') do (
     set "LATEST_SHA=%%a"
 )
 
@@ -193,7 +193,7 @@ if errorlevel 1 (
 
 REM ── Step 3.7: Auto-install Stream Deck plugin ──
 set "SD_PLUGIN_DIR=%APPDATA%\Elgato\StreamDeck\Plugins"
-set "SD_PLUGIN_NAME=com.officehours.intercom.sdPlugin"
+set "SD_PLUGIN_NAME=com.vox.intercom.sdPlugin"
 if exist "%SD_PLUGIN_DIR%" (
     if exist "streamdeck-plugin\%SD_PLUGIN_NAME%\manifest.json" (
         REM Validate plugin has bundled node_modules
@@ -221,7 +221,7 @@ if exist "%SD_PLUGIN_DIR%" (
 
 REM ── Step 4: Launch ──
 echo.
-echo   Starting Office Hours...
+echo   Starting Vox...
 echo   ============================================
 echo.
 echo   NOTE: If this is your first run, Windows Firewall may ask
@@ -232,7 +232,7 @@ venv\Scripts\python run.py
 if errorlevel 1 (
     echo.
     echo   ──────────────────────────────────────
-    echo   Office Hours exited unexpectedly.
+    echo   Vox exited unexpectedly.
     if exist crash.log (
         echo.
         echo   Crash log:
@@ -240,7 +240,7 @@ if errorlevel 1 (
     )
     echo.
     echo   If this keeps happening, please report at:
-    echo   https://github.com/matthannam-fart/office-hours/issues
+    echo   https://github.com/matthannam-fart/vox/issues
     echo   ──────────────────────────────────────
 )
 echo.

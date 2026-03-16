@@ -1,11 +1,11 @@
-# Office Hours — Relay Server Setup
+# Vox — Relay Server Setup
 
-Deploy the relay server so two Office Hours clients on different networks can connect via room codes.
+Deploy the relay server so two Vox clients on different networks can connect via room codes.
 
 ## What You Need
 
 - A VPS with a public IP (DigitalOcean, Vultr, AWS Lightsail, etc.)
-- A domain name (optional but recommended — e.g., `officehours.app`)
+- A domain name (optional but recommended — e.g., `vox.app`)
 - The file `relay_server.py` from this folder
 
 ## Step 1: Create a VPS
@@ -24,7 +24,7 @@ Deploy the relay server so two Office Hours clients on different networks can co
 From your Mac terminal:
 
 ```bash
-scp /path/to/OfficeHours/relay_server.py root@YOUR_SERVER_IP:~/
+scp /path/to/Vox/relay_server.py root@YOUR_SERVER_IP:~/
 ```
 
 ## Step 3: SSH In and Configure
@@ -47,7 +47,7 @@ ufw allow 50002
 ### Test it manually first:
 ```bash
 python3 relay_server.py --port 50002
-# You should see: [Server] Office Hours Relay listening on 0.0.0.0:50002
+# You should see: [Server] Vox Relay listening on 0.0.0.0:50002
 # Press Ctrl+C to stop
 ```
 
@@ -56,9 +56,9 @@ python3 relay_server.py --port 50002
 Create a systemd service so the relay starts automatically and survives reboots:
 
 ```bash
-cat > /etc/systemd/system/officehours-relay.service << 'EOF'
+cat > /etc/systemd/system/vox-relay.service << 'EOF'
 [Unit]
-Description=Office Hours Relay Server
+Description=Vox Relay Server
 After=network.target
 
 [Service]
@@ -77,18 +77,18 @@ EOF
 Enable and start it:
 ```bash
 systemctl daemon-reload
-systemctl enable officehours-relay
-systemctl start officehours-relay
+systemctl enable vox-relay
+systemctl start vox-relay
 ```
 
 Verify it's running:
 ```bash
-systemctl status officehours-relay
+systemctl status vox-relay
 ```
 
 View logs:
 ```bash
-journalctl -u officehours-relay -f
+journalctl -u vox-relay -f
 ```
 
 ## Step 5: Point Your Domain (Optional)
@@ -102,10 +102,10 @@ journalctl -u officehours-relay -f
 
 ## Step 6: Test the Connection
 
-On **Client A** (any Mac with the Office Hours app):
+On **Client A** (any Mac with the Vox app):
 1. Open the app → go to the **🌐 Remote** tab
 2. Enter your server IP or domain in the **Server** field
-3. Click **Create Room** → note the room code (e.g., `OH-7X3K`)
+3. Click **Create Room** → note the room code (e.g., `VOX-7X3K`)
 
 On **Client B** (a different network):
 1. Open the app → go to the **🌐 Remote** tab
@@ -118,18 +118,18 @@ Both clients should show "Connected via relay" and you can talk!
 
 | Command | What it does |
 |---------|-------------|
-| `systemctl start officehours-relay` | Start the relay |
-| `systemctl stop officehours-relay` | Stop the relay |
-| `systemctl restart officehours-relay` | Restart after updating `relay_server.py` |
-| `journalctl -u officehours-relay -f` | Watch live logs |
-| `journalctl -u officehours-relay --since "1 hour ago"` | Recent logs |
+| `systemctl start vox-relay` | Start the relay |
+| `systemctl stop vox-relay` | Stop the relay |
+| `systemctl restart vox-relay` | Restart after updating `relay_server.py` |
+| `journalctl -u vox-relay -f` | Watch live logs |
+| `journalctl -u vox-relay --since "1 hour ago"` | Recent logs |
 
 ## Updating the Relay
 
 When you update `relay_server.py`:
 ```bash
-scp /path/to/OfficeHours/relay_server.py root@YOUR_SERVER_IP:~/
-ssh root@YOUR_SERVER_IP "systemctl restart officehours-relay"
+scp /path/to/Vox/relay_server.py root@YOUR_SERVER_IP:~/
+ssh root@YOUR_SERVER_IP "systemctl restart vox-relay"
 ```
 
 ## Network Requirements

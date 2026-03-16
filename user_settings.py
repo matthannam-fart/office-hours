@@ -23,14 +23,25 @@ def _win_restrict_file(filepath):
         pass  # Non-critical — best effort
 
 def _config_dir():
-    """Return platform-appropriate config directory for Office Hours."""
+    """Return platform-appropriate config directory for Vox.
+    Migrates from old 'OfficeHours' directory if it exists."""
     if sys.platform == 'win32':
         base = os.environ.get('APPDATA', os.path.expanduser('~'))
-        d = os.path.join(base, 'OfficeHours')
+        d = os.path.join(base, 'Vox')
+        _old_d = os.path.join(base, 'OfficeHours')
     elif sys.platform == 'darwin':
-        d = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'OfficeHours')
+        d = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Vox')
+        _old_d = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'OfficeHours')
     else:
-        d = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'officehours')
+        d = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'vox')
+        _old_d = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'officehours')
+    # Migrate old config directory
+    if os.path.isdir(_old_d) and not os.path.exists(d):
+        try:
+            import shutil
+            shutil.move(_old_d, d)
+        except Exception:
+            pass
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -225,7 +236,7 @@ def ensure_lan_cert():
 
             key = ec.generate_private_key(ec.SECP256R1())
             subject = issuer = x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, "Office Hours LAN"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "Vox LAN"),
             ])
             cert = (
                 x509.CertificateBuilder()
@@ -267,7 +278,7 @@ def ensure_lan_cert():
                 '-pkeyopt', 'ec_paramgen_curve:prime256v1',
                 '-keyout', KEY_FILE, '-out', CERT_FILE,
                 '-days', '3650', '-nodes',
-                '-subj', '/CN=Office Hours LAN'
+                '-subj', '/CN=Vox LAN'
             ], check=True, capture_output=True)
             os.chmod(KEY_FILE, 0o600)
             return CERT_FILE, KEY_FILE

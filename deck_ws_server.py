@@ -1,4 +1,4 @@
-"""WebSocket bridge between Office Hours and the Stream Deck plugin.
+"""WebSocket bridge between Vox and the Stream Deck plugin.
 
 The plugin connects to ws://localhost:50003 and exchanges JSON messages:
 

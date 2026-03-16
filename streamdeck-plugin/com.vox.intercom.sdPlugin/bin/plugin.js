@@ -1,4 +1,4 @@
-/// Office Hours — Stream Deck Plugin
+/// Vox — Stream Deck Plugin
 /// Connects to the OH app via ws://localhost:50003
 /// Mirrors OH app behavior exactly.
 
@@ -82,7 +82,7 @@ function connectToOH() {
         return;
     }
     ohWs.on("open", () => {
-        log("Connected to Office Hours app");
+        log("Connected to Vox app");
         reconnectDelay = 3000;  // Reset backoff on success
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         refreshAllButtons();
@@ -91,7 +91,7 @@ function connectToOH() {
         try {
             const msg = JSON.parse(data.toString());
             if (msg.type === "app_quit") {
-                log("Office Hours app quit");
+                log("Vox app quit");
                 stopMsgPulse();
                 showDisconnected();
                 return;
@@ -110,7 +110,7 @@ function connectToOH() {
         }
     });
     ohWs.on("close", () => {
-        log("Office Hours disconnected");
+        log("Vox disconnected");
         ohWs = null;
         stopMsgPulse();
         scheduleReconnect();
@@ -146,14 +146,14 @@ function startMsgPulse() {
     msgPulseTimer = setInterval(() => {
         msgPulseOn = !msgPulseOn;
         // Pulse the logo key
-        refreshActionButtons("com.officehours.intercom.logo");
+        refreshActionButtons("com.vox.intercom.logo");
     }, 600);
 }
 
 function stopMsgPulse() {
     if (msgPulseTimer) { clearInterval(msgPulseTimer); msgPulseTimer = null; }
     msgPulseOn = false;
-    refreshActionButtons("com.officehours.intercom.logo");
+    refreshActionButtons("com.vox.intercom.logo");
 }
 
 function refreshActionButtons(action) {
@@ -192,26 +192,26 @@ function handleSDEvent(evt) {
 
 function onKeyDown(action, ctx) {
     switch (action) {
-        case "com.officehours.intercom.talk":
+        case "com.vox.intercom.talk":
             sendToOH({ action: "ptt_press" });
             break;
-        case "com.officehours.intercom.mode":
+        case "com.vox.intercom.mode":
             sendToOH({ action: "cycle_mode" });
             break;
-        case "com.officehours.intercom.team":
+        case "com.vox.intercom.team":
             sendToOH({ action: "cycle_team" });
             break;
-        case "com.officehours.intercom.user":
+        case "com.vox.intercom.user":
             sendToOH({ action: "cycle_user" });
             break;
-        case "com.officehours.intercom.panel":
+        case "com.vox.intercom.panel":
             sendToOH({ action: "show_panel" });
             break;
     }
 }
 
 function onKeyUp(action, ctx) {
-    if (action === "com.officehours.intercom.talk") {
+    if (action === "com.vox.intercom.talk") {
         sendToOH({ action: "ptt_release" });
     }
 }
@@ -291,7 +291,7 @@ function refreshButton(action, ctx) {
 
     switch (action) {
         // ── Key 0: PTT ──────────────────────────────────────
-        case "com.officehours.intercom.talk": {
+        case "com.vox.intercom.talk": {
             let bg, lines;
             if (offline) {
                 bg = OH_TEAL_DIM; lines = ["PUSH", "TO", "TALK"];
@@ -309,7 +309,7 @@ function refreshButton(action, ctx) {
         }
 
         // ── Key 1: Mode ─────────────────────────────────────
-        case "com.officehours.intercom.mode": {
+        case "com.vox.intercom.mode": {
             if (offline) {
                 setImage(action, ctx, renderSVG(OH_TEAL_DIM, ["MODE"]));
             } else {
@@ -321,7 +321,7 @@ function refreshButton(action, ctx) {
         }
 
         // ── Key 2: OH Logo / Directory / MSG pulse ──────────
-        case "com.officehours.intercom.logo": {
+        case "com.vox.intercom.logo": {
             if (offline) {
                 setImage(action, ctx, renderOHLogo());
             } else if (ohState.message && msgPulseOn) {
@@ -336,7 +336,7 @@ function refreshButton(action, ctx) {
         }
 
         // ── Team key ────────────────────────────────────────
-        case "com.officehours.intercom.team": {
+        case "com.vox.intercom.team": {
             if (offline || !ohState.teams || ohState.teams.length === 0) {
                 setImage(action, ctx, renderSVG(OH_TEAL_DIM, ["TEAM", "--"]));
             } else {
@@ -360,7 +360,7 @@ function refreshButton(action, ctx) {
         }
 
         // ── User key ────────────────────────────────────────
-        case "com.officehours.intercom.user": {
+        case "com.vox.intercom.user": {
             if (offline || !ohState.users || ohState.users.length === 0) {
                 setImage(action, ctx, renderSVG(OH_TEAL_DIM, ["USER", "--"]));
             } else {
@@ -383,7 +383,7 @@ function refreshButton(action, ctx) {
         }
 
         // ── Panel / MORE key ────────────────────────────────
-        case "com.officehours.intercom.panel": {
+        case "com.vox.intercom.panel": {
             setImage(action, ctx, renderSVG(OH_TEAL_DIM, ["MORE"]));
             break;
         }
@@ -392,11 +392,11 @@ function refreshButton(action, ctx) {
 
 function showDisconnected() {
     const dimButtons = {
-        "com.officehours.intercom.talk":  ["PUSH", "TO", "TALK"],
-        "com.officehours.intercom.mode":  ["MODE"],
-        "com.officehours.intercom.team":  ["TEAM", "--"],
-        "com.officehours.intercom.user":  ["USER", "--"],
-        "com.officehours.intercom.panel": ["MORE"],
+        "com.vox.intercom.talk":  ["PUSH", "TO", "TALK"],
+        "com.vox.intercom.mode":  ["MODE"],
+        "com.vox.intercom.team":  ["TEAM", "--"],
+        "com.vox.intercom.user":  ["USER", "--"],
+        "com.vox.intercom.panel": ["MORE"],
     };
     for (const [action, lines] of Object.entries(dimButtons)) {
         const ctxSet = contexts[action];
@@ -406,10 +406,10 @@ function showDisconnected() {
         }
     }
     // Logo gets the OH logo (not dimmed text)
-    const logoCtxs = contexts["com.officehours.intercom.logo"];
+    const logoCtxs = contexts["com.vox.intercom.logo"];
     if (logoCtxs) {
         for (const ctx of logoCtxs) {
-            setImage("com.officehours.intercom.logo", ctx, renderOHLogo());
+            setImage("com.vox.intercom.logo", ctx, renderOHLogo());
         }
     }
 }

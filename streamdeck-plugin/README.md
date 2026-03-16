@@ -1,6 +1,6 @@
-# Office Hours — Stream Deck Plugin
+# Vox — Stream Deck Plugin
 
-Control your Office Hours intercom directly from the Elgato Stream Deck app.
+Control your Vox intercom directly from the Elgato Stream Deck app.
 
 ## Actions
 
@@ -10,28 +10,28 @@ Control your Office Hours intercom directly from the Elgato Stream Deck app.
 | **Status Mode** | Cycle: Available → Busy → DND |
 | **Switch Team** | Cycle through your teams |
 | **Select User** | Cycle through online users |
-| **Show Panel** | Open the Office Hours panel window |
+| **Show Panel** | Open the Vox panel window |
 
 ## How It Works
 
-The plugin connects to Office Hours via a local WebSocket (`ws://localhost:50003`). Office Hours must be running for the buttons to be active. When OH isn't running, buttons appear dimmed and reconnect automatically when it starts.
+The plugin connects to Vox via a local WebSocket (`ws://localhost:50003`). Vox must be running for the buttons to be active. When OH isn't running, buttons appear dimmed and reconnect automatically when it starts.
 
 ## Install
 
 ### Quick Install (pre-built)
 
-Double-click `com.officehours.intercom.streamDeckPlugin` to install.
+Double-click `com.vox.intercom.streamDeckPlugin` to install.
 
 ### Build from Source
 
 Requires Node.js 20+:
 
 ```bash
-cd com.officehours.intercom.sdPlugin/bin
+cd com.vox.intercom.sdPlugin/bin
 npm install
 ```
 
-Then copy the `com.officehours.intercom.sdPlugin` folder to your Stream Deck plugins directory:
+Then copy the `com.vox.intercom.sdPlugin` folder to your Stream Deck plugins directory:
 
 - **macOS**: `~/Library/Application Support/com.elgato.StreamDeck/Plugins/`
 - **Windows**: `%APPDATA%\Elgato\StreamDeck\Plugins\`
@@ -41,6 +41,6 @@ Restart the Stream Deck app.
 ## Setup
 
 1. Open the Stream Deck app
-2. Find "Office Hours" in the action list (right sidebar)
+2. Find "Vox" in the action list (right sidebar)
 3. Drag actions onto your Stream Deck buttons
-4. Launch Office Hours — buttons activate automatically
+4. Launch Vox — buttons activate automatically

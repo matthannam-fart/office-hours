@@ -1,12 +1,12 @@
 @echo off
-REM Install the Office Hours Stream Deck plugin (Windows)
+REM Install the Vox Stream Deck plugin (Windows)
 setlocal
 
-set "PLUGIN_DIR=com.officehours.intercom.sdPlugin"
+set "PLUGIN_DIR=com.vox.intercom.sdPlugin"
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
-echo Installing Office Hours Stream Deck plugin...
+echo Installing Vox Stream Deck plugin...
 
 REM Validate Node dependencies (ws module must exist)
 if not exist "%PLUGIN_DIR%\bin\node_modules\ws" (
@@ -49,6 +49,6 @@ if errorlevel 1 (
     echo   Check that the directory is writable: %DEST%
 ) else (
     echo.
-    echo Done! Restart the Stream Deck app, then find "Office Hours" in the action list.
+    echo Done! Restart the Stream Deck app, then find "Vox" in the action list.
 )
 pause

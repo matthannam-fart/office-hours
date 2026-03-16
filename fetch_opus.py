@@ -160,7 +160,7 @@ def fetch_windows():
     print("    Option B: Download opus.dll and place it in the app folder:")
     print(f"              {APP_DIR}")
     print()
-    print("  Office Hours will still work without Opus (using lower-quality µ-law codec).")
+    print("  Vox will still work without Opus (using lower-quality µ-law codec).")
     return False
 
 

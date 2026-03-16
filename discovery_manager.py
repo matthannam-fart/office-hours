@@ -48,7 +48,7 @@ class DiscoveryManager:
             if sys.platform == 'win32':
                 print("  Hint: Windows Firewall may be blocking mDNS (port 5353).")
                 print("  Fix: Settings > Windows Security > Firewall > Allow an app")
-                print("       → add Python (or the Office Hours .exe) for Private networks.")
+                print("       → add Python (or the Vox .exe) for Private networks.")
                 print("  Or: Use invite codes to connect without LAN discovery.")
 
     def start_browsing(self):

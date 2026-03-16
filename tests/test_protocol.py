@@ -71,20 +71,20 @@ def test_control_message_types():
 
 def test_relay_handshake_create_room():
     """CREATE_ROOM handshake should include action and auth_key."""
-    msg = {"action": "CREATE_ROOM", "auth_key": "oh-relay-v1-2026"}
+    msg = {"action": "CREATE_ROOM", "auth_key": "vox-relay-v1-2026"}
     encoded = json.dumps(msg).encode('utf-8')
     decoded = json.loads(encoded)
     assert decoded["action"] == "CREATE_ROOM"
-    assert decoded["auth_key"] == "oh-relay-v1-2026"
+    assert decoded["auth_key"] == "vox-relay-v1-2026"
 
 
 def test_relay_handshake_join_room():
     """JOIN_ROOM handshake should include action, room, and auth_key."""
-    msg = {"action": "JOIN_ROOM", "room": "OH-ABC123", "auth_key": "oh-relay-v1-2026"}
+    msg = {"action": "JOIN_ROOM", "room": "VOX-ABC123", "auth_key": "vox-relay-v1-2026"}
     encoded = json.dumps(msg).encode('utf-8')
     decoded = json.loads(encoded)
     assert decoded["action"] == "JOIN_ROOM"
-    assert decoded["room"] == "OH-ABC123"
+    assert decoded["room"] == "VOX-ABC123"
 
 
 def test_relay_register_message():
@@ -95,7 +95,7 @@ def test_relay_register_message():
         "user_id": "uuid-1234",
         "mode": "GREEN",
         "team_id": "team-abc",
-        "auth_key": "oh-relay-v1-2026",
+        "auth_key": "vox-relay-v1-2026",
     }
     encoded = json.dumps(msg).encode('utf-8')
     decoded = json.loads(encoded)
@@ -124,11 +124,11 @@ def test_presence_update_message():
 
 def test_mode_update_message():
     """MODE_UPDATE should include mode and optional room/team_id."""
-    msg = {"action": "MODE_UPDATE", "mode": "RED", "room": "OH-XYZ", "team_id": "team-1"}
+    msg = {"action": "MODE_UPDATE", "mode": "RED", "room": "VOX-XYZ", "team_id": "team-1"}
     encoded = json.dumps(msg).encode('utf-8')
     decoded = json.loads(encoded)
     assert decoded["mode"] == "RED"
-    assert decoded["room"] == "OH-XYZ"
+    assert decoded["room"] == "VOX-XYZ"
 
 
 def test_frame_size_limit():

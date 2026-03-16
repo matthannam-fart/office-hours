@@ -1,5 +1,5 @@
 """
-main.py — Office Hours Menu Bar App
+main.py — Vox Menu Bar App
 System tray app with floating panel UI.
 """
 import os
@@ -170,7 +170,7 @@ class IntercomApp(QObject):
         # ── System Tray ────────────────────────────────────────
         self.tray = QSystemTrayIcon()
         self.tray.setIcon(create_oh_icon(COLORS['GREEN']))
-        self.tray.setToolTip("Office Hours")
+        self.tray.setToolTip("Vox")
         self.tray.activated.connect(self._on_tray_click)
         self._tray_menu = QMenu()
         self._rebuild_tray_menu()
@@ -193,7 +193,7 @@ class IntercomApp(QObject):
         if self.display_name:
             self.panel.set_onboarding_name(self.display_name)
 
-        self.panel.set_display_name(self.display_name or "Office Hours")
+        self.panel.set_display_name(self.display_name or "Vox")
 
         # Stream Deck status — check actual client connections
         deck_connected = hasattr(self, 'deck_ws') and self.deck_ws.client_count > 0
@@ -422,7 +422,7 @@ class IntercomApp(QObject):
         self._tray_menu.addSeparator()
         self._tray_menu.addAction("Show Panel", self._show_panel_at_tray)
         self._tray_menu.addSeparator()
-        self._tray_menu.addAction("Quit Office Hours", self._quit)
+        self._tray_menu.addAction("Quit Vox", self._quit)
 
     def _tray_select_user(self, user_id):
         """Select a user from the tray menu as PTT target."""
@@ -774,7 +774,7 @@ class IntercomApp(QObject):
     def _prompt_for_name(self):
         from PySide6.QtWidgets import QInputDialog
         dialog = QInputDialog()
-        dialog.setWindowTitle("Welcome to Office Hours")
+        dialog.setWindowTitle("Welcome to Vox")
         dialog.setLabelText("Enter your display name:")
         ok = dialog.exec()
         name = dialog.textValue()
@@ -1049,7 +1049,7 @@ class IntercomApp(QObject):
         panel_users = []
         for name, ip in self.peer_map.items():
             # Extract a friendly name from the Zeroconf service name
-            # Format: "Office Hours (hostname)._talkback._tcp.local."
+            # Format: "Vox (hostname)._talkback._tcp.local."
             friendly = name
             if '(' in name and ')' in name:
                 friendly = name.split('(')[1].split(')')[0]

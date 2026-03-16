@@ -1,12 +1,12 @@
 #!/bin/bash
-# Office Hours — macOS
-# Double-click this file to launch (or run: bash "Office Hours.command")
+# Vox — macOS
+# Double-click this file to launch (or run: bash "Vox.command")
 
 cd "$(dirname "$0")"
 
 echo ""
 echo "  ╔════════════════════════════════════════╗"
-echo "  ║       Office Hours — Intercom          ║"
+echo "  ║          Vox — Intercom              ║"
 echo "  ╚════════════════════════════════════════╝"
 echo ""
 
@@ -14,7 +14,7 @@ echo ""
 xattr -rd com.apple.quarantine "$(dirname "$0")" 2>/dev/null || true
 
 # ── Step 0.5: Auto-update ──
-REPO_URL="https://github.com/matthannam-fart/office-hours"
+REPO_URL="https://github.com/matthannam-fart/vox"
 {
     if [ -d ".git" ] && command -v git &> /dev/null; then
         echo "  Checking for updates..."
@@ -40,7 +40,7 @@ REPO_URL="https://github.com/matthannam-fart/office-hours"
         # Non-git user — download latest from GitHub
         echo "  Checking for updates..."
         LATEST_SHA=$(curl -fsSL --connect-timeout 5 \
-            "https://api.github.com/repos/matthannam-fart/office-hours/commits/main" 2>/dev/null \
+            "https://api.github.com/repos/matthannam-fart/vox/commits/main" 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])" 2>/dev/null)
 
         LOCAL_SHA=""
@@ -146,7 +146,7 @@ if command -v python3 &> /dev/null; then
     PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
 
     if [ "$PY_MINOR" -lt 10 ]; then
-        echo "  Found Python $PY_VERSION, but Office Hours needs 3.10+."
+        echo "  Found Python $PY_VERSION, but Vox needs 3.10+."
         NEED_PYTHON=true
     fi
 else
@@ -286,7 +286,7 @@ sys.exit(0 if result.returncode == 0 else 1)
     echo "  Add 'Terminal' (or your terminal app) to the list."
     echo ""
     open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-    echo "  Office Hours will still launch — PTT just won't work"
+    echo "  Vox will still launch — PTT just won't work"
     echo "  until you grant access and restart the app."
     echo ""
     read -p "  Press Enter to continue launching..."
@@ -294,7 +294,7 @@ fi
 
 # ── Step 6.5: Auto-install Stream Deck plugin ──
 SD_PLUGIN_DIR="$HOME/Library/Application Support/com.elgato.StreamDeck/Plugins"
-SD_PLUGIN_NAME="com.officehours.intercom.sdPlugin"
+SD_PLUGIN_NAME="com.vox.intercom.sdPlugin"
 if [ -d "$SD_PLUGIN_DIR" ] && [ -d "streamdeck-plugin/$SD_PLUGIN_NAME" ]; then
     # Validate plugin has bundled node_modules
     if [ ! -d "streamdeck-plugin/$SD_PLUGIN_NAME/bin/node_modules/ws" ]; then
@@ -321,7 +321,7 @@ fi
 
 # ── Step 7: Launch ──
 echo ""
-echo "  Starting Office Hours..."
+echo "  Starting Vox..."
 echo "  ════════════════════════════════════════"
 echo ""
 ./venv/bin/python run.py
@@ -331,7 +331,7 @@ EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
     echo ""
     echo "  ──────────────────────────────────────"
-    echo "  Office Hours exited unexpectedly."
+    echo "  Vox exited unexpectedly."
     if [ -f "crash.log" ]; then
         echo ""
         echo "  Crash log:"
@@ -339,7 +339,7 @@ if [ $EXIT_CODE -ne 0 ]; then
     fi
     echo ""
     echo "  If this keeps happening, please report at:"
-    echo "  https://github.com/matthannam-fart/office-hours/issues"
+    echo "  https://github.com/matthannam-fart/vox/issues"
     echo "  ──────────────────────────────────────"
     echo ""
     read -p "  Press Enter to close..."

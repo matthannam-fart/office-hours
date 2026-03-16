@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate .streamDeckProfile files for Office Hours.
+"""Generate .streamDeckProfile files for Vox.
 
 Creates importable profiles for:
   - Stream Deck Mini (3x2) / Neo (4x2-ish)
@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import uuid
 
-PLUGIN_UUID = "com.officehours.intercom"
+PLUGIN_UUID = "com.vox.intercom"
 
 # Action UUIDs
 ACTIONS = {
@@ -103,7 +103,7 @@ def create_profile(name: str, device_model: int, layout: list[list[str | None]],
                     "mode": "Status",
                     "team": "Team",
                     "user": "User",
-                    "logo": "OH",
+                    "logo": "VOX",
                     "panel": "Panel",
                 }[action_key])
 
@@ -124,13 +124,13 @@ def create_profile(name: str, device_model: int, layout: list[list[str | None]],
 def main():
     output_dir = os.path.dirname(os.path.abspath(__file__))
 
-    print("Generating Office Hours Stream Deck profiles...\n")
+    print("Generating Vox Stream Deck profiles...\n")
 
     # ── 3x2 Mini layout ──
     # [Logo]  [Mode]   [Panel]
     # [PTT ]  [User]   [Team ]
     create_profile(
-        name="Office Hours - Mini",
+        name="Vox - Mini",
         device_model=DEVICES["mini"],
         layout=[
             ["logo",  "mode",  "panel"],
@@ -144,7 +144,7 @@ def main():
     # [PTT ]  [Mode]  [ ]     [ ]     [     ]
     # [Team]  [User]  [ ]     [ ]     [     ]
     create_profile(
-        name="Office Hours - Standard",
+        name="Vox - Standard",
         device_model=DEVICES["standard"],
         layout=[
             ["logo",  None,   None,  None,  "panel"],

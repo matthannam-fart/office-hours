@@ -1,4 +1,4 @@
-# Office Hours — Terminal Cheat Sheet
+# Vox — Terminal Cheat Sheet
 
 All commands assume you're in `~/office-hours`. If not, run `cd ~/office-hours` first.
 
@@ -25,16 +25,16 @@ git add -A && git commit -m "describe what changed" && git push origin main
 
 ```bash
 # One-liner: download latest from GitHub, restart process
-ssh root@relay.ohinter.com "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026' nohup python3 relay_server.py > relay.log 2>&1 &"
+ssh root@relay.ohinter.com "cd /root && curl -sL https://raw.githubusercontent.com/matthannam-fart/vox/main/relay_server.py -o relay_server.py && pkill -f relay_server.py; VOX_RELAY_KEY='vox-relay-v1-2026' nohup python3 relay_server.py > relay.log 2>&1 &"
 ```
 
 ```bash
 # Or step by step:
 ssh root@relay.ohinter.com
 cd /root
-curl -sL https://raw.githubusercontent.com/matthannam-fart/office-hours/main/relay_server.py -o relay_server.py
+curl -sL https://raw.githubusercontent.com/matthannam-fart/vox/main/relay_server.py -o relay_server.py
 pkill -f relay_server.py
-export OFFICEHOURS_RELAY_KEY='oh-relay-v1-2026'
+export VOX_RELAY_KEY='vox-relay-v1-2026'
 nohup python3 relay_server.py > relay.log 2>&1 &
 exit
 ```
@@ -51,7 +51,7 @@ ssh root@relay.ohinter.com "tail -50 /root/relay.log"
 
 ## Update Another Mac
 
-Just run `Office Hours.command` on that Mac — it auto-pulls from GitHub.
+Just run `Vox.command` on that Mac — it auto-pulls from GitHub.
 
 ## Git Troubleshooting
 

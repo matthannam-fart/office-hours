@@ -1,7 +1,7 @@
 {
   "Actions": {
     "0,0": {
-      "Name": "OH",
+      "Name": "VOX",
       "Settings": {},
       "State": 0,
       "States": [
@@ -11,13 +11,13 @@
           "FStyle": "",
           "FUnderline": "off",
           "Image": "",
-          "Title": "OH",
+          "Title": "VOX",
           "TitleAlignment": "bottom",
           "TitleColor": "#ffffff",
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.logo"
+      "UUID": "com.vox.intercom.logo"
     },
     "4,0": {
       "Name": "Panel",
@@ -36,7 +36,7 @@
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.panel"
+      "UUID": "com.vox.intercom.panel"
     },
     "0,1": {
       "Name": "Push to Talk",
@@ -55,7 +55,7 @@
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.talk"
+      "UUID": "com.vox.intercom.talk"
     },
     "1,1": {
       "Name": "Status",
@@ -74,7 +74,7 @@
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.mode"
+      "UUID": "com.vox.intercom.mode"
     },
     "0,2": {
       "Name": "Team",
@@ -93,7 +93,7 @@
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.team"
+      "UUID": "com.vox.intercom.team"
     },
     "1,2": {
       "Name": "User",
@@ -112,7 +112,7 @@
           "TitleShow": ""
         }
       ],
-      "UUID": "com.officehours.intercom.user"
+      "UUID": "com.vox.intercom.user"
     }
   },
   "Controllers": {
@@ -122,7 +122,7 @@
         "6A30C0B0-C51F-4393-82E8-36203F6C89CE": {
           "Actions": {
             "0,0": {
-              "Name": "OH",
+              "Name": "VOX",
               "Settings": {},
               "State": 0,
               "States": [
@@ -132,13 +132,13 @@
                   "FStyle": "",
                   "FUnderline": "off",
                   "Image": "",
-                  "Title": "OH",
+                  "Title": "VOX",
                   "TitleAlignment": "bottom",
                   "TitleColor": "#ffffff",
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.logo"
+              "UUID": "com.vox.intercom.logo"
             },
             "4,0": {
               "Name": "Panel",
@@ -157,7 +157,7 @@
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.panel"
+              "UUID": "com.vox.intercom.panel"
             },
             "0,1": {
               "Name": "Push to Talk",
@@ -176,7 +176,7 @@
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.talk"
+              "UUID": "com.vox.intercom.talk"
             },
             "1,1": {
               "Name": "Status",
@@ -195,7 +195,7 @@
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.mode"
+              "UUID": "com.vox.intercom.mode"
             },
             "0,2": {
               "Name": "Team",
@@ -214,7 +214,7 @@
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.team"
+              "UUID": "com.vox.intercom.team"
             },
             "1,2": {
               "Name": "User",
@@ -233,7 +233,7 @@
                   "TitleShow": ""
                 }
               ],
-              "UUID": "com.officehours.intercom.user"
+              "UUID": "com.vox.intercom.user"
             }
           },
           "Name": "Default"
@@ -243,7 +243,7 @@
   },
   "DeviceModel": 1,
   "DeviceUUID": "",
-  "Name": "Office Hours - Standard",
+  "Name": "Vox - Standard",
   "Pages": [
     "6A30C0B0-C51F-4393-82E8-36203F6C89CE"
   ],

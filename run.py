@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch wrapper for Office Hours — catches crashes and logs them."""
+"""Launch wrapper for Vox — catches crashes and logs them."""
 import os
 import sys
 

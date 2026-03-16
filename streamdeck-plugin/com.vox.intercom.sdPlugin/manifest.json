@@ -1,12 +1,12 @@
 {
     "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
-    "UUID": "com.officehours.intercom",
-    "Name": "Office Hours",
+    "UUID": "com.vox.intercom",
+    "Name": "Vox",
     "Version": "1.0.0.0",
-    "Author": "Office Hours",
-    "Description": "Control your Office Hours intercom — push-to-talk, mode switching, team/user selection — right from your Stream Deck.",
+    "Author": "Vox",
+    "Description": "Control your Vox intercom — push-to-talk, mode switching, team/user selection — right from your Stream Deck.",
     "Icon": "imgs/plugin-icon",
-    "Category": "Office Hours",
+    "Category": "Vox",
     "CategoryIcon": "imgs/category-icon",
     "CodePath": "bin/plugin.js",
     "SDKVersion": 2,
@@ -23,16 +23,16 @@
     ],
     "Actions": [
         {
-            "UUID": "com.officehours.intercom.talk",
+            "UUID": "com.vox.intercom.talk",
             "Name": "Push to Talk",
             "Icon": "imgs/actions/talk",
-            "Tooltip": "Hold to talk on Office Hours",
+            "Tooltip": "Hold to talk on Vox",
             "States": [
                 { "Image": "imgs/actions/talk", "TitleAlignment": "bottom" }
             ]
         },
         {
-            "UUID": "com.officehours.intercom.mode",
+            "UUID": "com.vox.intercom.mode",
             "Name": "Status Mode",
             "Icon": "imgs/actions/mode",
             "Tooltip": "Cycle availability: Available → Busy → DND",
@@ -41,7 +41,7 @@
             ]
         },
         {
-            "UUID": "com.officehours.intercom.team",
+            "UUID": "com.vox.intercom.team",
             "Name": "Switch Team",
             "Icon": "imgs/actions/team",
             "Tooltip": "Cycle through your teams",
@@ -50,7 +50,7 @@
             ]
         },
         {
-            "UUID": "com.officehours.intercom.user",
+            "UUID": "com.vox.intercom.user",
             "Name": "Select User",
             "Icon": "imgs/actions/user",
             "Tooltip": "Cycle through online users",
@@ -59,19 +59,19 @@
             ]
         },
         {
-            "UUID": "com.officehours.intercom.logo",
-            "Name": "OH Logo / Directory",
+            "UUID": "com.vox.intercom.logo",
+            "Name": "Vox Logo / Directory",
             "Icon": "imgs/actions/logo",
-            "Tooltip": "Shows OH logo, preview names while browsing, and message alerts",
+            "Tooltip": "Shows Vox logo, preview names while browsing, and message alerts",
             "States": [
                 { "Image": "imgs/actions/logo", "TitleAlignment": "bottom" }
             ]
         },
         {
-            "UUID": "com.officehours.intercom.panel",
+            "UUID": "com.vox.intercom.panel",
             "Name": "Show Panel",
             "Icon": "imgs/actions/panel",
-            "Tooltip": "Show the Office Hours panel window",
+            "Tooltip": "Show the Vox panel window",
             "States": [
                 { "Image": "imgs/actions/panel", "TitleAlignment": "bottom" }
             ]

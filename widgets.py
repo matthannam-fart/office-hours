@@ -1,5 +1,5 @@
 """
-widgets.py — Reusable UI widgets for Office Hours
+widgets.py — Reusable UI widgets for Vox
 Extracted from floating_panel.py for maintainability.
 """
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal

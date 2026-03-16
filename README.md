@@ -1,4 +1,4 @@
-# Office Hours — Team Intercom
+# Vox — Team Intercom
 
 A push-to-talk intercom for teams. Sits in your menu bar, lets you talk to your team instantly — like a walkie-talkie for your desktop.
 
@@ -10,13 +10,13 @@ Built with PySide6 (Qt), backed by Supabase for team management, and a custom re
 
 1. Download from [ohinter.com](https://ohinter.com) (passphrase required)
 2. Unzip and open the folder
-3. Double-click **`Office Hours.command`**
+3. Double-click **`Vox.command`**
 
 The first time macOS will block it. To fix:
 
-1. Double-click `Office Hours.command` — a warning appears, click **Done**
+1. Double-click `Vox.command` — a warning appears, click **Done**
 2. Open **System Settings → Privacy & Security**
-3. Scroll down, find "Office Hours.command was blocked" → click **Open Anyway**
+3. Scroll down, find "Vox.command was blocked" → click **Open Anyway**
 4. Enter your password if prompted
 
 That's it. The script handles everything: Python, dependencies, audio drivers, updates, and permissions. Just double-click to launch every time.
@@ -27,7 +27,7 @@ The global PTT hotkey (backtick key) needs Accessibility permissions. The instal
 
 ### Windows
 
-Double-click **`Office Hours.bat`** (requires Python 3.10+ with "Add to PATH" checked during install).
+Double-click **`Vox.bat`** (requires Python 3.10+ with "Add to PATH" checked during install).
 
 ### Manual Setup
 
@@ -44,7 +44,7 @@ When you first launch, you'll see the onboarding screen:
 
 1. **Enter your name** — this is how your team sees you
 2. **Create a new team** to start your own room
-3. Or **join with an invite code** (e.g. `OH-7X3K5`) if someone shared one with you
+3. Or **join with an invite code** (e.g. `VOX-7X3K5`) if someone shared one with you
 
 Teams are private — you can only see and contact people on your own team. Once you're on a team, the app shows who's online and available.
 
@@ -133,4 +133,4 @@ generate_certs.py     TLS certificate generation for relay server
 
 ## Stream Deck (Optional)
 
-Works with the Elgato Stream Deck app via a plugin that auto-installs on launch. Open the Stream Deck app and drag actions from the "Office Hours" category onto your deck.
+Works with the Elgato Stream Deck app via a plugin that auto-installs on launch. Open the Stream Deck app and drag actions from the "Vox" category onto your deck.

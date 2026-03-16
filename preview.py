@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-preview.py — Lightweight UI preview for Office Hours.
+preview.py — Lightweight UI preview for Vox.
 
 Shows the FloatingPanel with mocked data so you can inspect layouts
 without running the full app (no login, no network, no audio).
@@ -37,8 +37,8 @@ DUMMY_USERS = [
 
 # ── Fake team data for welcome + teams pages ────────────────────
 DUMMY_TEAMS = [
-    {"id": "t1", "name": "Post Team Alpha", "invite_code": "OH-ABC123"},
-    {"id": "t2", "name": "Sound Dept", "invite_code": "OH-XYZ789"},
+    {"id": "t1", "name": "Post Team Alpha", "invite_code": "VOX-ABC123"},
+    {"id": "t2", "name": "Sound Dept", "invite_code": "VOX-XYZ789"},
 ]
 
 
@@ -111,7 +111,7 @@ def main() -> None:
     panel.setWindowFlags(
         Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint  # type: ignore[arg-type]
     )
-    panel.setWindowTitle(f"OH Preview — {page}")
+    panel.setWindowTitle(f"Vox Preview — {page}")
 
     populate_panel(panel, page)
 

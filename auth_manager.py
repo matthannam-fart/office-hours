@@ -1,5 +1,5 @@
 """
-auth_manager.py — Supabase GoTrue Auth wrapper for Office Hours.
+auth_manager.py — Supabase GoTrue Auth wrapper for Vox.
 
 Uses only urllib (no pip dependencies). Provides email/password, Google OAuth
 (PKCE), and magic link authentication flows.
@@ -357,7 +357,7 @@ def sign_out(access_token):
 # HTML page that extracts tokens from the URL hash fragment and sends them
 # to our server via a POST, since the hash fragment is not sent to the server.
 _CALLBACK_HTML = """<!DOCTYPE html>
-<html><head><title>Office Hours — Sign In</title>
+<html><head><title>Vox — Sign In</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e;
          color: #e8e8e8; display: flex; align-items: center; justify-content: center;
@@ -368,7 +368,7 @@ _CALLBACK_HTML = """<!DOCTYPE html>
 </style></head>
 <body><div class="card">
   <h2>Signed in!</h2>
-  <p>You can close this tab and return to Office Hours.</p>
+  <p>You can close this tab and return to Vox.</p>
 </div>
 <script>
 // Check for tokens in the hash fragment (magic link / implicit flow)
@@ -398,7 +398,7 @@ _CALLBACK_HTML = """<!DOCTYPE html>
 </script></body></html>"""
 
 _ERROR_HTML = """<!DOCTYPE html>
-<html><head><title>Office Hours — Error</title>
+<html><head><title>Vox — Error</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #1e1e1e;
          color: #e8e8e8; display: flex; align-items: center; justify-content: center;

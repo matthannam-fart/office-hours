@@ -4,7 +4,7 @@ Run this once to create the required icon files.
 """
 import os
 
-BASE = os.path.join(os.path.dirname(__file__), "com.officehours.intercom.sdPlugin", "imgs")
+BASE = os.path.join(os.path.dirname(__file__), "com.vox.intercom.sdPlugin", "imgs")
 os.makedirs(os.path.join(BASE, "actions"), exist_ok=True)
 
 OH_TEAL = "#71ada3"
@@ -22,14 +22,14 @@ def svg_icon(w, h, bg, text, font_size=14):
     return f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><rect width="{w}" height="{h}" rx="8" fill="{bg}"/>{text_els}</svg>'
 
 def oh_logo(w, h):
-    """OH logo: teal circle with white OH text."""
+    """Vox logo: teal circle with white VOX text."""
     cx, cy = w // 2, h // 2
     r = min(w, h) // 2 - 4
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">'
         f'<rect width="{w}" height="{h}" fill="#000"/>'
         f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{OH_TEAL}"/>'
-        f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="22" font-weight="bold" fill="white">OH</text>'
+        f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="18" font-weight="bold" fill="white">VOX</text>'
         f'</svg>'
     )
 

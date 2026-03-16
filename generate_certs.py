@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate TLS certificates for Office Hours relay server.
+Generate TLS certificates for Vox relay server.
 
 Usage:
     python generate_certs.py                    # Generate CA + server cert for localhost
@@ -36,8 +36,8 @@ def generate_certs(domain="localhost", output_dir="."):
     print("Generating CA certificate...")
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "Office Hours CA"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Office Hours"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "Vox CA"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Vox"),
     ])
 
     ca_cert = (
@@ -123,16 +123,16 @@ def generate_certs(domain="localhost", output_dir="."):
     print(f"    python relay_server.py --cert {cert_path} --key {key_path}")
     print()
     print("  Clients (self-signed mode):")
-    print(f"    export TALKBACK_RELAY_CA_CERT={ca_path}")
-    print("    export TALKBACK_RELAY_TLS=1")
+    print(f"    export VOX_RELAY_CA_CERT={ca_path}")
+    print("    export VOX_RELAY_TLS=1")
     print()
     print("  Or for Let's Encrypt (no CA file needed):")
-    print("    export TALKBACK_RELAY_TLS=1")
+    print("    export VOX_RELAY_TLS=1")
     print("    # Clients use system trust store automatically")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate TLS certificates for Office Hours")
+    parser = argparse.ArgumentParser(description="Generate TLS certificates for Vox")
     parser.add_argument("--domain", default="localhost", help="Server domain name (default: localhost)")
     parser.add_argument("--output", default=".", help="Output directory (default: current directory)")
     args = parser.parse_args()

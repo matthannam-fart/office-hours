@@ -1,4 +1,4 @@
-# Office Hours — Windows Debugging Guide
+# Vox — Windows Debugging Guide
 
 ## The Problem
 The app either crashes on launch or the UI is unreadable (elements crammed together, text overlapping, panel too small or misaligned).
@@ -97,7 +97,7 @@ The panel anchors to the system tray icon position, which behaves differently on
 
 ### Stream Deck not detected
 - The Elgato Stream Deck app locks the USB device exclusively
-- Quit the Elgato app, then restart Office Hours
+- Quit the Elgato app, then restart Vox
 - If no Stream Deck hardware, ignore this — the app runs fine without it
 
 ---
@@ -136,7 +136,7 @@ This will outline every widget so you can see what's overlapping.
 | `hotkey_manager.py` | pynput global hotkeys (needs accessibility) |
 | `deck_ws_server.py` | WebSocket bridge for Stream Deck plugin |
 | `config.py` | Network ports, relay server address |
-| `user_settings.py` | Config file paths (`%APPDATA%\OfficeHours`) |
+| `user_settings.py` | Config file paths (`%APPDATA%\Vox`) |
 
 ---
 
