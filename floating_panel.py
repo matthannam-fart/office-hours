@@ -3309,28 +3309,15 @@ class FloatingPanel(QWidget):
         return strip
 
     def _update_strip_status_dot(self):
-        """Update the strip status button to reflect current mode."""
+        """Update the strip status button to reflect current mode (matches full panel orb)."""
         color = COLORS.get(self._current_mode, COLORS['GREEN'])
-        self._strip_status_dot.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {DARK['TEAL']};
-                border-radius: 8px;
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-        """)
         self._strip_status_dot.setText("●")
-        font = self._strip_status_dot.font()
-        font.setPixelSize(18)
-        self._strip_status_dot.setFont(font)
-        # Use palette-like inline style for the colored dot text
         self._strip_status_dot.setStyleSheet(f"""
             QPushButton {{
-                background: transparent;
-                border: 1px solid {DARK['TEAL']};
-                border-radius: 8px;
-                font-size: 18px;
-                color: {color};
+                background: transparent; border: none;
+                border-radius: 10px;
+                font-size: 32px; color: {color};
+                padding-bottom: 4px;
             }}
             QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
         """)
@@ -3339,26 +3326,55 @@ class FloatingPanel(QWidget):
         )
 
     def _show_strip_mode_menu(self):
-        """Show a context menu to pick status mode from the strip."""
+        """Show a rich dropdown to pick status mode (matches full panel menu)."""
+        from PySide6.QtWidgets import QWidgetAction
+        mode = getattr(self, '_current_mode', 'GREEN')
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
                 background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
                 border-radius: 6px; padding: 4px;
             }}
-            QMenu::item {{
-                padding: 6px 16px; color: {DARK['TEXT']}; border-radius: 4px;
-            }}
-            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
         """)
-        for mode_key, label in MODE_LABELS.items():
-            action = menu.addAction(f"\u25cf  {label}")
-            action.setData(mode_key)
-        chosen = menu.exec(self._strip_status_dot.mapToGlobal(
+        for mode_key, color in [("GREEN", COLORS['GREEN']), ("YELLOW", COLORS['YELLOW']), ("RED", COLORS['RED'])]:
+            label = MODE_LABELS.get(mode_key, mode_key)
+            is_active = (mode_key == mode)
+            prefix = "✓ " if is_active else "   "
+
+            row = QWidget()
+            row.setCursor(Qt.PointingHandCursor)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(10, 5, 14, 5)
+            h.setSpacing(6)
+
+            check_lbl = QLabel(prefix)
+            check_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT']}; border: none;")
+            check_lbl.setFixedWidth(16)
+            h.addWidget(check_lbl)
+
+            dot = QLabel("●")
+            dot.setStyleSheet(f"font-size: 14px; color: {color}; border: none;")
+            h.addWidget(dot)
+
+            text_lbl = QLabel(label)
+            text_lbl.setStyleSheet(f"font-size: 12px; color: {DARK['TEXT']}; border: none;")
+            h.addWidget(text_lbl)
+            h.addStretch()
+
+            row.setStyleSheet(f"""
+                QWidget {{ border-radius: 4px; }}
+                QWidget:hover {{ background: {DARK['BG_HOVER']}; }}
+            """)
+
+            wa = QWidgetAction(menu)
+            wa.setDefaultWidget(row)
+            wa.triggered.connect(
+                lambda checked=False, mk=mode_key: self.mode_set_requested.emit(mk)
+            )
+            menu.addAction(wa)
+        menu.exec(self._strip_status_dot.mapToGlobal(
             QPoint(self._strip_status_dot.width() + 4, 0)
         ))
-        if chosen:
-            self.mode_set_requested.emit(chosen.data())
 
     def _update_strip_avatars(self, users):
         """No-op — compact strip no longer shows avatars."""
@@ -4242,7 +4258,7 @@ class FloatingPanel(QWidget):
         name_val.clicked.connect(lambda: (self._change_name_dialog(), self._populate_settings()))
         layout.addWidget(_credit("Name", name_val))
 
-        theme_text = "Light" if self._dark_mode else "Dark"
+        theme_text = "Dark" if self._dark_mode else "Light"
         theme_val = _value(theme_text)
         theme_val.clicked.connect(lambda: (self._toggle_dark_mode(), self._populate_settings()))
         layout.addWidget(_credit("Theme", theme_val))

@@ -184,7 +184,6 @@ class UnicodeEQ(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         mono = "Menlo" if _sys.platform == 'darwin' else "Consolas"
         font = QFont(mono, self._font_size)
-        font.setStyleHint(QFont.Monospace)
         p.setFont(font)
 
         char_w = self.width() / self._num_bars
