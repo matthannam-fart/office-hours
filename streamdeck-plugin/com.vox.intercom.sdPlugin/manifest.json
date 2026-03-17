@@ -1,17 +1,18 @@
 {
     "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
     "UUID": "com.vox.intercom",
-    "Name": "Vox",
+    "Name": "Vox Intercom",
     "Version": "1.0.0.0",
     "Author": "Vox",
-    "Description": "Control your Vox intercom — push-to-talk, mode switching, team/user selection — right from your Stream Deck.",
+    "URL": "https://matthannam-fart.github.io/vox/",
+    "Description": "Control your Vox intercom — push-to-talk, mode switching, team and user selection — right from your Stream Deck.",
     "Icon": "imgs/plugin-icon",
     "Category": "Vox",
     "CategoryIcon": "imgs/category-icon",
     "CodePath": "bin/plugin.js",
     "SDKVersion": 2,
     "Software": {
-        "MinimumVersion": "6.6"
+        "MinimumVersion": "6.8"
     },
     "Nodejs": {
         "Version": "20",
@@ -27,6 +28,7 @@
             "Name": "Push to Talk",
             "Icon": "imgs/actions/talk",
             "Tooltip": "Hold to talk on Vox",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/talk", "TitleAlignment": "bottom" }
             ]
@@ -35,7 +37,8 @@
             "UUID": "com.vox.intercom.mode",
             "Name": "Status Mode",
             "Icon": "imgs/actions/mode",
-            "Tooltip": "Cycle availability: Available → Busy → DND",
+            "Tooltip": "Cycle availability: Available, Busy, or Do Not Disturb",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/mode", "TitleAlignment": "bottom" }
             ]
@@ -45,6 +48,7 @@
             "Name": "Switch Team",
             "Icon": "imgs/actions/team",
             "Tooltip": "Cycle through your teams",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/team", "TitleAlignment": "bottom" }
             ]
@@ -54,15 +58,17 @@
             "Name": "Select User",
             "Icon": "imgs/actions/user",
             "Tooltip": "Cycle through online users",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/user", "TitleAlignment": "bottom" }
             ]
         },
         {
             "UUID": "com.vox.intercom.logo",
-            "Name": "Vox Logo / Directory",
+            "Name": "Vox Logo",
             "Icon": "imgs/actions/logo",
-            "Tooltip": "Shows Vox logo, preview names while browsing, and message alerts",
+            "Tooltip": "Displays Vox logo, preview names while browsing, and message alerts",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/logo", "TitleAlignment": "bottom" }
             ]
@@ -71,7 +77,8 @@
             "UUID": "com.vox.intercom.panel",
             "Name": "Show Panel",
             "Icon": "imgs/actions/panel",
-            "Tooltip": "Show the Vox panel window",
+            "Tooltip": "Toggle the Vox panel window",
+            "PropertyInspectorPath": "ui/pi.html",
             "States": [
                 { "Image": "imgs/actions/panel", "TitleAlignment": "bottom" }
             ]

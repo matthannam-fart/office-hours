@@ -8,6 +8,5 @@ soundfile
 Pillow
 cryptography
 pynput
-streamdeck
 websockets
 pytest

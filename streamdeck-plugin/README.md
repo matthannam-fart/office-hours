@@ -14,7 +14,7 @@ Control your Vox intercom directly from the Elgato Stream Deck app.
 
 ## How It Works
 
-The plugin connects to Vox via a local WebSocket (`ws://localhost:50003`). Vox must be running for the buttons to be active. When OH isn't running, buttons appear dimmed and reconnect automatically when it starts.
+The plugin connects to Vox via a local WebSocket (`ws://localhost:50003`). Vox must be running for the buttons to be active. When Vox isn't running, buttons appear dimmed and reconnect automatically when it starts.
 
 ## Install
 

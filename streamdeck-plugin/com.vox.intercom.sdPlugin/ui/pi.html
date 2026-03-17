@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Vox</title>
+    <style>
+        :root {
+            --bg: #2d2d2d;
+            --surface: #3a3a3a;
+            --border: #4a4a4a;
+            --text: #e0e0e0;
+            --text-dim: #999;
+            --teal: #71ada3;
+            --teal-dim: #3d6b64;
+            --green: #008c3c;
+            --red: #b4281e;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 12px;
+            color: var(--text);
+            background: var(--bg);
+            padding: 12px;
+        }
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--teal);
+            margin-bottom: 8px;
+        }
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+            flex-shrink: 0;
+        }
+        .status-dot.connected {
+            background: var(--green);
+        }
+        .status-text {
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+        .info-text {
+            color: var(--text-dim);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .info-text a {
+            color: var(--teal);
+            text-decoration: none;
+        }
+        .info-text a:hover {
+            text-decoration: underline;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .logo-circle {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--teal);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 700;
+            color: white;
+        }
+        .logo-name {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .version {
+            color: var(--text-dim);
+            font-size: 11px;
+            margin-left: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="logo">
+        <div class="logo-circle">VOX</div>
+        <span class="logo-name">Vox Intercom</span>
+        <span class="version">v1.0</span>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Connection</div>
+        <div class="status-row">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="status-text" id="statusText">Checking...</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">How it works</div>
+        <div class="info-text">
+            This plugin connects to the Vox desktop app running on your computer.
+            Make sure Vox is open before using these buttons.
+            <br/><br/>
+            <strong>Push to Talk</strong> — Hold to transmit, release to stop<br/>
+            <strong>Status Mode</strong> — Tap to cycle: Available &rarr; Busy &rarr; DND<br/>
+            <strong>Switch Team</strong> — Tap to cycle through teams<br/>
+            <strong>Select User</strong> — Tap to cycle through online users<br/>
+            <strong>Show Panel</strong> — Open/close the Vox panel window
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="info-text">
+            <a href="https://matthannam-fart.github.io/vox/" id="linkHelp">Help &amp; Documentation</a>
+        </div>
+    </div>
+
+    <script>
+        const dot = document.getElementById("statusDot");
+        const text = document.getElementById("statusText");
+
+        function checkConnection() {
+            try {
+                const ws = new WebSocket("ws://127.0.0.1:50003");
+                ws.onopen = () => {
+                    dot.classList.add("connected");
+                    text.textContent = "Vox is running";
+                    ws.close();
+                };
+                ws.onerror = () => {
+                    dot.classList.remove("connected");
+                    text.textContent = "Vox is not running";
+                };
+            } catch (e) {
+                dot.classList.remove("connected");
+                text.textContent = "Vox is not running";
+            }
+        }
+
+        checkConnection();
+        setInterval(checkConnection, 5000);
+    </script>
+</body>
+</html>
