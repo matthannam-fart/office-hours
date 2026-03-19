@@ -3224,7 +3224,7 @@ class FloatingPanel(QWidget):
         v.addWidget(sep3, 0, Qt.AlignCenter)
 
         # ── PTT button (outlined, same size as status) ──
-        self._strip_ptt_btn = QPushButton("🎙")
+        self._strip_ptt_btn = QPushButton("TALK")
         self._strip_ptt_btn.setFixedSize(40, 40)
         self._strip_ptt_btn.setCursor(Qt.PointingHandCursor)
         self._strip_ptt_btn.setToolTip("Push to Talk")
@@ -3250,7 +3250,9 @@ class FloatingPanel(QWidget):
                     background: rgba(226, 42, 26, 0.2);
                     border: 2px solid {DARK['DANGER']};
                     border-radius: 8px;
-                    font-size: 16px;
+                    font-size: 10px; font-weight: 700;
+                    color: {DARK['DANGER']};
+                    letter-spacing: 0.5px;
                 }}
             """)
         else:
@@ -3259,7 +3261,9 @@ class FloatingPanel(QWidget):
                     background: transparent;
                     border: 1px solid {DARK['TEAL']};
                     border-radius: 8px;
-                    font-size: 16px;
+                    font-size: 10px; font-weight: 700;
+                    color: {DARK['TEAL']};
+                    letter-spacing: 0.5px;
                 }}
                 QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
                 QPushButton:pressed {{ background: {DARK['ACCENT']}; }}
