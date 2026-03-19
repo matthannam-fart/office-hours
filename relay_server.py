@@ -70,34 +70,54 @@ def cleanup_rate_limits():
 
 # ── Presence Registry ────────────────────────────────────────────
 
-presence = {}          # user_id -> {"name": str, "mode": str, "team_id": str, "sock": socket, "addr": tuple}
+presence = {}          # user_id -> {"name": str, "mode": str, "team_ids": list, "sock": socket, "addr": tuple}
 presence_lock = threading.Lock()
 
+def _normalize_team_ids(msg):
+    """Accept both team_ids (list) and team_id (string) for backward compatibility."""
+    team_ids = msg.get("team_ids")
+    if isinstance(team_ids, list):
+        return [t for t in team_ids if t]
+    team_id = msg.get("team_id", "")
+    return [team_id] if team_id else []
+
 def broadcast_presence():
-    """Send each client only the users that share a team with them.
-    Clients send their team_id on REGISTER/MODE_UPDATE — we use it to
-    filter so no one sees users outside their team."""
+    """Send each client users from ALL their teams, grouped by team.
+    Clients register with team_ids (list). Each client receives a
+    'teams' dict mapping team_id -> user list."""
     dead_uids = []
     with presence_lock:
         # Build per-team user lists
         team_users = {}  # team_id -> [user_info, ...]
         for uid, info in presence.items():
-            tid = info.get("team_id", "")
-            entry = {
-                "user_id": uid,
-                "name": info["name"],
-                "mode": info["mode"],
-                "room": info.get("room", ""),
-                "team_id": tid,
-            }
-            if tid:
+            for tid in info.get("team_ids", []):
+                entry = {
+                    "user_id": uid,
+                    "name": info["name"],
+                    "mode": info["mode"],
+                    "room": info.get("room", ""),
+                    "team_id": tid,
+                }
                 team_users.setdefault(tid, []).append(entry)
 
-        # Send each client only their team's users
+        # Send each client their teams' users (grouped)
         for uid, info in list(presence.items()):
-            tid = info.get("team_id", "")
-            users_for_client = team_users.get(tid, []) if tid else []
-            msg = json.dumps({"type": "PRESENCE_UPDATE", "users": users_for_client}).encode('utf-8')
+            client_team_ids = info.get("team_ids", [])
+            # Build grouped dict for this client
+            teams_dict = {}
+            flat_users = []
+            seen_uids = set()
+            for tid in client_team_ids:
+                teams_dict[tid] = team_users.get(tid, [])
+                for u in teams_dict[tid]:
+                    if u["user_id"] not in seen_uids:
+                        flat_users.append(u)
+                        seen_uids.add(u["user_id"])
+            msg = json.dumps({
+                "type": "PRESENCE_UPDATE",
+                "teams": teams_dict,
+                "users": flat_users,  # backward compat for old clients
+            }).encode('utf-8')
             try:
                 send_frame(info["sock"], msg)
             except Exception:
@@ -167,20 +187,20 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                 user_id = msg.get("user_id", "unknown")
                 name = msg.get("name", "Unknown")
                 mode = msg.get("mode", "GREEN")
-                team_id = msg.get("team_id", "")
+                team_ids = _normalize_team_ids(msg)
 
                 with presence_lock:
                     presence[user_id] = {
                         "name": name,
                         "mode": mode,
-                        "team_id": team_id,
+                        "team_ids": team_ids,
                         "sock": client_sock,
                         "addr": client_addr,
                         "registered_at": time.time(),
                         "last_ping": time.time(),
                     }
 
-                print(f"[Presence] Registered: {name} ({user_id})")
+                print(f"[Presence] Registered: {name} ({user_id}) teams={team_ids}")
                 send_json(client_sock, {"status": "registered", "user_id": user_id})
                 broadcast_presence()
 
@@ -194,14 +214,18 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
             elif action == "MODE_UPDATE":
                 mode = msg.get("mode", "GREEN")
                 room_code = msg.get("room", "")
-                team_id = msg.get("team_id")  # None means no change
+                # Accept team_ids list or single team_id
+                new_team_ids = msg.get("team_ids")
+                if new_team_ids is None and "team_id" in msg:
+                    tid = msg["team_id"]
+                    new_team_ids = [tid] if tid else None
                 with presence_lock:
                     if user_id and user_id in presence:
                         presence[user_id]["mode"] = mode
                         presence[user_id]["room"] = room_code
-                        if team_id is not None:
-                            presence[user_id]["team_id"] = team_id
-                print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else "") + (f" team={team_id}" if team_id else ""))
+                        if new_team_ids is not None:
+                            presence[user_id]["team_ids"] = new_team_ids
+                print(f"[Presence] {user_id} mode -> {mode}" + (f" room={room_code}" if room_code else "") + (f" teams={new_team_ids}" if new_team_ids else ""))
                 broadcast_presence()
 
             elif action == "CONNECT_TO":
@@ -210,11 +234,12 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
 
                 with presence_lock:
                     target = presence.get(target_id)
-                    # Verify both users are on the same team
-                    caller_team = presence.get(user_id, {}).get("team_id", "")
-                    target_team = target.get("team_id", "") if target else ""
+                    # Verify users share at least one team
+                    caller_teams = set(presence.get(user_id, {}).get("team_ids", []))
+                    target_teams = set(target.get("team_ids", [])) if target else set()
 
-                if target and caller_team and caller_team == target_team:
+                shared_teams = caller_teams & target_teams
+                if target and shared_teams:
                     # Pre-create the room so both clients can JOIN_ROOM
                     room_code = generate_room_code()
                     with rooms_lock:
@@ -369,39 +394,6 @@ def handle_presence_client(client_sock, client_addr, user_id=None):
                         print(f"[Join] Could not notify requester {requester_id}")
                 else:
                     print(f"[Join] Requester {requester_id} not online for response")
-
-            elif action == "PAGE_ALL":
-                # Broadcast a one-way voice message to all GREEN team members
-                team_id = msg.get("team_id", "")
-                sender_name = msg.get("sender_name", "Someone")
-                audio_b64 = msg.get("audio_b64", "")
-
-                if not team_id or not audio_b64:
-                    print(f"[PageAll] Ignored — missing team_id or audio data from {user_id}")
-                    continue
-
-                recipients = []
-                with presence_lock:
-                    for uid, info in presence.items():
-                        if (uid != user_id
-                                and info.get("team_id") == team_id
-                                and info.get("mode") == "GREEN"):
-                            recipients.append((uid, info["sock"]))
-
-                page_msg = {
-                    "type": "PAGE_ALL",
-                    "from_id": user_id,
-                    "from_name": sender_name,
-                    "audio_b64": audio_b64,
-                }
-                sent = 0
-                for uid, sock in recipients:
-                    try:
-                        send_json(sock, page_msg)
-                        sent += 1
-                    except Exception:
-                        print(f"[PageAll] Failed to deliver to {uid}")
-                print(f"[PageAll] {sender_name} paged {sent}/{len(recipients)} GREEN members in team {team_id[:8]}")
 
     except (ConnectionResetError, BrokenPipeError, TimeoutError) as e:
         print(f"[Presence] Client {client_addr} disconnected: {e}")
@@ -699,13 +691,13 @@ def handle_client(client_sock, client_addr, udp_sock):
             user_id = msg.get("user_id", "unknown")
             name = msg.get("name", "Unknown")
             mode = msg.get("mode", "GREEN")
-            team_id = msg.get("team_id", "")
+            team_ids = _normalize_team_ids(msg)
 
             with presence_lock:
                 presence[user_id] = {
                     "name": name,
                     "mode": mode,
-                    "team_id": team_id,
+                    "team_ids": team_ids,
                     "sock": client_sock,
                     "addr": client_addr
                 }

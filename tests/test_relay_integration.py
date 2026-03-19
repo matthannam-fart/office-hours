@@ -136,7 +136,7 @@ class TestPresenceBroadcast:
             relay_server.presence["user-1"] = {
                 "name": "Alice",
                 "mode": "GREEN",
-                "team_id": "team-a",
+                "team_ids": ["team-a"],
                 "sock": sock,
                 "addr": ("127.0.0.1", 12345),
                 "registered_at": time.time(),
@@ -155,12 +155,12 @@ class TestPresenceBroadcast:
 
         with relay_server.presence_lock:
             relay_server.presence["u1"] = {
-                "name": "Alice", "mode": "GREEN", "team_id": "team-x",
+                "name": "Alice", "mode": "GREEN", "team_ids": ["team-x"],
                 "sock": sock1, "addr": ("127.0.0.1", 1),
                 "registered_at": time.time(), "last_ping": time.time(),
             }
             relay_server.presence["u2"] = {
-                "name": "Bob", "mode": "YELLOW", "team_id": "team-x",
+                "name": "Bob", "mode": "YELLOW", "team_ids": ["team-x"],
                 "sock": sock2, "addr": ("127.0.0.1", 2),
                 "registered_at": time.time(), "last_ping": time.time(),
             }
@@ -183,12 +183,12 @@ class TestPresenceBroadcast:
 
         with relay_server.presence_lock:
             relay_server.presence["u1"] = {
-                "name": "Alice", "mode": "GREEN", "team_id": "team-x",
+                "name": "Alice", "mode": "GREEN", "team_ids": ["team-x"],
                 "sock": sock1, "addr": ("127.0.0.1", 1),
                 "registered_at": time.time(), "last_ping": time.time(),
             }
             relay_server.presence["u2"] = {
-                "name": "Bob", "mode": "RED", "team_id": "team-x",
+                "name": "Bob", "mode": "RED", "team_ids": ["team-x"],
                 "sock": make_mock_socket(), "addr": ("127.0.0.1", 2),
                 "registered_at": time.time(), "last_ping": time.time(),
             }
@@ -236,7 +236,7 @@ class TestClientDisconnectCleanup:
 
         with relay_server.presence_lock:
             relay_server.presence["dead-user"] = {
-                "name": "Ghost", "mode": "GREEN", "team_id": "team-z",
+                "name": "Ghost", "mode": "GREEN", "team_ids": ["team-z"],
                 "sock": dead_sock, "addr": ("127.0.0.1", 1),
                 "registered_at": time.time(), "last_ping": time.time(),
             }

@@ -31,8 +31,6 @@ from ui_constants import COLORS
 from user_settings import (
     _config_dir,
     clear_auth_session,
-    get_active_team,
-    get_active_team_name,
     get_auth_session,
     get_deck_guide_dismissed,
     get_display_name,
@@ -40,8 +38,6 @@ from user_settings import (
     get_user_id,
     is_logged_in,
     save_auth_session,
-    set_active_team,
-    set_active_team_name,
     set_deck_guide_dismissed,
     set_display_name,
 )
@@ -128,11 +124,9 @@ class IntercomApp(QObject):
             self.display_name = get_display_name()
             self.user_id = get_user_id()
 
-        # Team state
-        self.active_team_id = get_active_team() or ""
-        self.active_team_name = get_active_team_name() or ""
+        # Team state — all joined teams are active simultaneously
         self.my_teams = []  # [{id, name, role}, ...] loaded from Supabase
-        self._team_members = {}  # {user_id: display_name} — all members of active team
+        self._team_members = {}  # {team_id: {user_id: display_name}} — members per team
         self._pending_join_requests = {}  # request_id -> {team_id, requester_id, requester_name}
 
         # Managers
@@ -142,6 +136,7 @@ class IntercomApp(QObject):
         self.network.presence_callback = self.handle_presence_message
         self.network.display_name = self.display_name
         self.network.user_id = self.user_id
+        self.active_team_ids: list[str] = []  # derived from my_teams
         self.audio.mic_level_callback = lambda l: self.mic_level_signal.emit(l)
         self.audio.speaker_level_callback = lambda l: self.speaker_level_signal.emit(l)
         self.audio.start_listening()
@@ -294,8 +289,7 @@ class IntercomApp(QObject):
         self.panel.mode_cycle_requested.connect(self.cycle_mode)
         self.panel.mode_set_requested.connect(self._on_mode_set)
         self.panel.hotline_toggled.connect(self._on_hotline_toggle)
-        self.panel.page_all_pressed.connect(self.on_page_all_press)
-        self.panel.page_all_released.connect(self.on_page_all_release)
+        # PAGE_ALL removed — multi-team makes per-team paging complex; feature killed
         self.panel.ptt_pressed.connect(self.on_talk_press)
         self.panel.ptt_released.connect(self.on_talk_release)
         self.panel.call_user_requested.connect(self._on_call_user)
@@ -813,11 +807,12 @@ class IntercomApp(QObject):
             # Still show lobby even if Supabase fails
             self._teams_loaded_signal.emit()
 
-        # Connect to presence — use active_team_id if auto-selected, else empty
+        # Connect to presence with all joined teams
+        self.active_team_ids = [t["id"] for t in self.my_teams]
         try:
             success = self.network.connect_presence(
                 RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
-                self.mode, self.active_team_id or "",
+                self.mode, self.active_team_ids,
             )
             if success:
                 self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
@@ -830,6 +825,15 @@ class IntercomApp(QObject):
         msg_type = msg.get("type")
 
         if msg_type == "PRESENCE_UPDATE":
+            # New format: teams dict grouped by team_id
+            teams_dict = msg.get("teams", {})
+            if teams_dict:
+                # Filter self from each team's user list
+                for tid in teams_dict:
+                    teams_dict[tid] = [u for u in teams_dict[tid] if u.get("user_id") != self.user_id]
+                self._update_online_users_grouped(teams_dict)
+                return
+            # Fallback: flat users list (old relay server)
             users = msg.get("users", [])
             filtered = [u for u in users if u.get("user_id") != self.user_id]
             self.presence_update_signal.emit(filtered)
@@ -887,10 +891,6 @@ class IntercomApp(QObject):
                 msg.get("reason", "Could not reach team admin")
             )
 
-        elif msg_type == "PAGE_ALL":
-            # One-way broadcast message from a teammate
-            self._handle_page_all(msg)
-
     def _join_relay_room(self, room_code, role):
         """Connect to relay for an active call. Room code is internal — never shown to user."""
         success = self.network.join_room(RELAY_HOST, room_code, RELAY_PORT)
@@ -946,39 +946,67 @@ class IntercomApp(QObject):
 
     @Slot(list)
     def _update_online_users(self, users):
-        """Update the panel user list from presence data, filtered by active team."""
-        self.online_users = {}
-        panel_users = []
-
+        """Backward-compat: flat user list from old relay. Build grouped structure."""
+        # Build a single-group structure and delegate to grouped handler
+        teams_dict = {}
         for user in users:
-            uid = user.get("user_id", "")
-            name = user.get("name", "Unknown")
-            mode = user.get("mode", "GREEN")
-            team_id = user.get("team_id", "")
-            self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": team_id}
-            # Filter by active team — only show users in the same team
-            if self.active_team_id and team_id != self.active_team_id:
-                continue
-            panel_users.append({
-                'id': uid,
-                'name': name,
-                'mode': mode,
-                'has_message': False  # TODO: track per-user messages
-            })
+            tid = user.get("team_id", "")
+            if tid:
+                teams_dict.setdefault(tid, []).append(user)
+        self._update_online_users_grouped(teams_dict)
 
-        # Append offline team members
-        online_ids = {u['id'] for u in panel_users}
-        for uid, name in self._team_members.items():
-            if uid not in online_ids:
-                panel_users.append({
+    def _update_online_users_grouped(self, teams_dict):
+        """Update the panel user list from grouped presence data.
+        teams_dict: {team_id: [user_info, ...]}"""
+        self.online_users = {}
+
+        # Build team_groups for the UI: [{team_id, team_name, users: [...]}, ...]
+        team_groups = []
+        # Map team_id -> team_name from my_teams
+        team_name_map = {t["id"]: t["name"] for t in self.my_teams}
+
+        for tid in self.active_team_ids:
+            team_name = team_name_map.get(tid, "Unknown Team")
+            team_online_users = teams_dict.get(tid, [])
+            group_users = []
+            online_ids_in_group = set()
+
+            for user in team_online_users:
+                uid = user.get("user_id", "")
+                name = user.get("name", "Unknown")
+                mode = user.get("mode", "GREEN")
+                self.online_users[uid] = {"name": name, "mode": mode, "room": user.get("room", ""), "team_id": tid}
+                group_users.append({
                     'id': uid,
                     'name': name,
-                    'mode': 'OFFLINE',
+                    'mode': mode,
                     'has_message': False,
                 })
+                online_ids_in_group.add(uid)
 
-        self._last_panel_users = panel_users
-        self.panel.set_users(panel_users, self._intercom_target_id)
+            # Append offline team members for this team
+            team_members = self._team_members.get(tid, {})
+            for uid, name in team_members.items():
+                if uid not in online_ids_in_group:
+                    group_users.append({
+                        'id': uid,
+                        'name': name,
+                        'mode': 'OFFLINE',
+                        'has_message': False,
+                    })
+
+            team_groups.append({
+                'team_id': tid,
+                'team_name': team_name,
+                'users': group_users,
+            })
+
+        # Flat list for backward compat (tray menu, deck state)
+        flat_users = []
+        for g in team_groups:
+            flat_users.extend(g['users'])
+        self._last_panel_users = flat_users
+        self.panel.set_users(team_groups, self._intercom_target_id)
         self._rebuild_tray_menu()
         self._broadcast_deck_state()
 
@@ -986,16 +1014,6 @@ class IntercomApp(QObject):
         if self._intercom_target_id and self._intercom_target_id in self.online_users:
             peer_mode = self.online_users[self._intercom_target_id].get("mode", "GREEN")
             self.panel.set_peer_mode(peer_mode)
-
-        # Auto-select if there's exactly one online user and no current target
-        # Only fire once per user to avoid retry loops on connection failures
-        online_count = sum(1 for u in panel_users if u.get('mode') != 'OFFLINE')
-        if online_count == 1 and not self._intercom_target_id:
-            only_user = next(u for u in panel_users if u.get('mode') != 'OFFLINE')
-            uid = only_user['id']
-            if only_user.get('mode') != self.MODE_RED and uid != getattr(self, '_auto_select_attempted', ''):
-                self._auto_select_attempted = uid
-                self._on_user_selected(uid)
 
     @Slot(str, str, str)
     def _show_presence_request(self, from_name, from_id, room_code):
@@ -1172,7 +1190,7 @@ class IntercomApp(QObject):
             "message": getattr(self, 'has_message', False),
             "teams": teams,
             "users": users,
-            "activeTeamId": getattr(self, 'active_team_id', "") or "",
+            "activeTeamIds": getattr(self, 'active_team_ids', []),
             "activeUserId": getattr(self, '_intercom_target_id', "") or "",
             "connected": getattr(self.network, 'connected', False),
             "peerName": self.online_users.get(self._connected_peer_id or "", {}).get("name", ""),
@@ -1293,36 +1311,6 @@ class IntercomApp(QObject):
         self.update_deck_display()
 
     # ── Page All ───────────────────────────────────────────────────
-    def on_page_all_press(self):
-        """Record a broadcast message."""
-        self.audio.start_recording_message()
-        self.panel.set_ptt_active(True)
-        self.log("Broadcasting...")
-
-    def on_page_all_release(self):
-        """Stop recording and broadcast to all GREEN team members."""
-        filename = self.audio.stop_recording_message()
-        self.panel.set_ptt_active(False)
-        if not filename:
-            return
-        if not self.active_team_id:
-            self.log("No team selected — cannot page all")
-            return
-
-        def _send():
-            ok = self.network.send_page_all(
-                filename, self.active_team_id, self.display_name
-            )
-            if ok:
-                self.log_signal.emit("Page All sent")
-            else:
-                self.log_signal.emit("Page All failed — not connected")
-
-        threading.Thread(target=_send, daemon=True).start()
-        # Reinforce the selected user highlight after page-all ends
-        if self._intercom_target_id:
-            self.panel.highlight_selected_user(self._intercom_target_id)
-
     def on_answer(self):
         if self.has_message or self._message_queue:
             self._on_play_message()
@@ -1406,38 +1394,6 @@ class IntercomApp(QObject):
 
         threading.Thread(target=_play_all, daemon=True).start()
 
-    def _handle_page_all(self, msg):
-        """Handle an incoming PAGE_ALL broadcast — save audio and queue it."""
-        import base64
-        import time as _time
-
-        from_name = msg.get("from_name", "Someone")
-        from_id = msg.get("from_id", "")
-        audio_b64 = msg.get("audio_b64", "")
-        if not audio_b64:
-            return
-        try:
-            audio_data = base64.b64decode(audio_b64)
-            fn = os.path.join(_config_dir(), f"page_{int(_time.time()*1000)}.wav")
-            with open(fn, 'wb') as f:
-                f.write(audio_data)
-            self._message_queue.append(fn)
-            self.incoming_message_path = fn
-            self.has_message = True
-            self.is_flashing = True
-            # Track per-user
-            if from_id:
-                if from_id not in self._user_messages:
-                    self._user_messages[from_id] = []
-                self._user_messages[from_id].append(fn)
-                QTimer.singleShot(0, lambda uid=from_id: self.panel.set_user_state(uid, "message"))
-            self.update_deck_display()
-            self.audio.play_notification()
-            self.message_received_signal.emit()
-            self.log(f"Page All from {from_name}")
-        except Exception as e:
-            self.log(f"Page All receive error: {e}")
-
     def _save_voicemail_from_buffer(self):
         """Save buffered audio from a peer who talked while we were busy."""
         import time as _time
@@ -1504,43 +1460,38 @@ class IntercomApp(QObject):
         self._set_mode(mode)
 
     def _fetch_team_members(self):
-        """Fetch all members of the active team in background."""
-        if not self.active_team_id:
+        """Fetch members of all joined teams in background."""
+        if not self.my_teams:
             self._team_members = {}
             return
-        tid = self.active_team_id
+        team_ids = [t["id"] for t in self.my_teams]
         uid = self.user_id
-        print(f"[TeamMembers] Starting fetch for team {tid}, user {uid}")
+        print(f"[TeamMembers] Starting fetch for {len(team_ids)} teams")
         def _fetch():
             try:
-                members = supabase_client.get_team_members(tid)
-                print(f"[TeamMembers] Raw response: {len(members)} members")
-                result = {}
-                for m in members:
-                    mid = m.get("user_id", "")
-                    if mid and mid != uid:  # Exclude self
-                        result[mid] = m.get("display_name", "Unknown")
+                result = {}  # {team_id: {user_id: display_name}}
+                for tid in team_ids:
+                    members = supabase_client.get_team_members(tid)
+                    team_result = {}
+                    for m in members:
+                        mid = m.get("user_id", "")
+                        if mid and mid != uid:  # Exclude self
+                            team_result[mid] = m.get("display_name", "Unknown")
+                    result[tid] = team_result
+                    print(f"[TeamMembers] Team {tid[:8]}: {len(team_result)} members")
                 self._team_members = result
-                print(f"[TeamMembers] Fetched {len(result)} members (excl self): {list(result.values())}")
                 # Re-filter to merge offline members into the list
                 QTimer.singleShot(0, self._refilter_online_users)
             except Exception as e:
                 print(f"[TeamMembers] ERROR: {e}")
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _switch_team(self, team_id, team_name):
-        """Switch active team (used by deck buttons)."""
-        if team_id == self.active_team_id:
-            return
-        self.active_team_id = team_id
-        self.active_team_name = team_name
-        set_active_team(team_id)
-        set_active_team_name(team_name)
-        self.log(f"Switched to team: {team_name}")
-        self.network.update_presence_team(team_id)
+    def _sync_team_presence(self):
+        """Update relay with current team list and refresh members."""
+        self.active_team_ids = [t["id"] for t in self.my_teams]
+        self.network.update_presence_teams(self.active_team_ids)
         self._fetch_team_members()
         self._refilter_online_users()
-        self.panel.set_teams(self.my_teams, self.active_team_id)
 
     def _hotkey_talk_press(self):
         """Called from pynput thread — emit signal to run on Qt thread."""
@@ -1864,13 +1815,16 @@ class IntercomApp(QObject):
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded.
         Auto-selects if the user has exactly one team; otherwise shows lobby."""
-        # Always show welcome page — let user pick their team
-        self.panel.set_teams(self.my_teams, self.active_team_id, force_lobby=True)
-        self._lobby_refresh_timer.start()
-
-        # Pre-fetch team members so offline users are ready when team is selected
-        if self.active_team_id:
+        if self.my_teams:
+            # Has teams — go directly to users view with all teams active
+            self.active_team_ids = [t["id"] for t in self.my_teams]
+            self.network.update_presence_teams(self.active_team_ids)
             self._fetch_team_members()
+            self.panel.set_teams(self.my_teams)
+        else:
+            # No teams — show welcome/lobby
+            self.panel.set_teams(self.my_teams, force_lobby=True)
+            self._lobby_refresh_timer.start()
 
     @Slot(list)
     def _set_available_teams(self, data):
@@ -1878,10 +1832,9 @@ class IntercomApp(QObject):
         data is [available_teams, my_teams] or just [available_teams]."""
         if isinstance(data, list) and len(data) == 2 and isinstance(data[0], list):
             available, my_teams = data[0], data[1]
-            self.panel.set_available_teams(available, my_teams=my_teams,
-                                           active_team_id=self.active_team_id)
+            self.panel.set_available_teams(available, my_teams=my_teams)
         else:
-            self.panel.set_available_teams(data, active_team_id=self.active_team_id)
+            self.panel.set_available_teams(data)
 
     def _refresh_lobby_teams(self):
         """Poll Supabase for updated team list while lobby is showing."""
@@ -1895,59 +1848,16 @@ class IntercomApp(QObject):
                 pass  # Silently skip — will retry next interval
         threading.Thread(target=_do_refresh, daemon=True).start()
 
-    @Slot(str)
-    def _on_team_changed(self, team_id):
-        """User selected a different team from the dropdown."""
-        if team_id == self.active_team_id:
-            return
-        self.active_team_id = team_id
-        # Find team name
-        for t in self.my_teams:
-            if t["id"] == team_id:
-                self.active_team_name = t["name"]
-                break
-        set_active_team(team_id)
-        set_active_team_name(self.active_team_name)
-        self.log(f"Switched to team: {self.active_team_name}")
-        # Notify relay so presence broadcast includes new team_id
-        self.network.update_presence_team(team_id)
-        # Fetch members for the new team and re-filter
-        self._fetch_team_members()
-        self._refilter_online_users()
-
     def _refilter_online_users(self):
-        """Re-filter and display online users based on current team.
-        Appends offline team members (greyed out) after online users."""
-        panel_users = []
-        online_ids = set()
+        """Re-build grouped user list from cached online_users and team_members."""
+        # Rebuild teams_dict from cached online_users
+        teams_dict = {}
         for uid, info in self.online_users.items():
-            if self.active_team_id and info.get("team_id", "") != self.active_team_id:
-                continue
-            panel_users.append({
-                'id': uid,
-                'name': info["name"],
-                'mode': info["mode"],
-                'has_message': False,
-            })
-            online_ids.add(uid)
-
-        # Append offline team members
-        for uid, name in self._team_members.items():
-            if uid not in online_ids:
-                panel_users.append({
-                    'id': uid,
-                    'name': name,
-                    'mode': 'OFFLINE',
-                    'has_message': False,
-                })
-
-        online_count = len(online_ids)
-        offline_count = len(panel_users) - online_count
-        print(f"[Refilter] {online_count} online, {offline_count} offline, {len(self._team_members)} team members cached")
-        self._last_panel_users = panel_users
-        self.panel.set_users(panel_users, self._intercom_target_id)
-        self._rebuild_tray_menu()
-        self._broadcast_deck_state()
+            tid = info.get("team_id", "")
+            if tid:
+                entry = {"user_id": uid, "name": info["name"], "mode": info["mode"], "room": info.get("room", "")}
+                teams_dict.setdefault(tid, []).append(entry)
+        self._update_online_users_grouped(teams_dict)
 
     def _ensure_presence_connected(self):
         """Ensure Supabase profile exists and presence server is connected.
@@ -1959,7 +1869,7 @@ class IntercomApp(QObject):
             try:
                 success = self.network.connect_presence(
                     RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
-                    self.mode, self.active_team_id,
+                    self.mode, self.active_team_ids,
                 )
                 if success:
                     self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
@@ -1971,7 +1881,8 @@ class IntercomApp(QObject):
         """Thread-safe transition from lobby to team view.
         Called via signal from background threads after create/join/approve."""
         self._lobby_refresh_timer.stop()  # Stop polling — user picked a team
-        self.panel.set_teams(self.my_teams, self.active_team_id)
+        self._sync_team_presence()
+        self.panel.set_teams(self.my_teams)
 
     @Slot(str, str)
     def _show_invite_prompt(self, team_name, invite_code):
@@ -2008,11 +1919,8 @@ class IntercomApp(QObject):
                     "role": "admin",
                 }
                 self.my_teams.append(team_entry)
-                self.active_team_id = result["id"]
-                self.active_team_name = team_name
-                set_active_team(self.active_team_id)
-                set_active_team_name(self.active_team_name)
-                self.network.update_presence_team(self.active_team_id)
+                self.active_team_ids = [t["id"] for t in self.my_teams]
+                self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
                 # Prompt to invite teammates
@@ -2039,11 +1947,8 @@ class IntercomApp(QObject):
                     "role": "member",
                 }
                 self.my_teams.append(team_entry)
-                self.active_team_id = result["id"]
-                self.active_team_name = result["name"]
-                set_active_team(self.active_team_id)
-                set_active_team_name(self.active_team_name)
-                self.network.update_presence_team(self.active_team_id)
+                self.active_team_ids = [t["id"] for t in self.my_teams]
+                self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
             else:
@@ -2059,13 +1964,14 @@ class IntercomApp(QObject):
 
     @Slot()
     def _on_manage_team(self):
-        """Open team info dialog (all members can view, only admins can remove)."""
-        if not self.active_team_id:
+        """Open team info dialog (all members can view, only admins can remove).
+        Uses the first team if no specific team context is available."""
+        if not self.my_teams:
             return
-        # Fetch current members in background, then show dialog via signal
+        self._manage_team_id = self.my_teams[0]["id"]
         def _fetch_and_show():
             try:
-                members = supabase_client.get_team_members(self.active_team_id)
+                members = supabase_client.get_team_members(self._manage_team_id)
                 self._show_manage_dialog_signal.emit(members)
             except Exception as e:
                 self.log(f"Failed to fetch team members: {e}")
@@ -2073,16 +1979,18 @@ class IntercomApp(QObject):
 
     def _show_manage_team_dialog(self, members):
         """Show team management dialog on the main thread."""
-        # Get invite code and role for current team
+        team_id = getattr(self, '_manage_team_id', '')
+        team_name = ""
         invite_code = ""
         is_admin = False
         for t in self.my_teams:
-            if t["id"] == self.active_team_id:
+            if t["id"] == team_id:
+                team_name = t["name"]
                 invite_code = t.get("invite_code", "")
                 is_admin = t.get("role") == "admin"
                 break
         self.panel.show_manage_team_dialog(
-            self.active_team_name, self.active_team_id, members,
+            team_name, team_id, members,
             invite_code=invite_code,
             is_admin=is_admin,
             add_callback=self._add_team_member,
@@ -2116,22 +2024,11 @@ class IntercomApp(QObject):
 
     @Slot(str, str)
     def _on_team_selected_from_lobby(self, team_id, team_name):
-        """User selected one of their own teams from the lobby."""
-        self.active_team_id = team_id
-        self.active_team_name = team_name
-        set_active_team(team_id)
-        set_active_team_name(team_name)
+        """User clicked a team from the lobby — transition to users view.
+        All teams are active simultaneously, so this just switches the UI."""
         self.log(f"Selected team: {team_name}")
-
-        # Update presence with the chosen team
-        self.network.update_presence_team(team_id)
-
-        # Fetch team members (includes offline) and refresh user list
-        self._fetch_team_members()
-        self._refilter_online_users()
-
-        # Transition from lobby to normal team view
-        self.panel.set_teams(self.my_teams, self.active_team_id)
+        self._sync_team_presence()
+        self.panel.set_teams(self.my_teams)
 
     # ── Lobby Join Request Flow ─────────────────────────────────
 
@@ -2241,12 +2138,8 @@ class IntercomApp(QObject):
                 teams = supabase_client.get_my_teams(self.user_id)
                 self.my_teams = teams or []
                 if self.my_teams:
-                    # Select the most recently joined team (last in list)
-                    self.active_team_id = self.my_teams[-1]["id"]
-                    self.active_team_name = self.my_teams[-1]["name"]
-                    set_active_team(self.active_team_id)
-                    set_active_team_name(self.active_team_name)
-                    self.network.update_presence_team(self.active_team_id)
+                    self.active_team_ids = [t["id"] for t in self.my_teams]
+                    self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
             threading.Thread(target=_reload, daemon=True).start()
@@ -2260,31 +2153,28 @@ class IntercomApp(QObject):
         self.log(f"Join request failed: {reason}")
         QTimer.singleShot(0, lambda: self.panel.show_join_request_failed(reason))
 
-    def _on_leave_team(self):
-        """User wants to leave the current team."""
-        if not self.active_team_id:
+    def _on_leave_team(self, team_id=""):
+        """User wants to leave a team."""
+        if not team_id:
+            # Legacy: no team_id passed, use first team
+            if not self.my_teams:
+                return
+            team_id = self.my_teams[0]["id"]
+        team_name = ""
+        for t in self.my_teams:
+            if t["id"] == team_id:
+                team_name = t["name"]
+                break
+        if not team_name:
             return
-        team_id = self.active_team_id
-        team_name = self.active_team_name
 
         def _do_leave():
             supabase_client.leave_team(team_id, self.user_id)
             self.log_signal.emit(f"Left team: {team_name}")
             # Remove from local list
             self.my_teams = [t for t in self.my_teams if t["id"] != team_id]
-            if self.my_teams:
-                # Switch to the first remaining team
-                self.active_team_id = self.my_teams[0]["id"]
-                self.active_team_name = self.my_teams[0]["name"]
-                set_active_team(self.active_team_id)
-                set_active_team_name(self.active_team_name)
-                self.network.update_presence_team(self.active_team_id)
-            else:
-                # No teams left — clear state
-                self.active_team_id = ""
-                self.active_team_name = ""
-                set_active_team("")
-                set_active_team_name("")
+            self.active_team_ids = [t["id"] for t in self.my_teams]
+            self.network.update_presence_teams(self.active_team_ids)
             # Update UI on main thread
             self._switch_to_team_signal.emit()
         threading.Thread(target=_do_leave, daemon=True).start()

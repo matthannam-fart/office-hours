@@ -110,8 +110,6 @@ class FloatingPanel(QWidget):
     pin_toggled = Signal(bool)
     ptt_pressed = Signal()
     ptt_released = Signal()
-    page_all_pressed = Signal()
-    page_all_released = Signal()
     call_user_requested = Signal(str)     # user_id (legacy)
     intercom_pressed = Signal(str)        # user_id — hold to talk
     intercom_released = Signal(str)       # user_id — release to stop
@@ -778,7 +776,8 @@ class FloatingPanel(QWidget):
         is_login = (key == "login")
         has_team = bool(getattr(self, '_active_team_name_cache', ''))
         settings_from_welcome = (key == "settings" and getattr(self, '_settings_back_page', '') == "welcome")
-        show_sidebar = key in ("users", "teams", "radio") and not settings_from_welcome
+        is_teams = (key == "teams")
+        show_sidebar = key in ("users", "radio") and not settings_from_welcome
 
         # Sidebar: visible only when a team is active (not from welcome)
         self._sidebar.setVisible(show_sidebar)
@@ -790,10 +789,10 @@ class FloatingPanel(QWidget):
         # Hide status bar and header on welcome/login
         is_settings = (key == "settings")
         self._status_bar.setVisible(show_sidebar)
-        self._content_header.setVisible(show_sidebar or is_settings)
+        self._content_header.setVisible(show_sidebar or is_settings or is_teams)
 
         # Panel width
-        if is_welcome or is_login or is_settings:
+        if is_welcome or is_login or is_settings or is_teams:
             self.setFixedWidth(260)
         elif settings_from_welcome:
             self.setFixedWidth(260)
@@ -816,6 +815,7 @@ class FloatingPanel(QWidget):
             self._collapse_btn.setVisible(False)
         elif key == "teams":
             self._section_title.setText("Teams")
+            self._section_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             self._hamburger_btn.setText("←")
             self._hamburger_btn.setVisible(True)
             self._collapse_btn.setVisible(False)
@@ -1633,7 +1633,7 @@ class FloatingPanel(QWidget):
         if code:
             self.join_code_requested.emit(code)
 
-    def _populate_welcome_teams(self, teams, my_teams=None, active_team_id=""):
+    def _populate_welcome_teams(self, teams, my_teams=None):
         """Populate the welcome page team list."""
         # Clear existing
         while self._welcome_team_layout.count() > 0:
@@ -1796,8 +1796,9 @@ class FloatingPanel(QWidget):
         v.addWidget(actions)
         return page
 
-    def _refresh_teams_list(self, teams, active_team_id=""):
-        """Rebuild the visual team list on the Teams/Lobby page."""
+    def _refresh_teams_list(self, teams):
+        """Rebuild the visual team list on the Teams page.
+        All teams are active — no Select buttons, all show as active."""
         # Clear existing rows (keep the stretch at the end)
         while self._teams_list_layout.count() > 1:
             item = self._teams_list_layout.takeAt(0)
@@ -1813,29 +1814,15 @@ class FloatingPanel(QWidget):
             self._lobby_leave_btn.setVisible(False)
             return
 
-        has_active = False
         for team in teams:
-            is_active = (team["id"] == active_team_id)
-            if is_active:
-                has_active = True
-
             row = QFrame()
-            if is_active:
-                row.setStyleSheet("""
-                    QFrame {
-                        background: rgba(0, 166, 81, 0.08);
-                        border: 1px solid rgba(0, 166, 81, 0.30);
-                        border-radius: 8px;
-                    }
-                """)
-            else:
-                row.setStyleSheet(f"""
-                    QFrame {{
-                        background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
-                        border-radius: 8px;
-                    }}
-                    QFrame:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
-                """)
+            row.setStyleSheet("""
+                QFrame {
+                    background: rgba(0, 166, 81, 0.08);
+                    border: 1px solid rgba(0, 166, 81, 0.30);
+                    border-radius: 8px;
+                }
+            """)
 
             h = QHBoxLayout(row)
             h.setContentsMargins(10, 8, 10, 8)
@@ -1843,54 +1830,35 @@ class FloatingPanel(QWidget):
 
             name_lbl = QLabel(team["name"])
             name_lbl.setStyleSheet(
-                f"font-size: 13px; font-weight: 600; border: none; color: "
-                f"{COLORS['GREEN'] if is_active else DARK['TEXT']};"
+                f"font-size: 13px; font-weight: 600; border: none; color: {COLORS['GREEN']};"
             )
             h.addWidget(name_lbl, 1)
 
-            if is_active:
-                invite_code = team.get("invite_code", "")
-                if invite_code:
-                    code_btn = QPushButton(f"📋 {invite_code}")
-                    code_btn.setCursor(Qt.PointingHandCursor)
-                    code_btn.setToolTip("Click to copy invite code")
-                    code_btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background: transparent; border: 1px solid {DARK['BORDER']};
-                            border-radius: 4px; font-size: 10px; color: {DARK['TEXT_DIM']};
-                            padding: 2px 6px; font-family: monospace;
-                        }}
-                        QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
-                    """)
-                    code_btn.clicked.connect(
-                        lambda checked=False, c=invite_code: self._copy_code(c)
-                    )
-                    h.addWidget(code_btn)
-                check = QLabel("✓")
-                check.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['GREEN']}; border: none;")
-                h.addWidget(check)
-            else:
-                select_btn = QPushButton("Select")
-                select_btn.setCursor(Qt.PointingHandCursor)
-                select_btn.setFixedSize(54, 26)
-                select_btn.setStyleSheet(f"""
+            invite_code = team.get("invite_code", "")
+            if invite_code:
+                code_btn = QPushButton(f"📋 {invite_code}")
+                code_btn.setCursor(Qt.PointingHandCursor)
+                code_btn.setToolTip("Click to copy invite code")
+                code_btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: {COLORS['GREEN']}; color: white; border: none;
-                        border-radius: 4px; font-size: 10px; font-weight: 700;
+                        background: transparent; border: 1px solid {DARK['BORDER']};
+                        border-radius: 4px; font-size: 10px; color: {DARK['TEXT_DIM']};
+                        padding: 2px 6px; font-family: monospace;
                     }}
-                    QPushButton:hover {{ background: #2bbd6e; }}
+                    QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
                 """)
-                team_id = team["id"]
-                team_name = team["name"]
-                select_btn.clicked.connect(
-                    lambda checked=False, tid=team_id, tn=team_name:
-                        self._on_team_page_select(tid, tn)
+                code_btn.clicked.connect(
+                    lambda checked=False, c=invite_code: self._copy_code(c)
                 )
-                h.addWidget(select_btn)
+                h.addWidget(code_btn)
+
+            check = QLabel("✓")
+            check.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['GREEN']}; border: none;")
+            h.addWidget(check)
 
             self._teams_list_layout.insertWidget(self._teams_list_layout.count() - 1, row)
 
-        self._lobby_leave_btn.setVisible(has_active)
+        self._lobby_leave_btn.setVisible(True)
 
     def _on_team_page_select(self, team_id, team_name):
         """User clicked Select on a team in the lobby page."""
@@ -1908,48 +1876,14 @@ class FloatingPanel(QWidget):
         # Spacer to push buttons to bottom, aligned with sidebar status orb
         v.addStretch()
 
-        # Combined PTT / Page All bar with teal border
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(0)
-
-        # PTT button — left side, ~2/3 width
+        # PTT button — full width
         self.ptt_btn = QPushButton("PUSH TO TALK")
         self.ptt_btn.setCursor(Qt.PointingHandCursor)
         self.ptt_btn.setFixedHeight(32)
         self.ptt_btn.pressed.connect(self.ptt_pressed.emit)
         self.ptt_btn.released.connect(self.ptt_released.emit)
         self.ptt_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        btn_row.addWidget(self.ptt_btn, 2)
-
-        # Thin divider
-        divider = QFrame()
-        divider.setFixedWidth(1)
-        divider.setFixedHeight(32)
-        divider.setStyleSheet(f"background: {DARK['TEAL']}; border: none;")
-        btn_row.addWidget(divider)
-
-        # Page All button — right side, ~1/3 width
-        self.page_all_btn = QPushButton("PAGE ALL")
-        self.page_all_btn.setCursor(Qt.PointingHandCursor)
-        self.page_all_btn.setFixedHeight(32)
-        self.page_all_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: 1px solid {DARK['TEAL']};
-                border-left: none;
-                border-top-right-radius: 8px; border-bottom-right-radius: 8px;
-                border-top-left-radius: 0; border-bottom-left-radius: 0;
-                padding: 6px 8px; font-size: 11px;
-                font-weight: 700; color: {DARK['TEAL']};
-                letter-spacing: 0.5px;
-            }}
-            QPushButton:hover {{ background: rgba(42, 191, 191, 0.10); color: {DARK['TEXT']}; }}
-            QPushButton:pressed {{ background: rgba(42, 191, 191, 0.20); }}
-        """)
-        self.page_all_btn.pressed.connect(self.page_all_pressed.emit)
-        self.page_all_btn.released.connect(self.page_all_released.emit)
-        btn_row.addWidget(self.page_all_btn, 1)
-
-        v.addLayout(btn_row)
+        v.addWidget(self.ptt_btn)
 
         # VU meters row (hidden until connected)
         self._vu_row = QWidget()
@@ -2066,9 +2000,7 @@ class FloatingPanel(QWidget):
                 QPushButton {{
                     background: rgba(229, 57, 53, 0.05);
                     border: 1px solid {DARK['BORDER']};
-                    border-right: none;
-                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
-                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    border-radius: 8px;
                     padding: 8px; font-size: 12px;
                     font-weight: 700; color: {DARK['TEXT_FAINT']};
                     letter-spacing: 0.5px;
@@ -2080,9 +2012,7 @@ class FloatingPanel(QWidget):
                 QPushButton {{
                     background: transparent;
                     border: 1px solid {DARK['TEAL']};
-                    border-right: none;
-                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
-                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    border-radius: 8px;
                     padding: 8px; font-size: 12px;
                     font-weight: 700; color: {text_color};
                     letter-spacing: 0.5px;
@@ -2370,7 +2300,7 @@ class FloatingPanel(QWidget):
 
         return frame
 
-    def set_available_teams(self, teams, my_teams=None, active_team_id=""):
+    def set_available_teams(self, teams, my_teams=None):
         """Populate the lobby team list on the onboarding screen.
         teams: [{id, name, created_by}, ...] — teams user can request to join
         my_teams: [{id, name, role}, ...] — teams user already belongs to (shown first with Select btn)
@@ -2447,7 +2377,7 @@ class FloatingPanel(QWidget):
         self._lobby_layout.addStretch()
 
         # Also populate the welcome page team list
-        self._populate_welcome_teams(teams, my_teams=my_teams, active_team_id=active_team_id)
+        self._populate_welcome_teams(teams, my_teams=my_teams)
 
     def _on_lobby_select_click(self, team_id, team_name):
         """User clicked 'Select' on one of their own teams in the lobby."""
@@ -2690,8 +2620,8 @@ class FloatingPanel(QWidget):
         if ok and name.strip():
             self.create_team_requested.emit(name.strip())
 
-    def set_teams(self, teams, active_team_id="", force_lobby=False):
-        """Update the team dropdown with available teams.
+    def set_teams(self, teams, force_lobby=False):
+        """Update the team state. All joined teams are active simultaneously.
         teams: [{id, name, invite_code, role}, ...]
         If no teams or force_lobby, show welcome page instead.
         """
@@ -2701,7 +2631,6 @@ class FloatingPanel(QWidget):
             # Show welcome page (no team selected)
             self._is_onboarding = True
             self._onboarding.setVisible(False)  # Don't use old overlay
-            # Populate welcome team list with user's teams
             self._populate_welcome_teams([], my_teams=teams)
             self._switch_page("welcome")
             return
@@ -2715,33 +2644,25 @@ class FloatingPanel(QWidget):
         self._team_combo.blockSignals(True)
         self._team_combo.clear()
         teams = sorted(teams, key=lambda t: t.get("name", "").lower())
-        active_index = 0
         for i, team in enumerate(teams):
             self._team_combo.addItem(team["name"], team["id"])
             self._team_combo.setItemData(i, team.get("role", "member"), Qt.UserRole + 1)
             self._team_combo.setItemData(i, team.get("invite_code", ""), Qt.UserRole + 2)
-            if team["id"] == active_team_id:
-                active_index = i
-        self._team_combo.setCurrentIndex(active_index)
         self._team_combo.blockSignals(False)
 
         # Refresh the visual team list on the teams management page
-        self._refresh_teams_list(teams, active_team_id)
+        self._refresh_teams_list(teams)
 
-        # Cache active team name for header display
-        active_name = ""
-        for t in teams:
-            if t["id"] == active_team_id:
-                active_name = t["name"]
-                break
-        self._active_team_name_cache = active_name
-        self.set_sidebar_team(active_name)
-
-        # Go to users page (team is active)
-        if active_team_id:
-            self._switch_page("users")
+        # Cache team info for header display
+        team_count = len(teams)
+        if team_count == 1:
+            self._active_team_name_cache = teams[0]["name"]
+            self.set_sidebar_team(teams[0]["name"])
         else:
-            self._switch_page("teams")
+            self._active_team_name_cache = f"{team_count} Teams"
+            self.set_sidebar_team(f"{team_count} Teams")
+
+        self._switch_page("users")
         self._resize_panel()
 
     def show_manage_team_dialog(self, team_name, team_id, members, invite_code="",
@@ -3677,8 +3598,9 @@ class FloatingPanel(QWidget):
             self._sidebar_peer_mode = ""
             self._update_peer_badge_style("")
 
-    def set_users(self, users, selected_user_id=None):
-        """Replace the user list. users = [{id, name, mode, has_message}, ...]
+    def set_users(self, team_groups, selected_user_id=None):
+        """Replace the user list with team-grouped data.
+        team_groups = [{team_id, team_name, users: [{id, name, mode, has_message}, ...]}, ...]
         Preserves intercom state (connecting/live) for rows that still exist."""
         # Snapshot active states before rebuild
         old_states = {}
@@ -3696,41 +3618,59 @@ class FloatingPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        for u in users:
-            uid = u.get('id', '')
-            row = UserRow(
-                uid,
-                u.get('name', 'Unknown'),
-                u.get('mode', 'GREEN'),
-                u.get('has_message', False)
-            )
-            row.call_clicked.connect(self.call_user_requested.emit)
-            row.intercom_pressed.connect(self.intercom_pressed.emit)
-            row.intercom_released.connect(self.intercom_released.emit)
-            row.user_selected.connect(self._on_user_row_clicked)
-            # Restore intercom state if this row was active
-            if uid in old_states:
-                row.set_state(old_states[uid])
-            self._user_rows[uid] = row
-            self._user_layout.insertWidget(self._user_layout.count() - 1, row)
+        all_users = []  # flat list for favorites/strip
+        total_online = 0
 
-        online_count = sum(1 for u in users if u.get('mode') != 'OFFLINE')
-        self.online_count.setText(str(online_count))
+        for group in team_groups:
+            team_name = group.get('team_name', 'Team')
+            users = group.get('users', [])
+            if not users:
+                continue
+
+            # ── Team section header ──
+            header = QLabel(team_name.upper())
+            header.setStyleSheet(f"""
+                font-size: 10px; font-weight: 700; color: {DARK['TEXT_DIM']};
+                letter-spacing: 1px; padding: 8px 12px 2px 12px; border: none;
+            """)
+            self._user_layout.insertWidget(self._user_layout.count() - 1, header)
+
+            for u in users:
+                uid = u.get('id', '')
+                row = UserRow(
+                    uid,
+                    u.get('name', 'Unknown'),
+                    u.get('mode', 'GREEN'),
+                    u.get('has_message', False)
+                )
+                row.call_clicked.connect(self.call_user_requested.emit)
+                row.intercom_pressed.connect(self.intercom_pressed.emit)
+                row.intercom_released.connect(self.intercom_released.emit)
+                row.user_selected.connect(self._on_user_row_clicked)
+                if uid in old_states:
+                    row.set_state(old_states[uid])
+                self._user_rows[uid] = row
+                self._user_layout.insertWidget(self._user_layout.count() - 1, row)
+                all_users.append(u)
+                if u.get('mode') != 'OFFLINE':
+                    total_online += 1
+
+        self.online_count.setText(str(total_online))
 
         # Cache users (needed by _update_favorites and _sync_fav_selection)
-        self._cached_users = list(users)
+        self._cached_users = list(all_users)
 
         # Update sidebar favorites and sync selection highlight
         if selected_user_id:
             self._fav_selected_uid = selected_user_id
-        self._update_favorites(users)
+        self._update_favorites(all_users)
         self._sync_fav_selection(self._fav_selected_uid)
 
         # Update compact strip avatars
         if selected_user_id:
             self._strip_selected_uid = selected_user_id
         if hasattr(self, '_strip_avatar_buttons'):
-            self._update_strip_avatars(users)
+            self._update_strip_avatars(all_users)
 
         # Dynamic panel height based on visible content
         if not self._pinned and not self._is_onboarding:
@@ -3866,9 +3806,7 @@ class FloatingPanel(QWidget):
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: rgba(226, 42, 26, 0.15); border: 2px solid {DARK['DANGER']};
-                    border-right: none;
-                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
-                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    border-radius: 8px;
                     padding: 8px; font-size: 12px;
                     font-weight: 700; color: {DARK['DANGER']};
                     letter-spacing: 0.5px;
@@ -3890,9 +3828,7 @@ class FloatingPanel(QWidget):
                 QPushButton {{
                     background: {DARK['BG_RAISED']};
                     border: 1px solid {DARK['BORDER']};
-                    border-right: none;
-                    border-top-left-radius: 8px; border-bottom-left-radius: 8px;
-                    border-top-right-radius: 0; border-bottom-right-radius: 0;
+                    border-radius: 8px;
                     padding: 8px; font-size: 12px;
                     font-weight: 600; color: {DARK['TEXT_FAINT']};
                     letter-spacing: 0.5px;

@@ -666,14 +666,14 @@ class NetworkManager:
 
     # ── Presence Connection ──────────────────────────────────────
 
-    def connect_presence(self, relay_host, relay_port, display_name, user_id, mode="GREEN", team_id=""):
+    def connect_presence(self, relay_host, relay_port, display_name, user_id, mode="GREEN", team_ids=None):
         """Connect to the relay server's presence channel (with TLS if enabled)"""
         self.relay_host = relay_host
         self.relay_port = relay_port
         self.display_name = display_name
         self.user_id = user_id
         self._presence_mode = mode
-        self._presence_team_id = team_id
+        self._presence_team_ids = team_ids or []
 
         try:
             raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -690,7 +690,7 @@ class NetworkManager:
                 "name": display_name,
                 "user_id": user_id,
                 "mode": mode,
-                "team_id": team_id,
+                "team_ids": self._presence_team_ids,
                 "auth_key": RELAY_AUTH_KEY,
             }).encode('utf-8')
             self._send_frame_on(self.presence_socket, reg_msg)
@@ -720,28 +720,28 @@ class NetworkManager:
                     pass
             return False
 
-    def update_presence_mode(self, mode, room_code="", team_id=None):
+    def update_presence_mode(self, mode, room_code="", team_ids=None):
         """Notify the presence server of a mode/team change"""
         self._presence_mode = mode  # Track for reconnection
-        if team_id is not None:
-            self._presence_team_id = team_id
+        if team_ids is not None:
+            self._presence_team_ids = team_ids
         if not self.presence_connected or not self.presence_socket:
             return
         try:
             payload = {"action": "MODE_UPDATE", "mode": mode}
             if room_code:
                 payload["room"] = room_code
-            if team_id is not None:
-                payload["team_id"] = team_id
+            if team_ids is not None:
+                payload["team_ids"] = team_ids
             msg = json.dumps(payload).encode('utf-8')
             self._send_frame_on(self.presence_socket, msg)
         except Exception as e:
             self._log(f"Presence mode update failed: {e}")
 
-    def update_presence_team(self, team_id):
-        """Switch the user's active team without changing mode."""
-        self._presence_team_id = team_id
-        self.update_presence_mode(self._presence_mode, team_id=team_id)
+    def update_presence_teams(self, team_ids):
+        """Update the user's active teams without changing mode."""
+        self._presence_team_ids = team_ids
+        self.update_presence_mode(self._presence_mode, team_ids=team_ids)
 
     def update_presence_name(self, new_name):
         """Notify the presence server of a display name change."""
@@ -824,34 +824,6 @@ class NetworkManager:
         except Exception as e:
             self._log(f"Presence send failed: {e}")
 
-    def send_page_all(self, file_path, team_id, sender_name):
-        """Broadcast a voice message to all GREEN team members via relay.
-
-        Reads the audio file, base64-encodes it, and sends via the presence
-        socket. The relay forwards to all GREEN members. No call is established.
-        """
-        import base64
-        if not self.presence_connected or not self.presence_socket:
-            self._log("Cannot page all — not connected to presence")
-            return False
-        try:
-            with open(file_path, 'rb') as f:
-                audio_data = f.read()
-            audio_b64 = base64.b64encode(audio_data).decode('ascii')
-            msg = {
-                "action": "PAGE_ALL",
-                "team_id": team_id,
-                "sender_name": sender_name,
-                "audio_b64": audio_b64,
-            }
-            data = json.dumps(msg).encode('utf-8')
-            self._send_frame_on(self.presence_socket, data)
-            self._log(f"Page All sent ({len(audio_data)} bytes)")
-            return True
-        except Exception as e:
-            self._log(f"Page All failed: {e}")
-            return False
-
     def cancel_connection(self, target_user_id=None):
         """Cancel an outgoing connection request"""
         if not self.presence_connected or not self.presence_socket:
@@ -906,11 +878,6 @@ class NetworkManager:
                     if self.presence_callback:
                         self.presence_callback(msg)
 
-                elif msg_type == "PAGE_ALL":
-                    # One-way broadcast message from a teammate
-                    if self.presence_callback:
-                        self.presence_callback(msg)
-
                 elif msg_type == "ERROR":
                     self._log(f"Presence error: {msg.get('message')}")
 
@@ -940,7 +907,7 @@ class NetworkManager:
                     self.relay_host, self.relay_port,
                     self.display_name, self.user_id,
                     self._presence_mode,
-                    getattr(self, '_presence_team_id', ''),
+                    getattr(self, '_presence_team_ids', []),
                 )
                 if success:
                     self._log("Presence reconnected")
