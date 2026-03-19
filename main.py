@@ -51,7 +51,8 @@ class IntercomApp(QObject):
     peer_lost_signal = Signal(str)       # name
     connection_request_signal = Signal(str, str)  # requester_name, ip
     connection_response_signal = Signal(bool)     # accepted or rejected
-    presence_update_signal = Signal(list)          # list of online users
+    presence_update_signal = Signal(list)          # list of online users (flat, old relay compat)
+    _presence_grouped_signal = Signal(dict)         # {team_id: [users]} grouped presence
     presence_request_signal = Signal(str, str, str) # from_name, from_id, room_code (internal)
     call_connected_signal = Signal(str)            # peer_name — call established
     message_received_signal = Signal()              # new voicemail received
@@ -213,6 +214,7 @@ class IntercomApp(QObject):
         self.connection_request_signal.connect(self._show_connection_request)
         self.connection_response_signal.connect(self._handle_connection_response)
         self.presence_update_signal.connect(self._update_online_users)
+        self._presence_grouped_signal.connect(self._update_online_users_grouped)
         self.presence_request_signal.connect(self._show_presence_request)
         self.hotkey_press_signal.connect(self.on_talk_press)
         self.hotkey_release_signal.connect(self.on_talk_release)
@@ -828,9 +830,10 @@ class IntercomApp(QObject):
             teams_dict = msg.get("teams", {})
             if teams_dict:
                 # Filter self from each team's user list
-                for tid in teams_dict:
+                for tid in list(teams_dict.keys()):
                     teams_dict[tid] = [u for u in teams_dict[tid] if u.get("user_id") != self.user_id]
-                self._update_online_users_grouped(teams_dict)
+                # Emit signal to marshal to main thread (can't touch UI from network thread)
+                self._presence_grouped_signal.emit(teams_dict)
                 return
             # Fallback: flat users list (old relay server)
             users = msg.get("users", [])
@@ -954,6 +957,7 @@ class IntercomApp(QObject):
                 teams_dict.setdefault(tid, []).append(user)
         self._update_online_users_grouped(teams_dict)
 
+    @Slot(dict)
     def _update_online_users_grouped(self, teams_dict):
         """Update the panel user list from grouped presence data.
         teams_dict: {team_id: [user_info, ...]}"""
