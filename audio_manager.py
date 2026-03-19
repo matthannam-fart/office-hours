@@ -792,7 +792,10 @@ class AudioManager:
                 chime = np.concatenate([tone1, gap, tone2]).astype(np.float32)
                 mono = (chime * 32767).astype(np.int16)
                 stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
-                self._jitter_buf.push(stereo)
+                # Push in frame-sized chunks so jitter buffer can serve them
+                frame_size = self.active_frame_size
+                for i in range(0, len(stereo), frame_size):
+                    self._jitter_buf.push(stereo[i:i + frame_size])
             else:
                 # sd.play() path: use 44100 Hz stereo for broad device compatibility
                 play_sr = 44100
@@ -849,7 +852,10 @@ class AudioManager:
                 signal = _generate(SAMPLE_RATE)
                 mono = (signal * 32767).astype(np.int16)
                 shaped = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
-                self._jitter_buf.push(shaped)
+                # Push in frame-sized chunks so jitter buffer can serve them
+                frame_size = self.active_frame_size
+                for i in range(0, len(shaped), frame_size):
+                    self._jitter_buf.push(shaped[i:i + frame_size])
             else:
                 play_sr = 44100
                 signal = _generate(play_sr)
