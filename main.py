@@ -92,6 +92,7 @@ class IntercomApp(QObject):
         self.flash_state = False
         self.incoming_message_path = None
         self._message_queue = []       # List of message file paths (inbox)
+        self._user_messages = {}       # Per-user message queues: {user_id: [path, ...]}
         self._playing_message = False
         self.pending_connection = False
         self.peer_talking = False
@@ -537,13 +538,18 @@ class IntercomApp(QObject):
 
     # ── Intercom: Click to Select + PTT ──────────────────────────
     def _on_user_selected(self, user_id):
-        """User clicked a row to select as PTT target."""
+        """User clicked a row to select as PTT target, or play messages if they have any."""
         if not user_id:
             # Deselected — clear target
             self._intercom_target_id = None
             self._intercom_ptt_held = False
             self.panel.set_connection(False)
             self.log("Target cleared")
+            return
+
+        # If this user has unread messages, play them
+        if user_id in self._user_messages and self._user_messages[user_id]:
+            self._play_user_messages(user_id)
             return
 
         target = self.online_users.get(user_id, {})
@@ -1321,8 +1327,48 @@ class IntercomApp(QObject):
         if self.has_message or self._message_queue:
             self._on_play_message()
 
+    def _play_user_messages(self, user_id):
+        """Play all messages from a specific user, then clear their message state."""
+        if self._playing_message:
+            return
+        paths = self._user_messages.get(user_id, [])
+        if not paths:
+            return
+
+        self._playing_message = True
+        target = self.online_users.get(user_id, {})
+        target_name = target.get("name", "Unknown")
+        count = len(paths)
+        self.log(f"Playing {count} message{'s' if count > 1 else ''} from {target_name}...")
+
+        # Remove from global queue too
+        for p in paths:
+            if p in self._message_queue:
+                self._message_queue.remove(p)
+
+        def _play():
+            while paths:
+                path = paths.pop(0)
+                try:
+                    self.audio.play_file(path)
+                    os.remove(path)
+                except Exception as e:
+                    print(f"[Message] Play error: {e}")
+            self._playing_message = False
+            # Clear this user's messages
+            self._user_messages.pop(user_id, None)
+            # Check if any messages remain globally
+            if not self._user_messages:
+                self.has_message = False
+                self.is_flashing = False
+                self.incoming_message_path = None
+            QTimer.singleShot(0, lambda: self.panel.set_user_state(user_id, "idle"))
+            QTimer.singleShot(0, self._broadcast_deck_state)
+
+        threading.Thread(target=_play, daemon=True).start()
+
     def _on_play_message(self):
-        """Play all queued messages in succession."""
+        """Play all queued messages in succession (legacy / play-all fallback)."""
         if self._playing_message:
             return  # Already playing
         if not self._message_queue:
@@ -1340,7 +1386,6 @@ class IntercomApp(QObject):
         count = len(self._message_queue)
         self.log(f"Playing {count} message{'s' if count > 1 else ''}...")
 
-        import threading
         def _play_all():
             while self._message_queue:
                 path = self._message_queue.pop(0)
@@ -1353,6 +1398,10 @@ class IntercomApp(QObject):
             self._playing_message = False
             self.incoming_message_path = None
             self.has_message = False
+            # Clear all per-user messages too
+            for uid in list(self._user_messages.keys()):
+                self._user_messages.pop(uid, None)
+                QTimer.singleShot(0, lambda u=uid: self.panel.set_user_state(u, "idle"))
             QTimer.singleShot(0, self._broadcast_deck_state)
 
         threading.Thread(target=_play_all, daemon=True).start()
@@ -1363,6 +1412,7 @@ class IntercomApp(QObject):
         import time as _time
 
         from_name = msg.get("from_name", "Someone")
+        from_id = msg.get("from_id", "")
         audio_b64 = msg.get("audio_b64", "")
         if not audio_b64:
             return
@@ -1375,6 +1425,12 @@ class IntercomApp(QObject):
             self.incoming_message_path = fn
             self.has_message = True
             self.is_flashing = True
+            # Track per-user
+            if from_id:
+                if from_id not in self._user_messages:
+                    self._user_messages[from_id] = []
+                self._user_messages[from_id].append(fn)
+                QTimer.singleShot(0, lambda uid=from_id: self.panel.set_user_state(uid, "message"))
             self.update_deck_display()
             self.audio.play_notification()
             self.message_received_signal.emit()
@@ -1387,6 +1443,7 @@ class IntercomApp(QObject):
         import time as _time
 
         import soundfile as sf
+        sender_id = self._connected_peer_id or ""
         try:
             audio = np.concatenate(self._vm_buffer)
             fn = os.path.join(_config_dir(), f"msg_{int(_time.time()*1000)}.wav")
@@ -1394,6 +1451,13 @@ class IntercomApp(QObject):
             self._message_queue.append(fn)
             self.incoming_message_path = fn
             self.has_message = True
+            # Track per-user
+            if sender_id:
+                if sender_id not in self._user_messages:
+                    self._user_messages[sender_id] = []
+                self._user_messages[sender_id].append(fn)
+                # Set user row to MESSAGE state
+                QTimer.singleShot(0, lambda uid=sender_id: self.panel.set_user_state(uid, "message"))
             self.log(f"Voicemail received ({len(self._vm_buffer)} chunks)")
             self.message_received_signal.emit()
             self.update_deck_display()
@@ -2247,6 +2311,12 @@ class IntercomApp(QObject):
 
 
 def main():
+    # Enable consistent scaling across different monitor DPIs.
+    # Must be set before QApplication is created.
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # Keep running with just tray icon
     # Load and set Focal as the global app font

@@ -17,11 +17,15 @@ from datetime import UTC, datetime
 from config import SUPABASE_ANON_KEY, SUPABASE_URL, log
 
 
+_refresh_failures = 0
+_MAX_REFRESH_RETRIES = 3
+
 def _get_auth_token():
     """Get the current auth access token, refreshing if expired.
     Returns the access token string, or None to fall back to anon key."""
+    global _refresh_failures
     try:
-        from user_settings import get_auth_session, save_auth_session
+        from user_settings import clear_auth_session, get_auth_session, save_auth_session
         session = get_auth_session()
         if not session or not session.get("access_token"):
             return None
@@ -29,6 +33,10 @@ def _get_auth_token():
         # Check if token is expired (with 60s buffer)
         expires_at = session.get("expires_at", 0)
         if expires_at and time.time() > (expires_at - 60):
+            # Already failed too many times — don't spam the server
+            if _refresh_failures >= _MAX_REFRESH_RETRIES:
+                return None
+
             # Token expired or about to expire — try to refresh
             refresh_token = session.get("refresh_token")
             if refresh_token:
@@ -37,6 +45,7 @@ def _get_auth_token():
                     new_session = auth_manager.refresh_session(refresh_token)
                     if new_session and new_session.get("access_token"):
                         # Save the refreshed session
+                        _refresh_failures = 0
                         user = new_session.get("user", {})
                         save_auth_session({
                             "access_token": new_session["access_token"],
@@ -47,7 +56,11 @@ def _get_auth_token():
                         })
                         return new_session["access_token"]
                 except Exception as e:
-                    log.warning(f"Token refresh failed: {e}")
+                    _refresh_failures += 1
+                    log.warning(f"Token refresh failed ({_refresh_failures}/{_MAX_REFRESH_RETRIES}): {e}")
+                    if _refresh_failures >= _MAX_REFRESH_RETRIES:
+                        log.warning("Max refresh retries reached — clearing session. User must re-login.")
+                        clear_auth_session()
             return None  # Fall back to anon key if refresh fails
 
         return session["access_token"]

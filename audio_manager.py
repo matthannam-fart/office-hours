@@ -736,8 +736,9 @@ class AudioManager:
         self.start_listening()
 
     def play_file(self, filename):
-        """Play a WAV file. If the playback stream is active, inject into
-        jitter buffer to avoid PortAudio double-free."""
+        """Play a WAV file. If the playback stream is active, feed into
+        jitter buffer at real-time pace to avoid PortAudio double-free."""
+        import time as _time
         try:
             data, fs = sf.read(filename)
             if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
@@ -747,7 +748,32 @@ class AudioManager:
                     data = np.column_stack([data, data])
                 elif data.ndim == 1:
                     data = data.reshape(-1, 1)
-                self._jitter_buf.push(data)
+
+                # Resample if file sample rate differs from stream rate
+                if fs != SAMPLE_RATE:
+                    n_samples = int(len(data) * SAMPLE_RATE / fs)
+                    indices = np.linspace(0, len(data) - 1, n_samples).astype(int)
+                    data = data[indices]
+
+                # Feed frame-sized chunks at real-time pace so the
+                # jitter buffer (maxlen=15) doesn't overflow.
+                frame_size = self.active_frame_size
+                frame_dur = frame_size / SAMPLE_RATE  # ~20ms per frame
+                start = _time.monotonic()
+                for idx, i in enumerate(range(0, len(data), frame_size)):
+                    chunk = data[i:i + frame_size]
+                    self._jitter_buf.push(chunk)
+                    # Pace delivery: sleep until this frame's scheduled time,
+                    # staying ~2 frames ahead of the playback callback.
+                    target = start + (idx + 1) * frame_dur
+                    ahead = target - _time.monotonic()
+                    if ahead > 0 and idx > 1:
+                        _time.sleep(ahead)
+
+                # Wait for the last frames to drain
+                remaining = len(self._jitter_buf._buf)
+                if remaining > 0:
+                    _time.sleep(remaining * frame_dur + 0.05)
             else:
                 sd.play(data, fs, device=self.output_device)
                 sd.wait()
@@ -792,31 +818,49 @@ class AudioManager:
             self.log(f"Notification sound error: {e}")
 
     def play_talk_ended(self):
-        """Play a gentle descending tone when the other user stops talking.
+        """Play a gentle descending two-tone chirp when the other user stops talking.
         If the playback stream is active, inject into jitter buffer to avoid
         PortAudio double-free from concurrent sd.play()."""
         try:
-            duration = 0.12
+            # Two clean fixed-frequency tones (descending) with a tiny gap —
+            # avoids the garbled artifacts of a frequency sweep.
+            tone_dur = 0.08
+            gap_dur = 0.03
+            freq_hi = 659.0   # E5
+            freq_lo = 523.0   # C5
+            amplitude = 0.18
+
+            def _generate(sr):
+                n1 = int(sr * tone_dur)
+                n2 = int(sr * tone_dur)
+                n_gap = int(sr * gap_dur)
+                t1 = np.arange(n1) / sr
+                t2 = np.arange(n2) / sr
+                # Apply fade-in/out envelope to each tone to avoid clicks
+                fade = min(int(sr * 0.008), n1 // 4)  # 8ms fade
+                env1 = np.ones(n1, dtype=np.float32)
+                env1[:fade] = np.linspace(0, 1, fade)
+                env1[-fade:] = np.linspace(1, 0, fade)
+                env2 = np.ones(n2, dtype=np.float32)
+                env2[:fade] = np.linspace(0, 1, fade)
+                env2[-fade:] = np.linspace(1, 0, fade)
+                tone1 = amplitude * env1 * np.sin(2 * np.pi * freq_hi * t1)
+                tone2 = amplitude * env2 * np.sin(2 * np.pi * freq_lo * t2)
+                gap = np.zeros(n_gap, dtype=np.float32)
+                return np.concatenate([tone1, gap, tone2]).astype(np.float32)
+
             if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
-                # Jitter buffer path: use SAMPLE_RATE (matches the stream)
-                t = np.linspace(0, duration, int(SAMPLE_RATE * duration), False)
-                freq = np.linspace(659, 523, len(t))
-                envelope = np.linspace(0.15, 0.0, len(t))
-                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-                mono = (tone * 32767).astype(np.int16)
-                stereo = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
-                self._jitter_buf.push(stereo)
+                signal = _generate(SAMPLE_RATE)
+                mono = (signal * 32767).astype(np.int16)
+                shaped = np.column_stack([mono, mono]) if CHANNELS == 2 else mono.reshape(-1, 1)
+                self._jitter_buf.push(shaped)
             else:
-                # sd.play() path: use 44100 Hz stereo for broad device compatibility
                 play_sr = 44100
-                t = np.linspace(0, duration, int(play_sr * duration), False)
-                freq = np.linspace(659, 523, len(t))
-                envelope = np.linspace(0.15, 0.0, len(t))
-                tone = (envelope * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-                stereo_tone = np.column_stack([tone, tone])
+                signal = _generate(play_sr)
+                stereo_signal = np.column_stack([signal, signal])
                 def _play():
                     try:
-                        sd.play(stereo_tone, play_sr, device=self.output_device)
+                        sd.play(stereo_signal, play_sr, device=self.output_device)
                         sd.wait()
                     except Exception as e:
                         self.log(f"Talk-ended sound error: {e}")

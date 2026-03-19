@@ -3225,7 +3225,7 @@ class FloatingPanel(QWidget):
 
     # ── Compact Vertical Strip ────────────────────────────────────
     def _build_compact_strip(self):
-        """Build a sidebar-width vertical strip: OH logo, status btn, PTT btn."""
+        """Build a sidebar-width vertical strip: OH logo, status btn, user avatars, PTT btn."""
         strip = QFrame(self._frame)
         strip.setObjectName("compactStrip")
         strip.setStyleSheet(f"""
@@ -3279,21 +3279,35 @@ class FloatingPanel(QWidget):
         self._strip_status_dot.clicked.connect(self._show_strip_mode_menu)
         v.addWidget(self._strip_status_dot, 0, Qt.AlignCenter)
 
+        # ── Separator before avatars ──
+        sep2 = QFrame()
+        sep2.setFixedHeight(1)
+        sep2.setFixedWidth(STRIP_W - 16)
+        sep2.setStyleSheet(f"background: {DARK['BORDER']};")
+        v.addWidget(sep2, 0, Qt.AlignCenter)
+
+        # ── User avatar area (populated dynamically) ──
+        self._strip_avatar_container = QWidget()
+        self._strip_avatar_layout = QVBoxLayout(self._strip_avatar_container)
+        self._strip_avatar_layout.setContentsMargins(0, 0, 0, 0)
+        self._strip_avatar_layout.setSpacing(6)
+        self._strip_avatar_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        v.addWidget(self._strip_avatar_container, 0, Qt.AlignCenter)
+
+        # ── Separator before PTT ──
+        sep3 = QFrame()
+        sep3.setFixedHeight(1)
+        sep3.setFixedWidth(STRIP_W - 16)
+        sep3.setStyleSheet(f"background: {DARK['BORDER']};")
+        self._strip_ptt_sep = sep3
+        v.addWidget(sep3, 0, Qt.AlignCenter)
+
         # ── PTT button (outlined, same size as status) ──
         self._strip_ptt_btn = QPushButton("🎙")
         self._strip_ptt_btn.setFixedSize(40, 40)
         self._strip_ptt_btn.setCursor(Qt.PointingHandCursor)
         self._strip_ptt_btn.setToolTip("Push to Talk")
-        self._strip_ptt_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {DARK['TEAL']};
-                border-radius: 8px;
-                font-size: 16px;
-            }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
-            QPushButton:pressed {{ background: {DARK['ACCENT']}; }}
-        """)
+        self._update_strip_ptt_style(active=False)
         self._strip_ptt_btn.pressed.connect(
             lambda: self.ptt_pressed.emit()
         )
@@ -3304,9 +3318,31 @@ class FloatingPanel(QWidget):
 
         v.addStretch()
 
-        # Keep avatar dict for compatibility
         self._strip_avatar_buttons: dict[str, QPushButton] = {}
         return strip
+
+    def _update_strip_ptt_style(self, active=False):
+        """Style the strip PTT button — red glow when active, teal outline at rest."""
+        if active:
+            self._strip_ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(226, 42, 26, 0.2);
+                    border: 2px solid {DARK['DANGER']};
+                    border-radius: 8px;
+                    font-size: 16px;
+                }}
+            """)
+        else:
+            self._strip_ptt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {DARK['TEAL']};
+                    border-radius: 8px;
+                    font-size: 16px;
+                }}
+                QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+                QPushButton:pressed {{ background: {DARK['ACCENT']}; }}
+            """)
 
     def _update_strip_status_dot(self):
         """Update the strip status button to reflect current mode (matches full panel orb)."""
@@ -3377,8 +3413,41 @@ class FloatingPanel(QWidget):
         ))
 
     def _update_strip_avatars(self, users):
-        """No-op — compact strip no longer shows avatars."""
-        pass
+        """Populate the compact strip with user avatar buttons (same as sidebar favorites)."""
+        # Clear existing avatar buttons
+        for btn in self._strip_avatar_buttons.values():
+            btn.deleteLater()
+        self._strip_avatar_buttons = {}
+
+        for u in users:
+            if u.get('mode') == 'OFFLINE':
+                continue
+            uid = u.get('id', '')
+            name = u.get('name', '?')
+            mode = u.get('mode', 'GREEN')
+            initials = self._peer_initials(name)
+            if not initials:
+                continue
+            btn = QPushButton(initials)
+            btn.setFixedSize(STRIP_AVATAR_SIZE, STRIP_AVATAR_SIZE)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(name)
+            is_selected = (uid == self._strip_selected_uid)
+            self._style_strip_avatar(btn, mode, is_selected)
+            btn.clicked.connect(
+                lambda checked=False, u_id=uid: self._on_strip_avatar_clicked(u_id)
+            )
+            self._strip_avatar_layout.addWidget(btn, 0, Qt.AlignCenter)
+            self._strip_avatar_buttons[uid] = btn
+
+        # Hide/show the separator before PTT based on whether we have avatars
+        has_avatars = len(self._strip_avatar_buttons) > 0
+        if hasattr(self, '_strip_ptt_sep'):
+            self._strip_ptt_sep.setVisible(has_avatars)
+
+        # Resize strip if currently pinned
+        if self._pinned:
+            self._resize_compact_strip()
 
     def _style_strip_avatar(self, btn, mode, selected=False):
         """Apply styling to a strip avatar button. Selected gets a bright mode-colored ring."""
@@ -3406,6 +3475,16 @@ class FloatingPanel(QWidget):
         else:
             self._strip_selected_uid = user_id
             self.user_selected.emit(user_id)
+        # Update PTT tooltip to show selected user
+        sel_name = ""
+        for u in self._cached_users:
+            if u.get('id') == self._strip_selected_uid:
+                sel_name = u.get('name', '')
+                break
+        if sel_name:
+            self._strip_ptt_btn.setToolTip(f"Push to Talk — {sel_name}")
+        else:
+            self._strip_ptt_btn.setToolTip("Push to Talk")
         # Re-style all avatars
         for uid, btn in self._strip_avatar_buttons.items():
             # Find mode from cached users
@@ -3417,10 +3496,22 @@ class FloatingPanel(QWidget):
             self._style_strip_avatar(btn, mode, uid == self._strip_selected_uid)
 
     def _calc_strip_height(self):
-        """Fixed strip height: OH logo (28) + sep (1) + status (40) + PTT (40) + margins/spacing."""
-        # margins top/bottom (20) + OH (28) + spacing (8) + sep (1) + spacing (8)
-        # + status (40) + spacing (8) + PTT (40) + bottom padding
-        return 170
+        """Dynamic strip height based on number of online user avatars."""
+        # Base: margins (20) + logo (28) + spacing (8) + sep (1) + spacing (8)
+        #        + status (40) + spacing (8) + sep2 (1) + spacing (8) + PTT (40) + bottom
+        base = 20 + 28 + 8 + 1 + 8 + 40 + 8 + 1 + 8 + 40 + 10
+        # Each avatar: STRIP_AVATAR_SIZE + spacing (6)
+        n_avatars = len(self._strip_avatar_buttons)
+        if n_avatars > 0:
+            avatar_h = n_avatars * (STRIP_AVATAR_SIZE + 6) + 8  # +8 for sep before PTT
+        else:
+            avatar_h = 0
+        return base + avatar_h
+
+    def _resize_compact_strip(self):
+        """Recalculate and apply strip height while pinned."""
+        strip_h = self._calc_strip_height()
+        self.setFixedHeight(strip_h)
 
     # ══════════════════════════════════════════════════════════════
     #  Public API — called by IntercomApp
@@ -3770,7 +3861,7 @@ class FloatingPanel(QWidget):
         self._resize_panel()
 
     def set_ptt_active(self, active):
-        """Visual feedback when PTT is held."""
+        """Visual feedback when PTT is held — both main button and compact strip."""
         if active:
             self.ptt_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -3786,6 +3877,9 @@ class FloatingPanel(QWidget):
         else:
             # Restore normal style
             self._update_ptt_style()
+        # Also update the compact strip PTT button
+        if hasattr(self, '_strip_ptt_btn'):
+            self._update_strip_ptt_style(active=active)
 
     def set_ptt_locked(self, locked):
         """Disable PTT while the peer is talking."""
@@ -4686,7 +4780,11 @@ class FloatingPanel(QWidget):
             self.setFixedWidth(STRIP_W + 2)  # +2 for border
             self.setFixedHeight(strip_h)
             # Float on top of all windows with 90% opacity
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            # Re-set all flags explicitly — setWindowFlags recreates the native window on macOS
+            self.setWindowFlags(
+                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            )
+            self.setAttribute(Qt.WA_TranslucentBackground)
             self.setWindowOpacity(0.9)
             self.show()
             # Move to top right corner of screen
@@ -4694,7 +4792,10 @@ class FloatingPanel(QWidget):
             self.move(screen.right() - self.width() - 8, screen.top() + 8)
         else:
             # Expand to full panel — restore normal window flags and opacity
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.setWindowFlags(
+                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            )
+            self.setAttribute(Qt.WA_TranslucentBackground)
             self.setWindowOpacity(1.0)
             self.show()
             self.setMaximumWidth(16777215)  # Remove fixed width

@@ -254,6 +254,7 @@ class UserRow(QWidget):
     STATE_SELECTED = "selected"
     STATE_CONNECTING = "connecting"
     STATE_LIVE = "live"
+    STATE_MESSAGE = "message"
 
     def __init__(self, user_id, name, mode='GREEN', has_message=False, parent=None):
         super().__init__(parent)
@@ -349,7 +350,16 @@ class UserRow(QWidget):
         if self._state != self.STATE_SELECTED:
             self._glow_timer.stop()
 
-        if self._state == self.STATE_LIVE:
+        if self._state == self.STATE_MESSAGE:
+            self.setStyleSheet("""
+                UserRow {
+                    background: rgba(230, 175, 0, 0.12);
+                    border: 1px solid rgba(230, 175, 0, 0.30);
+                    border-radius: 10px;
+                }
+            """)
+            self.name_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {DARK['WARN']}; border: none;")
+        elif self._state == self.STATE_LIVE:
             self.setStyleSheet("""
                 UserRow {
                     background: rgba(229, 57, 53, 0.12);
@@ -394,7 +404,17 @@ class UserRow(QWidget):
         """Update visual state: idle, selected, connecting, or live."""
         self._state = state
         self._apply_style()
-        if state == self.STATE_LIVE:
+        # Hide msg_dot unless entering message state
+        if state != self.STATE_MESSAGE:
+            self.msg_dot.setVisible(False)
+
+        if state == self.STATE_MESSAGE:
+            self._status_lbl.setText("MESSAGE")
+            self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['WARN']}; border: none;")
+            self._status_lbl.setVisible(True)
+            self._eq.setVisible(False)
+            self.msg_dot.setVisible(True)
+        elif state == self.STATE_LIVE:
             self._status_lbl.setText("LIVE")
             self._status_lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {DARK['DANGER']}; border: none;")
             self._status_lbl.setVisible(True)
