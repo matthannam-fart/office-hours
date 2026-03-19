@@ -308,7 +308,6 @@ class IntercomApp(QObject):
         self.panel.incognito_toggled.connect(self._on_incognito_toggle)
         self.panel.dark_mode_toggled.connect(self._on_dark_mode_toggle)
         self.panel.name_change_requested.connect(self._on_name_changed)
-        self.panel.team_changed.connect(self._on_team_changed)
         self.panel.create_team_requested.connect(self._on_create_team)
         self.panel.manage_team_requested.connect(self._on_manage_team)
         self.panel.join_code_requested.connect(self._on_join_code)
