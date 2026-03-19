@@ -1778,6 +1778,49 @@ class FloatingPanel(QWidget):
         create_btn.clicked.connect(self._on_create_team_click)
         af.addWidget(create_btn)
 
+        # ── Join with code ──
+        divider_row = QHBoxLayout()
+        divider_row.setContentsMargins(0, 0, 0, 0)
+        line_l = QFrame(); line_l.setFrameShape(QFrame.HLine); line_l.setStyleSheet(f"color: {DARK['BORDER']};")
+        line_r = QFrame(); line_r.setFrameShape(QFrame.HLine); line_r.setStyleSheet(f"color: {DARK['BORDER']};")
+        or_lbl = QLabel("or join with code")
+        or_lbl.setStyleSheet(f"color: {DARK['TEXT_FAINT']}; font-size: 10px; border: none;")
+        or_lbl.setAlignment(Qt.AlignCenter)
+        divider_row.addWidget(line_l, 1)
+        divider_row.addWidget(or_lbl)
+        divider_row.addWidget(line_r, 1)
+        af.addLayout(divider_row)
+
+        code_row = QHBoxLayout()
+        code_row.setSpacing(6)
+        self._teams_code_input = QLineEdit()
+        self._teams_code_input.setPlaceholderText("VOX-XXXXX")
+        self._teams_code_input.setAlignment(Qt.AlignCenter)
+        self._teams_code_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 8px; padding: 8px; font-size: 12px;
+                font-weight: 600; letter-spacing: 2px; color: {DARK['TEXT']};
+            }}
+            QLineEdit:focus {{ border-color: {DARK['TEXT_FAINT']}; }}
+        """)
+        self._teams_code_input.setMaxLength(10)
+        code_row.addWidget(self._teams_code_input, 1)
+
+        join_btn = QPushButton("Join")
+        join_btn.setCursor(Qt.PointingHandCursor)
+        join_btn.setFixedSize(54, 34)
+        join_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['GREEN']}; color: white; border: none;
+                border-radius: 8px; font-size: 12px; font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #2bbd6e; }}
+        """)
+        join_btn.clicked.connect(self._on_teams_page_join_click)
+        code_row.addWidget(join_btn)
+        af.addLayout(code_row)
+
         # Leave Team button
         self._lobby_leave_btn = QPushButton("Leave Team")
         self._lobby_leave_btn.setCursor(Qt.PointingHandCursor)
@@ -1864,7 +1907,14 @@ class FloatingPanel(QWidget):
         """User clicked Select on a team in the lobby page."""
         self.team_selected_from_lobby.emit(team_id, team_name)
 
-    # ── Status Bar (bottom of content) — PTT + Page All ──────────
+    def _on_teams_page_join_click(self):
+        """User clicked Join on the teams management page."""
+        code = self._teams_code_input.text().strip().upper()
+        if code:
+            self._teams_code_input.clear()
+            self.join_code_requested.emit(code)
+
+    # ── Status Bar (bottom of content) — PTT ─────────────────────
     def _build_status_bar(self):
         bar = QFrame()
         bar.setStyleSheet("border: none; background: transparent;")
