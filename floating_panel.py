@@ -3291,7 +3291,7 @@ class FloatingPanel(QWidget):
                     font-size: 10px; font-weight: 700;
                     color: {DARK['DANGER']};
                     letter-spacing: 0.5px;
-                    padding-bottom: 5px;
+                    padding-bottom: 4px;
                 }}
             """)
         else:
@@ -3303,7 +3303,7 @@ class FloatingPanel(QWidget):
                     font-size: 10px; font-weight: 700;
                     color: {DARK['TEAL']};
                     letter-spacing: 0.5px;
-                    padding-bottom: 5px;
+                    padding-bottom: 4px;
                 }}
                 QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
                 QPushButton:pressed {{ background: {DARK['ACCENT']}; }}
