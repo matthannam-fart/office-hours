@@ -750,6 +750,9 @@ class IntercomApp(QObject):
         self.audio.set_hotline(False)
         self.audio.stop_streaming()  # Stop any active stream (PTT or hotline)
         self.audio.reset_codec()  # Reset to default codec for next connection
+
+        # Restore pre-call mode (auto-busy → back to green)
+        restore_mode = self._pre_call_mode
         self._clear_busy()
         self.peer_talking = False
         self._connected_peer_id = None  # Clear so they reappear in user list
@@ -758,6 +761,9 @@ class IntercomApp(QObject):
         self.panel.set_hotline_enabled(False)
         self.panel.set_hotline(False)
         self.panel.hide_call()
+
+        if restore_mode and self.mode == self.MODE_YELLOW:
+            self._set_mode(restore_mode)
 
         self.log("Disconnected.")
 
@@ -923,6 +929,11 @@ class IntercomApp(QObject):
     def _on_call_connected(self, peer_name):
         """Called on main thread when call is established."""
         self._intercom_connected = True
+
+        # Auto-switch to busy so others get voicemail while we're in a call
+        if self.mode != self.MODE_YELLOW and self.mode != self.MODE_RED:
+            self._pre_call_mode = self.mode
+            self._set_mode(self.MODE_YELLOW)
 
         # If PTT is physically held while connection completes, start streaming now
         if self._intercom_target_id and self._intercom_ptt_held and not self._intercom_streaming:
