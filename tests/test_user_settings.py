@@ -90,23 +90,24 @@ def test_set_and_get_ptt_hotkey(patched_settings):
     assert user_settings.get_ptt_hotkey() == "F6"
 
 
-def test_active_team_default(patched_settings):
-    """get_active_team() should return None by default."""
+def test_active_team_ids_default(patched_settings):
+    """get_active_team_ids() should return empty list by default."""
     import user_settings
-    assert user_settings.get_active_team() is None
+    assert user_settings.get_active_team_ids() == []
 
 
-def test_set_and_get_active_team(patched_settings):
+def test_set_and_get_active_team_ids(patched_settings):
     import user_settings
-    user_settings.set_active_team("team-abc-123")
-    assert user_settings.get_active_team() == "team-abc-123"
+    user_settings.set_active_team_ids(["team-abc", "team-xyz"])
+    assert user_settings.get_active_team_ids() == ["team-abc", "team-xyz"]
 
 
-def test_active_team_name(patched_settings):
+def test_active_team_ids_roundtrip(patched_settings):
     import user_settings
-    assert user_settings.get_active_team_name() is None
-    user_settings.set_active_team_name("My Team")
-    assert user_settings.get_active_team_name() == "My Team"
+    user_settings.set_active_team_ids(["one"])
+    assert user_settings.get_active_team_ids() == ["one"]
+    user_settings.set_active_team_ids([])
+    assert user_settings.get_active_team_ids() == []
 
 
 def test_deck_guide_dismissed_default(patched_settings):

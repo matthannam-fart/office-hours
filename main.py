@@ -31,6 +31,7 @@ from ui_constants import COLORS
 from user_settings import (
     _config_dir,
     clear_auth_session,
+    get_active_team_ids,
     get_auth_session,
     get_deck_guide_dismissed,
     get_display_name,
@@ -38,6 +39,7 @@ from user_settings import (
     get_user_id,
     is_logged_in,
     save_auth_session,
+    set_active_team_ids,
     set_deck_guide_dismissed,
     set_display_name,
 )
@@ -300,6 +302,7 @@ class IntercomApp(QObject):
         self.panel.intercom_released.connect(self._on_intercom_release)
         self.panel.open_line_requested.connect(self._on_open_line)
         self.panel.leave_message_requested.connect(self._on_leave_message)
+        self.panel.team_presence_toggled.connect(self._on_team_presence_toggled)
         self.panel.user_selected.connect(self._on_user_selected)
         self.panel.leave_requested.connect(self.do_disconnect)
         self.panel.accept_call_requested.connect(self._on_accept_call)
@@ -859,8 +862,10 @@ class IntercomApp(QObject):
             # Still show lobby even if Supabase fails
             self._teams_loaded_signal.emit()
 
-        # Connect to presence with all joined teams
-        self.active_team_ids = [t["id"] for t in self.my_teams]
+        # Connect to presence — restore saved active teams or default to all
+        all_ids = [t["id"] for t in self.my_teams]
+        saved = get_active_team_ids()
+        self.active_team_ids = [tid for tid in saved if tid in all_ids] if saved else all_ids
         try:
             success = self.network.connect_presence(
                 RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
@@ -1560,11 +1565,22 @@ class IntercomApp(QObject):
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _sync_team_presence(self):
-        """Update relay with current team list and refresh members."""
-        self.active_team_ids = [t["id"] for t in self.my_teams]
+        """Update relay with current active teams and refresh members."""
         self.network.update_presence_teams(self.active_team_ids)
+        set_active_team_ids(self.active_team_ids)
         self._fetch_team_members()
         self._refilter_online_users()
+        self.panel.set_teams(self.my_teams, active_team_ids=self.active_team_ids)
+
+    def _on_team_presence_toggled(self, team_id, active):
+        """User toggled a team's presence on/off from the Teams page."""
+        if active:
+            if team_id not in self.active_team_ids:
+                self.active_team_ids.append(team_id)
+        else:
+            if team_id in self.active_team_ids:
+                self.active_team_ids.remove(team_id)
+        self._sync_team_presence()
 
     def _hotkey_talk_press(self):
         """Called from pynput thread — emit signal to run on Qt thread."""
@@ -1887,13 +1903,20 @@ class IntercomApp(QObject):
     @Slot()
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded.
-        Auto-selects if the user has exactly one team; otherwise shows lobby."""
+        Restores saved active team selections, defaulting to all active."""
         if self.my_teams:
-            # Has teams — go directly to users view with all teams active
-            self.active_team_ids = [t["id"] for t in self.my_teams]
+            all_ids = {t["id"] for t in self.my_teams}
+            # Restore saved active teams (intersect with current teams)
+            saved = set(get_active_team_ids())
+            if saved:
+                self.active_team_ids = list(all_ids & saved)
+            else:
+                # First launch or no saved state — all teams active
+                self.active_team_ids = list(all_ids)
+            set_active_team_ids(self.active_team_ids)
             self.network.update_presence_teams(self.active_team_ids)
             self._fetch_team_members()
-            self.panel.set_teams(self.my_teams)
+            self.panel.set_teams(self.my_teams, active_team_ids=self.active_team_ids)
         else:
             # No teams — show welcome/lobby
             self.panel.set_teams(self.my_teams, force_lobby=True)
@@ -1955,7 +1978,6 @@ class IntercomApp(QObject):
         Called via signal from background threads after create/join/approve."""
         self._lobby_refresh_timer.stop()  # Stop polling — user picked a team
         self._sync_team_presence()
-        self.panel.set_teams(self.my_teams)
 
     @Slot(str, str)
     def _show_invite_prompt(self, team_name, invite_code):
@@ -1992,7 +2014,9 @@ class IntercomApp(QObject):
                     "role": "admin",
                 }
                 self.my_teams.append(team_entry)
-                self.active_team_ids = [t["id"] for t in self.my_teams]
+                if result["id"] not in self.active_team_ids:
+                    self.active_team_ids.append(result["id"])
+                set_active_team_ids(self.active_team_ids)
                 self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
@@ -2020,7 +2044,9 @@ class IntercomApp(QObject):
                     "role": "member",
                 }
                 self.my_teams.append(team_entry)
-                self.active_team_ids = [t["id"] for t in self.my_teams]
+                if result["id"] not in self.active_team_ids:
+                    self.active_team_ids.append(result["id"])
+                set_active_team_ids(self.active_team_ids)
                 self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
@@ -2101,7 +2127,6 @@ class IntercomApp(QObject):
         All teams are active simultaneously, so this just switches the UI."""
         self.log(f"Selected team: {team_name}")
         self._sync_team_presence()
-        self.panel.set_teams(self.my_teams)
 
     # ── Lobby Join Request Flow ─────────────────────────────────
 
@@ -2211,7 +2236,11 @@ class IntercomApp(QObject):
                 teams = supabase_client.get_my_teams(self.user_id)
                 self.my_teams = teams or []
                 if self.my_teams:
-                    self.active_team_ids = [t["id"] for t in self.my_teams]
+                    # Add any new teams to active list
+                    for t in self.my_teams:
+                        if t["id"] not in self.active_team_ids:
+                            self.active_team_ids.append(t["id"])
+                    set_active_team_ids(self.active_team_ids)
                     self.network.update_presence_teams(self.active_team_ids)
                 # Transition directly to team view (not back to lobby)
                 self._switch_to_team_signal.emit()
@@ -2246,7 +2275,9 @@ class IntercomApp(QObject):
             self.log_signal.emit(f"Left team: {team_name}")
             # Remove from local list
             self.my_teams = [t for t in self.my_teams if t["id"] != team_id]
-            self.active_team_ids = [t["id"] for t in self.my_teams]
+            if team_id in self.active_team_ids:
+                self.active_team_ids.remove(team_id)
+            set_active_team_ids(self.active_team_ids)
             self.network.update_presence_teams(self.active_team_ids)
             # Update UI on main thread
             self._switch_to_team_signal.emit()

@@ -128,11 +128,12 @@ class FloatingPanel(QWidget):
     audio_input_changed = Signal(object)   # device index or None
     audio_output_changed = Signal(object)  # device index or None
     name_change_requested = Signal(str)    # new display name
-    team_changed = Signal(str)             # team_id
+    team_changed = Signal(str)             # team_id (legacy)
+    team_presence_toggled = Signal(str, bool)  # team_id, active — toggle presence on/off
     create_team_requested = Signal(str)    # team_name
     manage_team_requested = Signal()       # open team management
     join_code_requested = Signal(str)      # invite_code — user wants to join a team
-    leave_team_requested = Signal()        # user wants to leave current team
+    leave_team_requested = Signal(str)     # team_id — user wants to leave a specific team
     mode_set_requested = Signal(str)       # direct mode selection (GREEN/YELLOW/RED)
     request_to_join = Signal(str, str, str)   # team_id, team_name, admin_id (lobby join request)
     join_request_accepted = Signal(str)        # request_id — admin accepted a join request
@@ -1843,7 +1844,7 @@ class FloatingPanel(QWidget):
 
     def _refresh_teams_list(self, teams):
         """Rebuild the visual team list on the Teams page.
-        All teams are active — no Select buttons, all show as active."""
+        Each team has a toggle to control presence and a leave button."""
         # Clear existing rows (keep the stretch at the end)
         while self._teams_list_layout.count() > 1:
             item = self._teams_list_layout.takeAt(0)
@@ -1859,51 +1860,53 @@ class FloatingPanel(QWidget):
             self._lobby_leave_btn.setVisible(False)
             return
 
+        active_ids = getattr(self, '_active_team_ids', set())
+
         for team in teams:
+            tid = team["id"]
+            is_active = tid in active_ids
+
             row = QFrame()
-            row.setStyleSheet("""
-                QFrame {
-                    background: rgba(0, 166, 81, 0.08);
-                    border: 1px solid rgba(0, 166, 81, 0.30);
-                    border-radius: 8px;
-                }
-            """)
+            if is_active:
+                row.setStyleSheet(f"""
+                    QFrame {{
+                        background: rgba(0, 166, 81, 0.08);
+                        border: 1px solid rgba(0, 166, 81, 0.30);
+                        border-radius: 8px;
+                    }}
+                """)
+            else:
+                row.setStyleSheet(f"""
+                    QFrame {{
+                        background: {DARK['BG_RAISED']};
+                        border: 1px solid {DARK['BORDER']};
+                        border-radius: 8px;
+                    }}
+                """)
 
             h = QHBoxLayout(row)
             h.setContentsMargins(10, 8, 10, 8)
             h.setSpacing(8)
 
+            # Team name
             name_lbl = QLabel(team["name"])
+            name_color = COLORS['GREEN'] if is_active else DARK['TEXT_DIM']
             name_lbl.setStyleSheet(
-                f"font-size: 13px; font-weight: 600; border: none; color: {COLORS['GREEN']};"
+                f"font-size: 13px; font-weight: 600; border: none; color: {name_color};"
             )
             h.addWidget(name_lbl, 1)
 
-            invite_code = team.get("invite_code", "")
-            if invite_code:
-                code_btn = QPushButton(f"📋 {invite_code}")
-                code_btn.setCursor(Qt.PointingHandCursor)
-                code_btn.setToolTip("Click to copy invite code")
-                code_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: transparent; border: 1px solid {DARK['BORDER']};
-                        border-radius: 4px; font-size: 10px; color: {DARK['TEXT_DIM']};
-                        padding: 2px 6px; font-family: monospace;
-                    }}
-                    QPushButton:hover {{ color: {DARK['TEXT']}; border-color: {DARK['TEXT_FAINT']}; }}
-                """)
-                code_btn.clicked.connect(
-                    lambda checked=False, c=invite_code: self._copy_code(c)
-                )
-                h.addWidget(code_btn)
-
-            check = QLabel("✓")
-            check.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['GREEN']}; border: none;")
-            h.addWidget(check)
+            # Presence toggle
+            toggle = ToggleSwitch()
+            toggle.set_on(is_active)
+            toggle.toggled.connect(
+                lambda on, t_id=tid: self.team_presence_toggled.emit(t_id, on)
+            )
+            h.addWidget(toggle)
 
             self._teams_list_layout.insertWidget(self._teams_list_layout.count() - 1, row)
 
-        self._lobby_leave_btn.setVisible(True)
+        self._lobby_leave_btn.setVisible(bool(teams))
 
     def _on_team_page_select(self, team_id, team_name):
         """User clicked Select on a team in the lobby page."""
@@ -2658,11 +2661,16 @@ class FloatingPanel(QWidget):
         if ok and name.strip():
             self.create_team_requested.emit(name.strip())
 
-    def set_teams(self, teams, force_lobby=False):
-        """Update the team state. All joined teams are active simultaneously.
+    def set_teams(self, teams, active_team_ids=None, force_lobby=False):
+        """Update the team state.
         teams: [{id, name, invite_code, role}, ...]
+        active_team_ids: set of team IDs with presence active (None = all active)
         If no teams or force_lobby, show welcome page instead.
         """
+        if active_team_ids is not None:
+            self._active_team_ids = set(active_team_ids)
+        else:
+            self._active_team_ids = {t["id"] for t in teams}
         has_teams = bool(teams)
 
         if force_lobby or not has_teams:
@@ -2692,13 +2700,21 @@ class FloatingPanel(QWidget):
         self._refresh_teams_list(teams)
 
         # Cache team info for header display
+        active_count = len(self._active_team_ids)
         team_count = len(teams)
-        if team_count == 1:
-            self._active_team_name_cache = teams[0]["name"]
-            self.set_sidebar_team(teams[0]["name"])
-        else:
+        if active_count == 1:
+            # Show the single active team name
+            for t in teams:
+                if t["id"] in self._active_team_ids:
+                    self._active_team_name_cache = t["name"]
+                    self.set_sidebar_team(t["name"])
+                    break
+        elif active_count == team_count:
             self._active_team_name_cache = f"{team_count} Teams"
             self.set_sidebar_team(f"{team_count} Teams")
+        else:
+            self._active_team_name_cache = f"{active_count}/{team_count} Teams"
+            self.set_sidebar_team(f"{active_count}/{team_count} Teams")
 
         self._switch_page("users")
         self._resize_panel()

@@ -159,24 +159,14 @@ def set_ptt_hotkey(key_name):
 
 # ── Active Team ──────────────────────────────────────────────
 
-def get_active_team():
-    """Get the active team ID, or None if no team selected."""
-    return load_settings().get("active_team_id")
+def get_active_team_ids():
+    """Get the list of active team IDs (teams with presence enabled)."""
+    return load_settings().get("active_team_ids", [])
 
-def set_active_team(team_id):
-    """Set the active team ID."""
+def set_active_team_ids(team_ids):
+    """Save the list of active team IDs."""
     settings = load_settings()
-    settings["active_team_id"] = team_id
-    save_settings(settings)
-
-def get_active_team_name():
-    """Get the active team name (cached locally for display)."""
-    return load_settings().get("active_team_name")
-
-def set_active_team_name(name):
-    """Cache the active team name locally."""
-    settings = load_settings()
-    settings["active_team_name"] = name
+    settings["active_team_ids"] = list(team_ids)
     save_settings(settings)
 
 # ── Stream Deck Guide ────────────────────────────────────────
