@@ -749,6 +749,12 @@ class IntercomApp(QObject):
         """Show incoming connection request as a panel banner."""
         self.pending_from_id = ip
 
+        # Already in a call: treat as busy
+        if self.network.connected or self._intercom_streaming or self.peer_talking:
+            self.log(f"Auto-accepting voicemail from {requester_name} (already in a call)")
+            self._on_accept_call()
+            return
+
         # Green mode: auto-accept (intercom behavior)
         if self.mode == self.MODE_GREEN:
             self.log(f"Auto-accepting from {requester_name} (green mode)")
@@ -795,8 +801,6 @@ class IntercomApp(QObject):
         self.audio.stop_streaming()  # Stop any active stream (PTT or hotline)
         self.audio.reset_codec()  # Reset to default codec for next connection
 
-        # Restore pre-call mode (auto-busy → back to green)
-        restore_mode = self._pre_call_mode
         self._clear_busy()
         self.peer_talking = False
         self._connected_peer_id = None  # Clear so they reappear in user list
@@ -805,9 +809,6 @@ class IntercomApp(QObject):
         self.panel.set_hotline_enabled(False)
         self.panel.set_hotline(False)
         self.panel.hide_call()
-
-        if restore_mode and self.mode == self.MODE_YELLOW:
-            self._set_mode(restore_mode)
 
         self.log("Disconnected.")
 
@@ -974,11 +975,6 @@ class IntercomApp(QObject):
         """Called on main thread when call is established."""
         self._intercom_connected = True
 
-        # Auto-switch to busy so others get voicemail while we're in a call
-        if self.mode != self.MODE_YELLOW and self.mode != self.MODE_RED:
-            self._pre_call_mode = self.mode
-            self._set_mode(self.MODE_YELLOW)
-
         # If open-line was requested, enable hotline now that we're connected
         if getattr(self, '_pending_hotline', False):
             self._pending_hotline = False
@@ -1092,6 +1088,13 @@ class IntercomApp(QObject):
         self.pending_from_id = from_id
         self.pending_from_name = from_name
         self.pending_room = room_code  # Internal — not shown to user
+
+        # Already in a call: treat as busy (buffer as voicemail)
+        if self.network.connected or self._intercom_streaming or self.peer_talking:
+            self.log(f"Auto-accepting voicemail from {from_name} (already in a call)")
+            self._intercom_target_id = from_id
+            self._on_accept_call()
+            return
 
         # Green mode: auto-accept (intercom behavior)
         if self.mode == self.MODE_GREEN:
