@@ -3261,9 +3261,11 @@ class FloatingPanel(QWidget):
         self._strip_ptt_sep = sep3
         v.addWidget(sep3, 0, Qt.AlignCenter)
 
-        # ── PTT button (outlined, same size as status) ──
+        v.addStretch()
+
+        # ── PTT button (compact, anchored to bottom) ──
         self._strip_ptt_btn = QPushButton("TALK")
-        self._strip_ptt_btn.setFixedSize(40, 40)
+        self._strip_ptt_btn.setFixedSize(40, 26)
         self._strip_ptt_btn.setCursor(Qt.PointingHandCursor)
         self._strip_ptt_btn.setToolTip("Push to Talk")
         self._update_strip_ptt_style(active=False)
@@ -3274,8 +3276,6 @@ class FloatingPanel(QWidget):
             lambda: self.ptt_released.emit()
         )
         v.addWidget(self._strip_ptt_btn, 0, Qt.AlignCenter)
-
-        v.addStretch()
 
         self._strip_avatar_buttons: dict[str, QPushButton] = {}
         return strip
@@ -3463,8 +3463,8 @@ class FloatingPanel(QWidget):
     def _calc_strip_height(self):
         """Dynamic strip height based on number of online user avatars."""
         # Base: margins (20) + logo (28) + spacing (8) + sep (1) + spacing (8)
-        #        + status (40) + spacing (8) + sep2 (1) + spacing (8) + PTT (40) + bottom
-        base = 20 + 28 + 8 + 1 + 8 + 40 + 8 + 1 + 8 + 40 + 10
+        #        + status (40) + spacing (8) + sep2 (1) + spacing (8) + PTT (26) + bottom
+        base = 20 + 28 + 8 + 1 + 8 + 40 + 8 + 1 + 8 + 26 + 10
         # Each avatar: STRIP_AVATAR_SIZE + spacing (6)
         n_avatars = len(self._strip_avatar_buttons)
         if n_avatars > 0:
