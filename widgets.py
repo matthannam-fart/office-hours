@@ -4,7 +4,7 @@ Extracted from floating_panel.py for maintainability.
 """
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QRadialGradient
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QVBoxLayout, QWidget
 
 # Import shared constants (from separate module to avoid circular imports)
 from ui_constants import COLORS, DARK
@@ -248,6 +248,8 @@ class UserRow(QWidget):
     intercom_pressed = Signal(str)        # user_id — used for PTT start (from main.py)
     intercom_released = Signal(str)       # user_id — used for PTT stop (from main.py)
     user_selected = Signal(str)           # user_id — single click to select as target
+    open_line_requested = Signal(str)     # user_id — right-click → Open Line
+    leave_message_requested = Signal(str) # user_id — right-click → Leave Message
 
     # Visual states
     STATE_IDLE = "idle"
@@ -455,6 +457,34 @@ class UserRow(QWidget):
             # Single click selects this user as PTT target
             self.user_selected.emit(self.user_id)
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        if self._offline:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 16px; font-size: 12px; color: {DARK['TEXT']};
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {DARK['BG_HOVER']}; }}
+            QMenu::separator {{
+                height: 1px; background: {DARK['BORDER']}; margin: 4px 8px;
+            }}
+        """)
+        open_line_action = menu.addAction("Open Line")
+        menu.addSeparator()
+        leave_msg_action = menu.addAction("Leave Message")
+
+        action = menu.exec(event.globalPos())
+        if action == open_line_action:
+            self.open_line_requested.emit(self.user_id)
+        elif action == leave_msg_action:
+            self.leave_message_requested.emit(self.user_id)
 
 
 # ═══════════════════════════════════════════════════════════════════

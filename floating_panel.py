@@ -114,6 +114,8 @@ class FloatingPanel(QWidget):
     intercom_pressed = Signal(str)        # user_id — hold to talk
     intercom_released = Signal(str)       # user_id — release to stop
     user_selected = Signal(str)           # user_id — click to select as PTT target
+    open_line_requested = Signal(str)     # user_id — right-click → Open Line
+    leave_message_requested = Signal(str) # user_id — right-click → Leave Message
     leave_requested = Signal()
     accept_call_requested = Signal()
     decline_call_requested = Signal()
@@ -3688,6 +3690,8 @@ class FloatingPanel(QWidget):
                 row.call_clicked.connect(self.call_user_requested.emit)
                 row.intercom_pressed.connect(self.intercom_pressed.emit)
                 row.intercom_released.connect(self.intercom_released.emit)
+                row.open_line_requested.connect(self.open_line_requested.emit)
+                row.leave_message_requested.connect(self.leave_message_requested.emit)
                 row.user_selected.connect(self._on_user_row_clicked)
                 if uid in old_states:
                     row.set_state(old_states[uid])

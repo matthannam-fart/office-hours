@@ -98,6 +98,7 @@ class IntercomApp(QObject):
         self.pending_from_id = None
         self.active_room_code = None   # Internal relay session ID for active call
         self._pre_call_mode = None     # Mode before entering a call (restored on disconnect)
+        self._pending_hotline = False  # True when open-line was requested, waiting for connection
         self._connected_peer_id = None # User ID of peer we're in a call with
 
         # Intercom state (click to select + PTT)
@@ -297,6 +298,8 @@ class IntercomApp(QObject):
         self.panel.call_user_requested.connect(self._on_call_user)
         self.panel.intercom_pressed.connect(self._on_intercom_press)
         self.panel.intercom_released.connect(self._on_intercom_release)
+        self.panel.open_line_requested.connect(self._on_open_line)
+        self.panel.leave_message_requested.connect(self._on_leave_message)
         self.panel.user_selected.connect(self._on_user_selected)
         self.panel.leave_requested.connect(self.do_disconnect)
         self.panel.accept_call_requested.connect(self._on_accept_call)
@@ -655,6 +658,47 @@ class IntercomApp(QObject):
             self.log("Idle — disconnecting")
             self.do_disconnect()
 
+    # ── Open Line (right-click menu) ──────────────────────────────
+    def _on_open_line(self, user_id):
+        """Start an open-line (hotline) session with a specific user.
+        Connects, then enables always-on AEC streaming in both directions."""
+        target = self.online_users.get(user_id, {})
+        target_name = target.get("name", "Unknown")
+        target_mode = target.get("mode", "GREEN")
+
+        if target_mode == self.MODE_RED:
+            self.log(f"{target_name} is in Do Not Disturb")
+            return
+
+        # Select and connect to the user
+        self._intercom_target_id = user_id
+        self.panel.highlight_selected_user(user_id)
+        self._on_user_selected(user_id)
+
+        # Enable hotline once connected (checked in _on_call_connected)
+        self._pending_hotline = True
+        self.log(f"Opening line to {target_name}...")
+
+    # ── Leave Message (right-click menu) ──────────────────────────
+    def _on_leave_message(self, user_id):
+        """Record and send a voice message to a user without ringing them.
+        Connects silently, records while PTT is held, sends on release."""
+        target = self.online_users.get(user_id, {})
+        target_name = target.get("name", "Unknown")
+        target_mode = target.get("mode", "GREEN")
+
+        if target_mode == self.MODE_RED:
+            self.log(f"{target_name} is in Do Not Disturb")
+            return
+
+        # Select the user and start recording
+        self._intercom_target_id = user_id
+        self.panel.highlight_selected_user(user_id)
+
+        # Connect to user (their client will auto-accept and buffer as voicemail)
+        self._on_user_selected(user_id)
+        self.log(f"Ready to leave message for {target_name} — hold Push to Talk")
+
     # ── Accept / Decline Call ─────────────────────────────────────
     def _on_accept_call(self):
         self.panel.hide_incoming()
@@ -934,6 +978,18 @@ class IntercomApp(QObject):
         if self.mode != self.MODE_YELLOW and self.mode != self.MODE_RED:
             self._pre_call_mode = self.mode
             self._set_mode(self.MODE_YELLOW)
+
+        # If open-line was requested, enable hotline now that we're connected
+        if getattr(self, '_pending_hotline', False):
+            self._pending_hotline = False
+            self._on_hotline_toggle(True)
+            self.panel.hide_outgoing()
+            peer_mode = self.online_users.get(self._intercom_target_id, {}).get("mode", "GREEN")
+            self.panel.set_connection(True, peer_name, peer_mode)
+            self.panel.show_call(peer_name)
+            self.panel.set_hotline_enabled(True)
+            self.log(f"Open line with {peer_name}")
+            return
 
         # If PTT is physically held while connection completes, start streaming now
         if self._intercom_target_id and self._intercom_ptt_held and not self._intercom_streaming:
