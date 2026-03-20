@@ -918,9 +918,9 @@ class FloatingPanel(QWidget):
         return header
 
     def _on_title_clicked(self):
-        """Title button click — team dropdown on users page, back on sub-pages."""
+        """Title button click — teams page on users page, back on sub-pages."""
         if self._active_nav == "users":
-            self._show_team_dropdown()
+            self._switch_page("teams")
         else:
             self._switch_page("users")
 
