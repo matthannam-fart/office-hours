@@ -1844,7 +1844,7 @@ class FloatingPanel(QWidget):
 
     def _refresh_teams_list(self, teams):
         """Rebuild the visual team list on the Teams page.
-        Each team has a toggle to control presence and a leave button."""
+        Each team row has: name + toggle. Click row to expand details."""
         # Clear existing rows (keep the stretch at the end)
         while self._teams_list_layout.count() > 1:
             item = self._teams_list_layout.takeAt(0)
@@ -1865,36 +1865,57 @@ class FloatingPanel(QWidget):
         for team in teams:
             tid = team["id"]
             is_active = tid in active_ids
+            invite_code = team.get("invite_code", "")
 
-            row = QFrame()
-            if is_active:
-                row.setStyleSheet(f"""
-                    QFrame {{
-                        background: rgba(0, 166, 81, 0.08);
-                        border: 1px solid rgba(0, 166, 81, 0.30);
-                        border-radius: 8px;
-                    }}
-                """)
-            else:
-                row.setStyleSheet(f"""
-                    QFrame {{
-                        background: {DARK['BG_RAISED']};
-                        border: 1px solid {DARK['BORDER']};
-                        border-radius: 8px;
-                    }}
-                """)
+            # ── Container for row + expandable details ──
+            container = QFrame()
+            container.setObjectName(f"teamContainer_{tid[:8]}")
+            border_color = "rgba(0, 166, 81, 0.30)" if is_active else DARK['BORDER']
+            bg_color = "rgba(0, 166, 81, 0.08)" if is_active else DARK['BG_RAISED']
+            container.setStyleSheet(f"""
+                QFrame#{container.objectName()} {{
+                    background: {bg_color};
+                    border: 1px solid {border_color};
+                    border-radius: 8px;
+                }}
+            """)
+            cv = QVBoxLayout(container)
+            cv.setContentsMargins(0, 0, 0, 0)
+            cv.setSpacing(0)
 
-            h = QHBoxLayout(row)
-            h.setContentsMargins(10, 8, 10, 8)
+            # ── Main row: name + expand arrow + toggle ──
+            main_row = QWidget()
+            main_row.setStyleSheet("background: transparent; border: none;")
+            h = QHBoxLayout(main_row)
+            h.setContentsMargins(12, 8, 10, 8)
             h.setSpacing(8)
 
-            # Team name
-            name_lbl = QLabel(team["name"])
-            name_color = COLORS['GREEN'] if is_active else DARK['TEXT_DIM']
-            name_lbl.setStyleSheet(
-                f"font-size: 13px; font-weight: 600; border: none; color: {name_color};"
-            )
-            h.addWidget(name_lbl, 1)
+            # Team name (clickable to expand)
+            name_color = COLORS['GREEN'] if is_active else DARK['TEXT']
+            name_btn = QPushButton(team["name"])
+            name_btn.setCursor(Qt.PointingHandCursor)
+            name_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 13px; font-weight: 600; border: none;
+                    color: {name_color}; background: transparent;
+                    text-align: left; padding: 0;
+                }}
+                QPushButton:hover {{ color: {DARK['TEXT']}; }}
+            """)
+            h.addWidget(name_btn, 1)
+
+            # Expand arrow
+            arrow_btn = QPushButton("▸")
+            arrow_btn.setCursor(Qt.PointingHandCursor)
+            arrow_btn.setFixedSize(20, 20)
+            arrow_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 10px; color: {DARK['TEXT_FAINT']};
+                    border: none; background: transparent;
+                }}
+                QPushButton:hover {{ color: {DARK['TEXT']}; }}
+            """)
+            h.addWidget(arrow_btn)
 
             # Presence toggle
             toggle = ToggleSwitch()
@@ -1904,9 +1925,72 @@ class FloatingPanel(QWidget):
             )
             h.addWidget(toggle)
 
-            self._teams_list_layout.insertWidget(self._teams_list_layout.count() - 1, row)
+            cv.addWidget(main_row)
 
-        self._lobby_leave_btn.setVisible(bool(teams))
+            # ── Expandable details panel (hidden by default) ──
+            details = QWidget()
+            details.setStyleSheet("background: transparent; border: none;")
+            details.setVisible(False)
+            dv = QVBoxLayout(details)
+            dv.setContentsMargins(12, 0, 12, 8)
+            dv.setSpacing(4)
+
+            # Separator
+            sep = QFrame()
+            sep.setFixedHeight(1)
+            sep.setStyleSheet(f"background: {DARK['BORDER']};")
+            dv.addWidget(sep)
+
+            # Invite code (copy on click)
+            if invite_code:
+                code_btn = QPushButton(f"  Copy Invite Code  ({invite_code})")
+                code_btn.setCursor(Qt.PointingHandCursor)
+                code_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        font-size: 11px; color: {DARK['TEXT_DIM']};
+                        border: none; background: transparent;
+                        text-align: left; padding: 4px 0;
+                    }}
+                    QPushButton:hover {{ color: {DARK['TEXT']}; }}
+                """)
+                code_btn.clicked.connect(
+                    lambda checked=False, c=invite_code: self._copy_code(c)
+                )
+                dv.addWidget(code_btn)
+
+            # Leave team
+            leave_btn = QPushButton("  Leave Team")
+            leave_btn.setCursor(Qt.PointingHandCursor)
+            leave_btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 11px; color: {DARK['DANGER']};
+                    border: none; background: transparent;
+                    text-align: left; padding: 4px 0;
+                }}
+                QPushButton:hover {{ color: #ff6b6b; }}
+            """)
+            leave_btn.clicked.connect(
+                lambda checked=False, t_id=tid: self.leave_team_requested.emit(t_id)
+            )
+            dv.addWidget(leave_btn)
+
+            cv.addWidget(details)
+
+            # Toggle expand/collapse on name or arrow click
+            def _make_toggle(det, arr):
+                def _toggle():
+                    vis = not det.isVisible()
+                    det.setVisible(vis)
+                    arr.setText("▾" if vis else "▸")
+                return _toggle
+
+            toggle_fn = _make_toggle(details, arrow_btn)
+            name_btn.clicked.connect(toggle_fn)
+            arrow_btn.clicked.connect(toggle_fn)
+
+            self._teams_list_layout.insertWidget(self._teams_list_layout.count() - 1, container)
+
+        self._lobby_leave_btn.setVisible(False)  # per-team leave buttons instead
 
     def _on_team_page_select(self, team_id, team_name):
         """User clicked Select on a team in the lobby page."""
