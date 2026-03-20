@@ -3198,7 +3198,6 @@ class FloatingPanel(QWidget):
         v = QVBoxLayout(strip)
         v.setContentsMargins(6, 10, 6, 10)
         v.setSpacing(8)
-        v.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
         # ── Logo at top (click to expand) ──
         expand_btn = QPushButton()
@@ -3463,12 +3462,13 @@ class FloatingPanel(QWidget):
     def _calc_strip_height(self):
         """Dynamic strip height based on number of online user avatars."""
         # Base: margins (20) + logo (28) + spacing (8) + sep (1) + spacing (8)
-        #        + status (40) + spacing (8) + sep2 (1) + spacing (8) + PTT (26) + bottom
-        base = 20 + 28 + 8 + 1 + 8 + 40 + 8 + 1 + 8 + 26 + 10
+        #        + status (40) + spacing (8) + sep2 (1) + spacing (8)
+        #        + stretch + PTT (26) + bottom margin
+        base = 20 + 28 + 8 + 1 + 8 + 40 + 8 + 1 + 8 + 26 + 16
         # Each avatar: STRIP_AVATAR_SIZE + spacing (6)
         n_avatars = len(self._strip_avatar_buttons)
         if n_avatars > 0:
-            avatar_h = n_avatars * (STRIP_AVATAR_SIZE + 6) + 8  # +8 for sep before PTT
+            avatar_h = n_avatars * (STRIP_AVATAR_SIZE + 8) + 10  # +10 for sep + spacing around PTT
         else:
             avatar_h = 0
         return base + avatar_h
