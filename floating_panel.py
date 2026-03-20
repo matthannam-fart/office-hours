@@ -805,8 +805,7 @@ class FloatingPanel(QWidget):
         # Header elements
         if key == "users":
             team_name = getattr(self, '_active_team_name_cache', 'Team')
-            self._section_title.setText(f"{team_name} ▾")
-            self._section_title.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+            self._section_title.setText(team_name)
             self._hamburger_btn.setText("⚙")
             self._hamburger_btn.setVisible(True)
             self._collapse_btn.setVisible(True)
@@ -846,28 +845,25 @@ class FloatingPanel(QWidget):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 4, 0, 0)
 
-        title_row.addStretch()
-
-        # Team name button — clickable dropdown to switch teams / copy code
-        self._section_title = QPushButton("TEAM ▾")
+        # Team name button — navigates to Teams page
+        self._section_title = QPushButton("TEAM")
         self._section_title.setCursor(Qt.PointingHandCursor)
-        self._section_title.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._section_title.setFixedHeight(36)
+        self._section_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._section_title.setStyleSheet(f"""
             QPushButton {{
                 font-size: 13px; font-weight: 700; color: {DARK['TEXT']};
-                letter-spacing: 0.5px; border: none;
-                background: {DARK['BG_RAISED']}; border-radius: 6px;
-                padding: 4px 12px;
+                letter-spacing: 0.5px;
+                background: {DARK['BG_RAISED']}; border: 1px solid {DARK['BORDER']};
+                border-radius: 6px; padding: 4px 12px;
             }}
-            QPushButton:hover {{ background: {DARK['BG_HOVER']}; }}
+            QPushButton:hover {{ background: {DARK['BG_HOVER']}; border-color: {DARK['TEXT_FAINT']}; }}
         """)
         self._section_title.clicked.connect(self._on_title_clicked)
         title_row.addWidget(self._section_title)
 
         # Hidden compat ref (some code checks this)
         self._team_dropdown_btn = self._section_title
-
-        title_row.addStretch()
 
         # Hotline toggle (only visible during active calls)
         self._hotline_lbl = QLabel("Hotline")
