@@ -804,8 +804,7 @@ class FloatingPanel(QWidget):
 
         # Header elements
         if key == "users":
-            team_name = getattr(self, '_active_team_name_cache', 'Team')
-            self._section_title.setText(team_name)
+            self._section_title.setText("TEAMS")
             self._hamburger_btn.setText("⚙")
             self._hamburger_btn.setVisible(True)
             self._collapse_btn.setVisible(True)
