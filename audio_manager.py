@@ -817,36 +817,37 @@ class AudioManager:
             self.log(f"Notification sound error: {e}")
 
     def play_talk_ended(self):
-        """Play a gentle descending two-tone chirp when the other user stops talking.
+        """Play a soft tone with reverb tail when the other user stops talking.
         If the playback stream is active, inject into jitter buffer to avoid
         PortAudio double-free from concurrent sd.play()."""
         try:
-            # Two clean fixed-frequency tones (descending) with a tiny gap —
-            # avoids the garbled artifacts of a frequency sweep.
-            tone_dur = 0.08
-            gap_dur = 0.03
-            freq_hi = 659.0   # E5
-            freq_lo = 523.0   # C5
-            amplitude = 0.18
-
             def _generate(sr):
-                n1 = int(sr * tone_dur)
-                n2 = int(sr * tone_dur)
-                n_gap = int(sr * gap_dur)
-                t1 = np.arange(n1) / sr
-                t2 = np.arange(n2) / sr
-                # Apply fade-in/out envelope to each tone to avoid clicks
-                fade = min(int(sr * 0.008), n1 // 4)  # 8ms fade
-                env1 = np.ones(n1, dtype=np.float32)
-                env1[:fade] = np.linspace(0, 1, fade)
-                env1[-fade:] = np.linspace(1, 0, fade)
-                env2 = np.ones(n2, dtype=np.float32)
-                env2[:fade] = np.linspace(0, 1, fade)
-                env2[-fade:] = np.linspace(1, 0, fade)
-                tone1 = amplitude * env1 * np.sin(2 * np.pi * freq_hi * t1)
-                tone2 = amplitude * env2 * np.sin(2 * np.pi * freq_lo * t2)
-                gap = np.zeros(n_gap, dtype=np.float32)
-                return np.concatenate([tone1, gap, tone2]).astype(np.float32)
+                # Single soft tone with natural decay + reverb
+                freq = 880.0       # A5 — clean, warm
+                duration = 0.35    # Long enough for reverb tail
+                amplitude = 0.12   # Gentle volume
+                n = int(sr * duration)
+                t = np.arange(n, dtype=np.float32) / sr
+
+                # Soft attack (20ms) + exponential decay
+                attack = int(sr * 0.02)
+                envelope = np.exp(-t * 8.0).astype(np.float32)  # ~125ms decay
+                envelope[:attack] *= np.linspace(0, 1, attack, dtype=np.float32)
+
+                # Pure tone with a soft 2nd harmonic for warmth
+                tone = (np.sin(2 * np.pi * freq * t)
+                        + 0.15 * np.sin(2 * np.pi * freq * 2 * t))
+                dry = (amplitude * envelope * tone).astype(np.float32)
+
+                # Simple reverb: mix in delayed, attenuated copies
+                signal = dry.copy()
+                for delay_ms, gain in [(37, 0.25), (67, 0.15), (113, 0.08)]:
+                    delay_samples = int(sr * delay_ms / 1000)
+                    if delay_samples < len(signal):
+                        signal[delay_samples:] += gain * dry[:len(signal) - delay_samples]
+
+                # Clip and return
+                return np.clip(signal, -1.0, 1.0).astype(np.float32)
 
             if hasattr(self, '_play_stream_obj') and self._play_stream_obj and self._play_stream_obj.active:
                 signal = _generate(SAMPLE_RATE)
