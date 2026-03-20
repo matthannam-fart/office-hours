@@ -4763,8 +4763,9 @@ class FloatingPanel(QWidget):
             self.setFixedHeight(strip_h)
             # Float on top of all windows with 90% opacity
             # Re-set all flags explicitly — setWindowFlags recreates the native window on macOS
+            # WindowDoesNotAcceptFocus prevents macOS from burying it when other apps take focus
             self.setWindowFlags(
-                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
             )
             self.setAttribute(Qt.WA_TranslucentBackground)
             self.setWindowOpacity(0.9)
