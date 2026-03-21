@@ -862,21 +862,8 @@ class IntercomApp(QObject):
             # Still show lobby even if Supabase fails
             self._teams_loaded_signal.emit()
 
-        # Connect to presence — restore saved active teams or default to all
-        all_ids = [t["id"] for t in self.my_teams]
-        saved = get_active_team_ids()
-        self.active_team_ids = [tid for tid in saved if tid in all_ids] if saved else all_ids
-        try:
-            success = self.network.connect_presence(
-                RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
-                self.mode, self.active_team_ids,
-            )
-            if success:
-                self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
-            else:
-                self.log_signal.emit("Could not connect to presence server")
-        except Exception as e:
-            self.log_signal.emit(f"Presence auto-connect failed: {e}")
+        # Presence connection happens in _on_teams_loaded (main thread)
+        # after active_team_ids are resolved from saved settings
 
     def handle_presence_message(self, msg):
         msg_type = msg.get("type")
@@ -1903,7 +1890,7 @@ class IntercomApp(QObject):
     @Slot()
     def _on_teams_loaded(self):
         """Called on main thread when Supabase teams are loaded.
-        Restores saved active team selections, defaulting to all active."""
+        Resolves active teams, connects presence, fetches members."""
         if self.my_teams:
             all_ids = {t["id"] for t in self.my_teams}
             # Restore saved active teams (intersect with current teams)
@@ -1914,13 +1901,34 @@ class IntercomApp(QObject):
                 # First launch or no saved state — all teams active
                 self.active_team_ids = list(all_ids)
             set_active_team_ids(self.active_team_ids)
-            self.network.update_presence_teams(self.active_team_ids)
+
+            # Connect to presence with resolved team list
+            self._connect_presence_async()
+
             self._fetch_team_members()
             self.panel.set_teams(self.my_teams, active_team_ids=self.active_team_ids)
         else:
-            # No teams — show welcome/lobby
+            # No teams — show welcome/lobby, still connect presence (for future joins)
+            self.active_team_ids = []
+            self._connect_presence_async()
             self.panel.set_teams(self.my_teams, force_lobby=True)
             self._lobby_refresh_timer.start()
+
+    def _connect_presence_async(self):
+        """Connect to the relay presence server in a background thread."""
+        def _do_connect():
+            try:
+                success = self.network.connect_presence(
+                    RELAY_HOST, RELAY_PORT, self.display_name, self.user_id,
+                    self.mode, self.active_team_ids,
+                )
+                if success:
+                    self.log_signal.emit(f'Connected to presence as "{self.display_name}"')
+                else:
+                    self.log_signal.emit("Could not connect to presence server")
+            except Exception as e:
+                self.log_signal.emit(f"Presence auto-connect failed: {e}")
+        threading.Thread(target=_do_connect, daemon=True).start()
 
     @Slot(list)
     def _set_available_teams(self, data):
